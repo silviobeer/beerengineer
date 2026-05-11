@@ -11,8 +11,10 @@ export const managementEndpoints = {
     `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}`,
   runQuery: (projectRef: string, branchRef: string) =>
     `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}/query`,
-  projectKeys: (projectRef: string, branchRef: string) =>
-    `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}/api-keys`,
+  projectKeys: (projectRef: string, branchRef?: string) =>
+    branchRef
+      ? `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}/api-keys`
+      : `/projects/${encodeURIComponent(projectRef)}/api-keys`,
   branchConnectionString: (projectRef: string, branchRef: string) =>
     `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}/connection-string`,
   createAuthAdminUser: (projectRef: string, branchRef: string) =>

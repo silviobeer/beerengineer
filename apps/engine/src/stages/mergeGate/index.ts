@@ -127,6 +127,35 @@ export async function mergeGate(
     )
   }
 
+  const performGitMerge = () => {
+    const { mergeSha } = git.mergeItemIntoBase()
+    emitEvent({
+      type: "merge_completed",
+      runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      itemBranch,
+      baseBranch: git.mode.baseBranch,
+      mergeSha,
+    })
+  }
+
+  if (supabaseHook?.dbMode === "direct") {
+    try {
+      performGitMerge()
+      return
+    } catch (error) {
+      await blockRun(
+        context,
+        `Merge into ${git.mode.baseBranch} failed for ${itemBranch}: ${(error as Error).message}`,
+        {
+          cause: "merge_gate_failed",
+          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
+          branch: itemBranch,
+        },
+      )
+    }
+  }
+
   // BUG-PROJ4-QA-005 wiring point 4: Supabase gate stack
   if (supabaseHook) {
     const run = supabaseHook.repos.getRun(activeRun.runId)
@@ -187,21 +216,7 @@ export async function mergeGate(
     }
     const mergeResult = await mergeWithProtectionSwitch({
       protectionSwitch: supabaseHook.protectionSwitch,
-      gitMerge: () => {
-        try {
-          const { mergeSha } = git.mergeItemIntoBase()
-          emitEvent({
-            type: "merge_completed",
-            runId: activeRun.runId,
-            itemId: activeRun.itemId,
-            itemBranch,
-            baseBranch: git.mode.baseBranch,
-            mergeSha,
-          })
-        } catch (error) {
-          throw error
-        }
-      },
+      gitMerge: () => performGitMerge(),
       migrateProduction: () => supabaseHook.adapter.migrateProduction(mergeContext),
     })
 
@@ -225,15 +240,7 @@ export async function mergeGate(
 
   // Non-Supabase path: unconditional merge.
   try {
-    const { mergeSha } = git.mergeItemIntoBase()
-    emitEvent({
-      type: "merge_completed",
-      runId: activeRun.runId,
-      itemId: activeRun.itemId,
-      itemBranch,
-      baseBranch: git.mode.baseBranch,
-      mergeSha,
-    })
+    performGitMerge()
   } catch (error) {
     await blockRun(
       context,

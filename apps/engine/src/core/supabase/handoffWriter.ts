@@ -2,10 +2,11 @@ import { chmod, mkdir, open, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { readActiveSecretValue, type SecretStoreOptions } from "../../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
+import type { SupabaseDbMode } from "./types.js"
 
 export type SupabaseHandoffClient = {
-  getProjectKeys(projectRef: string, branchRef: string, managementToken: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }>
-  getBranchConnectionString(projectRef: string, branchRef: string, managementToken: string): Promise<string>
+  getProjectKeys(projectRef: string, branchRef?: string): Promise<{ anonKey: string; serviceRoleKey?: string; url: string }>
+  getBranchConnectionString(projectRef: string, branchRef: string): Promise<string>
 }
 
 export function supabaseHandoffPath(workspaceRoot: string, runId: string, waveId: string): string {
@@ -17,23 +18,31 @@ export async function writeSupabaseHandoff(input: {
   runId: string
   waveId: string
   projectRef: string
-  branchRef: string
+  dbMode?: SupabaseDbMode
+  branchRef?: string
   client: SupabaseHandoffClient
   secretStore?: SecretStoreOptions
 }): Promise<{ path: string; env: { SUPABASE_HANDOFF_ENV: string } }> {
   if (process.platform === "win32") throw new Error("Supabase handoff requires a POSIX filesystem")
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, input.secretStore)
   if (!token) throw new Error("Supabase management token missing")
+  void token
   const path = supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId)
-  const keys = await input.client.getProjectKeys(input.projectRef, input.branchRef, token)
-  const dbUrl = await input.client.getBranchConnectionString(input.projectRef, input.branchRef, token)
-  const content = [
-    `SUPABASE_URL=${keys.url}`,
-    `SUPABASE_ANON_KEY=${keys.anonKey}`,
-    `SUPABASE_SERVICE_ROLE_KEY=${keys.serviceRoleKey}`,
-    `SUPABASE_DB_URL=${dbUrl}`,
-    "",
-  ].join("\n")
+  const dbMode = input.dbMode ?? "branching"
+  const keys = await input.client.getProjectKeys(
+    input.projectRef,
+    dbMode === "branching" ? input.branchRef : undefined,
+  )
+  const content = dbMode === "direct"
+    ? [
+        `SUPABASE_URL=${keys.url}`,
+        `SUPABASE_ANON_KEY=${keys.anonKey}`,
+        "",
+        "# Direct mode: automatic production migration is skipped.",
+        "# Manual migration review is required before database changes are applied.",
+        "",
+      ].join("\n")
+    : await branchingHandoffContent(input.client, input.projectRef, input.branchRef, keys)
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   await chmod(dirname(path), 0o700)
   let handle
@@ -50,6 +59,23 @@ export async function writeSupabaseHandoff(input: {
   }
   await chmod(path, 0o600)
   return { path, env: { SUPABASE_HANDOFF_ENV: path } }
+}
+
+async function branchingHandoffContent(
+  client: SupabaseHandoffClient,
+  projectRef: string,
+  branchRef: string | undefined,
+  keys: { anonKey: string; serviceRoleKey?: string; url: string },
+): Promise<string> {
+  if (!branchRef) throw new Error("Supabase branch ref missing")
+  const dbUrl = await client.getBranchConnectionString(projectRef, branchRef)
+  return [
+    `SUPABASE_URL=${keys.url}`,
+    `SUPABASE_ANON_KEY=${keys.anonKey}`,
+    `SUPABASE_SERVICE_ROLE_KEY=${keys.serviceRoleKey ?? ""}`,
+    `SUPABASE_DB_URL=${dbUrl}`,
+    "",
+  ].join("\n")
 }
 
 export async function ensureSupabaseHandoffGitignore(workspaceRoot: string): Promise<boolean> {
