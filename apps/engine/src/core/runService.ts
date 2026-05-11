@@ -353,31 +353,27 @@ export async function answerRunPromptInProcess(
 ): Promise<AnswerResult> {
   const runBeforeAnswer = repos.getRun(input.runId)
   const result = recordAnswer(repos, input)
-  if (!result.ok) return result
-  if (!options.resumeBlockedRunInProcess || !shouldResumeBlockedRunAfterAnswer(runBeforeAnswer)) {
-    return result
+  if (result.ok && options.resumeBlockedRunInProcess && shouldResumeBlockedRunAfterAnswer(runBeforeAnswer)) {
+    const io = buildApiIo(repos)
+    const prepared = await prepareForegroundResumeRun(repos, io, {
+      runId: input.runId,
+      summary: promptAnswerResumeSummary(input.source),
+      workerOwnerKind: "api",
+      workerInstanceId: options.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerLeaseClock: options.workerLeaseClock,
+      workerLeaseScheduler: options.workerLeaseScheduler,
+      onItemColumnChanged: options.onItemColumnChanged,
+      supabaseAdapterFactory: options.supabaseAdapterFactory,
+      capabilityResolver: options.capabilityResolver,
+      resumeRunImpl: options.resumeRunImpl,
+      persistItemDecision: false,
+    })
+    if (!prepared.ok) {
+      io.close?.()
+    } else {
+      ;(options.backgroundRunner ?? fireInBackground)(io, "answerRunPromptInProcess", prepared.start)
+    }
   }
-
-  const io = buildApiIo(repos)
-  const prepared = await prepareForegroundResumeRun(repos, io, {
-    runId: input.runId,
-    summary: promptAnswerResumeSummary(input.source),
-    workerOwnerKind: "api",
-    workerInstanceId: options.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
-    workerLeaseClock: options.workerLeaseClock,
-    workerLeaseScheduler: options.workerLeaseScheduler,
-    onItemColumnChanged: options.onItemColumnChanged,
-    supabaseAdapterFactory: options.supabaseAdapterFactory,
-    capabilityResolver: options.capabilityResolver,
-    resumeRunImpl: options.resumeRunImpl,
-    persistItemDecision: false,
-  })
-  if (!prepared.ok) {
-    io.close?.()
-    return result
-  }
-
-  ;(options.backgroundRunner ?? fireInBackground)(io, "answerRunPromptInProcess", prepared.start)
   return result
 }
 
