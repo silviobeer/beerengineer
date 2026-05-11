@@ -36,6 +36,12 @@ function parseRunSubcommand(context: ParseArgsContext): Command | null {
   }
   if (second === "list") return { kind: "run-list", workspaceKey, json, all, compact }
   if (second === "get") return { kind: "run-get", runId: argv[2], json }
+  if (second === "resume") {
+    const resume = resolveResumeFlags(argv)
+    return Object.keys(resume).length === 0
+      ? { kind: "run-resume", runId: argv[2] }
+      : { kind: "run-resume", runId: argv[2], resume }
+  }
   if (second === "open") return { kind: "run-open", runId: argv[2] }
   if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
   if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
@@ -355,6 +361,8 @@ export function printHelp(): void {
     "                                                         Import prepared concept/PRDs and start implementation",
     "    beerengineer run list [--all] [--compact]            List runs",
     "    beerengineer run get <run-id> [--json]               Show one run",
+    "    beerengineer run resume <run-id>                     Resume one blocked run",
+    "                                                         Flags: --remediation-summary <text> [--branch <name>] [--commit <sha>] [--notes <text>] [--yes]",
     "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
     "                                                         Flags: [--since <id>] [--limit N] [--json]",
     "    beerengineer runs tail <run-id> [--level L1]        Tail canonical message stream",
