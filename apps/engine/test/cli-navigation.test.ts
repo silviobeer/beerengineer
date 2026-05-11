@@ -93,6 +93,8 @@ test("status prints the workspace Supabase db mode", async () => {
   const dbPath = join(dir, "beerengineer.sqlite")
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
+  const originalWrite = process.stdout.write.bind(process.stdout)
+  const originalExit = process.exit
 
   try {
     process.env.BEERENGINEER_DATA_DIR = dir
@@ -100,10 +102,10 @@ test("status prints the workspace Supabase db mode", async () => {
     process.env.BEERENGINEER_UI_DB_PATH = dbPath
     const direct = repos.upsertWorkspace({ key: "direct", name: "Direct", rootPath: "/tmp/direct" })
     repos.connectWorkspaceSupabase(direct.id, { projectRef: "proj_direct", region: "eu", dbMode: "direct" })
+    const branching = repos.upsertWorkspace({ key: "branching", name: "Branching", rootPath: "/tmp/branching" })
+    repos.connectWorkspaceSupabase(branching.id, { projectRef: "proj_branching", region: "eu", dbMode: "branching" })
 
     let stdout = ""
-    const originalWrite = process.stdout.write.bind(process.stdout)
-    const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
       const text = stdoutChunkText(chunk)
       if (isTestReporterChunk(text)) return originalWrite(chunk)
@@ -119,13 +121,20 @@ test("status prints the workspace Supabase db mode", async () => {
       assert.fail("expected main() to exit")
     } catch (err) {
       assert.equal((err as Error).message, "EXIT:0")
-    } finally {
-      process.stdout.write = originalWrite
-      process.exit = originalExit
     }
-
     assert.match(stdout, /db mode: direct/)
+
+    stdout = ""
+    try {
+      await main(["status", "--workspace", "branching"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    }
+    assert.match(stdout, /db mode: branching/)
   } finally {
+    process.stdout.write = originalWrite
+    process.exit = originalExit
     db.close()
     if (previousDataDir === undefined) delete process.env.BEERENGINEER_DATA_DIR
     else process.env.BEERENGINEER_DATA_DIR = previousDataDir
