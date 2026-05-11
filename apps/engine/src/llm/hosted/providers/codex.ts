@@ -243,7 +243,7 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
   const resolution = await resolveCodexSandboxBypass(input.runtime.policy.mode, process.env)
   try {
     const result = await invokeCodexAttempt(input, resolution.bypass)
-    if (!resolution.bypass && input.runtime.policy.mode !== "no-tools") {
+    if (resolution.bypass === false && input.runtime.policy.mode !== "no-tools") {
       markCodexSandboxCapabilitySupported()
     }
     return result

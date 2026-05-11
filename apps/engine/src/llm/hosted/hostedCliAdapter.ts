@@ -219,7 +219,7 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
         retryHint: STAGE_RETRY_HINT,
       }))
     } catch (error) {
-      if (this.input.stageId === "qa" && isHostedWorkerLaunchFailure(error)) {
+      if (isHostedWorkerLaunchFailure(error)) {
         throw buildCodexWorkerStartFailure(error)
       }
       throw error
