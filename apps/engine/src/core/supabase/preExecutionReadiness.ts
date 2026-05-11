@@ -79,6 +79,7 @@ function workspaceFromRow(row: WorkspaceRow | undefined): SupabaseReadinessWorks
     key: row.key,
     rootPath: normalize(row.root_path),
     projectRef: normalize(row.supabase_project_ref),
+    dbMode: row.supabase_db_mode ?? undefined,
     persistentTestBranchRef: normalize(row.supabase_persistent_test_branch_ref),
     persistentTestBranchName: normalize(row.supabase_persistent_test_branch_name),
   }
@@ -167,7 +168,7 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
     if (normalize(project.ref) && normalize(project.ref) !== projectRef) {
       return blocked({ workspace, runId, actions: ["Re-authorize project access"], message: "Supabase project access returned a different project" })
     }
-    if (project.branchingEnabled === false) {
+    if (!workspace.dbMode && project.branchingEnabled === false) {
       return blocked({ workspace, runId, message: "Supabase branching is not enabled for this project", branch: { ref: branchRef, status: "degraded" } })
     }
   } catch (err) {
