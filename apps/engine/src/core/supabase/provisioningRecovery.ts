@@ -30,6 +30,11 @@ function nonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
 function defaultFailureCause(step: SupabaseProvisioningFailureStep): string {
   switch (step) {
     case "provision":
@@ -47,7 +52,7 @@ export function humanizeSupabaseProvisioningFailure(
   step: SupabaseProvisioningFailureStep,
   source: unknown,
 ): SupabaseProvisioningFailure {
-  const row = source && typeof source === "object" ? source as Record<string, unknown> : null
+  const row = objectValue(source)
   const failureCause = nonEmptyString(row?.message)
     ?? nonEmptyString(row?.reason)
     ?? nonEmptyString(row?.details)

@@ -384,7 +384,7 @@ test("REQ-1 AC-1.3: missing provider detail still yields a non-empty human-reada
         protectionSwitch: "off",
         cleanupPolicy: "manual",
         adapter: {
-          provisionBranch: async () => ({ ok: false, context: {} }),
+          provisionBranch: async () => ({ ok: false }),
           pollBranchStatus: async () => ({ ok: true }),
           validateBranch: async () => ({ ok: true }),
           destroyBranch: async () => ({ ok: true }),

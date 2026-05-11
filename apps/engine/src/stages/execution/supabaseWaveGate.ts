@@ -24,6 +24,15 @@ export function isDbRelevantWave(wave: WaveDefinition): boolean {
   return wave.stories.some(story => story.dbRelevant === true)
 }
 
+function contextWithBranchRef(
+  context: Record<string, unknown> | undefined,
+  branchRef: string,
+): Record<string, unknown> {
+  return context
+    ? { ...context, branchRef }
+    : { branchRef }
+}
+
 /**
  * Simple provision helper kept for backward compat and unit-testing of the
  * non-DB-relevant skip path (used by the existing supabaseSkip test).
@@ -110,7 +119,7 @@ export async function provisionWaveIfDbRelevant(input: {
     return { ok: false, ...humanizeSupabaseProvisioningFailure("poll", { error: err, branchRef }), details: err }
   }
   if (!pollResult.ok) {
-    return { ok: false, ...humanizeSupabaseProvisioningFailure("poll", { ...(pollResult.context ?? {}), branchRef }), details: pollResult.context }
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("poll", contextWithBranchRef(pollResult.context, branchRef)), details: pollResult.context }
   }
 
   // Step 3: write handoff dotenv (architecture decision 18: write before validation)
@@ -147,7 +156,7 @@ export async function provisionWaveIfDbRelevant(input: {
     if (context.runId && input.repos) {
       input.repos.setRunSupabaseLifecycleState(context.runId, "retained-for-diagnosis")
     }
-    return { ok: false, ...humanizeSupabaseProvisioningFailure("validate", { ...(validateResult.context ?? {}), branchRef }), details: validateResult.context }
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("validate", contextWithBranchRef(validateResult.context, branchRef)), details: validateResult.context }
   }
 
   return { ok: true, branchRef, handoffPath }
@@ -181,11 +190,12 @@ async function writeWaveHandoff(input: {
     })
     return { ok: true, handoffPath: handoff.path }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : ""
     if ((err as NodeJS.ErrnoException).code === "EEXIST" ||
-        (err as Error).message?.includes("already exists")) {
+        errorMessage.includes("already exists")) {
       const { supabaseHandoffPath } = await import("../../core/supabase/handoffWriter.js")
       return { ok: true, handoffPath: supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId) }
     }
-    return { ok: false, error: "handoff_write_failed", details: (err as Error).message }
+    return { ok: false, error: "handoff_write_failed", details: errorMessage || String(err) }
   }
 }
