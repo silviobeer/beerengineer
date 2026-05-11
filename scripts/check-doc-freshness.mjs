@@ -35,7 +35,7 @@ const NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN =
 const ACTIVE_PATH_CONTEXT_PATTERN =
   /\b(active|canonical|current|directory|directories|docs|entry|home|lives|live|located|look|open|path|paths|read|reference|references|route|routes|source|sources|start at|stored|structure|under|use|uses)\b/i
 const HISTORICAL_CONTEXT_PATTERN =
-  /\b(former|formerly|historical|moved|no longer active|no longer exists|previous|removed|retired|used to|was a historical mistake|wrong location)\b/i
+  /\b(archive|archived|former|formerly|historical|moved|no longer active|no longer current|no longer exists|previous|removed|retired|used to|was a historical mistake|wrong location)\b/i
 
 function toRepoPath(rootPath, absolutePath) {
   return relative(rootPath, absolutePath).split(sep).join("/")
@@ -285,7 +285,7 @@ function normalizeCandidate(candidate) {
   const trimmed = withoutAnchor.replace(/[),.;:]+$/, "")
   if (trimmed.length === 0) return null
 
-  if (["README.md", "AGENTS.md", "package.json"].includes(trimmed)) return trimmed
+  if (!trimmed.endsWith("/")) return null
   if (ROOT_PATH_PREFIXES.some((prefix) => trimmed.startsWith(prefix))) return trimmed
   if (trimmed.startsWith("./") || trimmed.startsWith("../")) return trimmed
   if (/^[A-Za-z0-9._-]+\/$/.test(trimmed)) return trimmed
@@ -314,18 +314,23 @@ function collectPathCandidates(line) {
 
 function resolveDocCandidate(rootPath, docPath, candidate) {
   const docDir = dirname(join(rootPath, docPath))
-  const docDirectoryIsRoot = dirname(docPath) === "."
   let absolutePath = null
 
   if (candidate.startsWith("./") || candidate.startsWith("../")) {
     absolutePath = resolve(docDir, candidate)
-  } else if (
-    ["README.md", "AGENTS.md", "package.json"].includes(candidate) ||
-    ROOT_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))
-  ) {
+  } else if (ROOT_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))) {
     absolutePath = resolve(rootPath, candidate)
-  } else if (!docDirectoryIsRoot && /^[A-Za-z0-9._-]+\/$/.test(candidate)) {
-    absolutePath = resolve(docDir, candidate)
+  } else if (/^[A-Za-z0-9._-]+\/$/.test(candidate)) {
+    const docRelativePath = resolve(docDir, candidate)
+    const rootRelativePath = resolve(rootPath, candidate)
+
+    if (existsSync(docRelativePath)) {
+      absolutePath = docRelativePath
+    } else if (existsSync(rootRelativePath)) {
+      absolutePath = rootRelativePath
+    } else {
+      absolutePath = rootRelativePath
+    }
   }
 
   if (!absolutePath) return null

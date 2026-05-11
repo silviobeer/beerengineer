@@ -115,6 +115,10 @@ function makeEmptyProgressDir(root, projId, slug) {
   })
 }
 
+function makeDir(root, relativePath) {
+  mkdirSync(join(root, relativePath), { recursive: true })
+}
+
 function appendFile(root, relativePath, content) {
   const current = readFileSync(join(root, relativePath), "utf8")
   writeFile(root, relativePath, `${current}${content}`)
@@ -503,7 +507,25 @@ test("TC-9 deleted-path scan ignores out-of-scope docs", () => {
   }
 })
 
-test("TC-10 active stale path in approved docs is reported", () => {
+test("TC-9b deleted-directory scan ignores nested docs below the approved ADR scope", () => {
+  const root = createFixture()
+  try {
+    writeFile(
+      root,
+      "docs/adr/archive/old-decision.md",
+      "# Archived\n\nCurrent active code lives in `legacy/`.\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.stalePaths, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-10 active deleted directory in approved docs is reported", () => {
   const root = createFixture()
   try {
     appendFile(root, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
@@ -523,13 +545,123 @@ test("TC-10 active stale path in approved docs is reported", () => {
   }
 })
 
-test("TC-11 historical deleted-path references are allowed", () => {
+test("TC-10b missing nested directory is reported even when its parent exists", () => {
+  const root = createFixture()
+  try {
+    makeDir(root, "apps/engine/")
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      "\nCurrent engine feature code now lives in `apps/engine/legacy/`.\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.stalePaths.length, 1)
+    assert.equal(
+      result.findings.stalePaths[0].referencedPath,
+      "apps/engine/legacy/",
+    )
+    assert.equal(result.findings.stalePaths[0].docPath, "docs/TECHNICAL.md")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-10c active directory reference is allowed when the directory exists", () => {
+  const root = createFixture()
+  try {
+    makeDir(root, "legacy/")
+    appendFile(root, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.stalePaths, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11 historical deleted-directory references are allowed", () => {
   const root = createFixture()
   try {
     appendFile(
       root,
       "docs/TECHNICAL.md",
       "\nHistorical note: `legacy/` was removed and is no longer active.\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.stalePaths, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11b active and historical mentions of the same missing directory are evaluated independently", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical note: `legacy/` was removed and is no longer active.",
+        "Current engine code lives in `legacy/`.",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.stalePaths.length, 1)
+    assert.equal(result.findings.stalePaths[0].referencedPath, "legacy/")
+    assert.equal(result.findings.stalePaths[0].lineNumber, 5)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11c deleted-directory rule does not broaden into generic broken-link checking", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current engine code lives in `legacy/`.",
+        "Current runbook file lives in `docs/missing-guide.md`.",
+        "Current external guide: [Setup](https://example.invalid/setup).",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.stalePaths.length, 1)
+    assert.equal(result.findings.stalePaths[0].referencedPath, "legacy/")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11d deleted-directory rule returns empty results when all references are valid or historical", () => {
+  const root = createFixture()
+  try {
+    makeDir(root, "legacy/")
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical note: `retired/` was removed and is no longer active.",
+        "Current engine code lives in `legacy/`.",
+      ].join("\n"),
     )
 
     const result = checkDocFreshness(root)
