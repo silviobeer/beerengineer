@@ -14,7 +14,7 @@
 | If you need to know… | Open |
 |---|---|
 | What the engine ships today (feature catalog) | [`PROJECT.md`](./PROJECT.md) |
-| Engine architecture map + cross-cutting decisions | [`TECHNICAL.md`](./TECHNICAL.md) |
+| Engine architecture map, source layout, and engine-specific gotchas | [`TECHNICAL.md`](./TECHNICAL.md) |
 | Pipeline overview, `ProjectStageNode`, `GitAdapter`, `runCycledLoop`, file map, how to add a stage | [`engine-architecture.md`](./engine-architecture.md) |
 | Prompt envelope, codebase snapshot, conversation projection, `*Context` payloads, harness profiles, runtime policy, presets, env vars, **per-stage LLM I/O table** | [`context-and-llm-config.md`](./context-and-llm-config.md) |
 | `doctor` / `setup` commands, `--json` harness protocol, test pyramid | [`app-setup.md`](./app-setup.md) |
@@ -28,6 +28,7 @@ levels to [`docs/`](../../../docs/):
 
 | Topic | File |
 |---|---|
+| Durable architecture decisions | [`docs/adr/`](../../../docs/adr/) |
 | HTTP API request/response shapes (prose) | [`docs/api-contract.md`](../../../docs/api-contract.md) |
 | Messaging-level taxonomy (L0/L1/L2), event-to-level mapping, projection | [`docs/messaging-levels.md`](../../../docs/messaging-levels.md) |
 

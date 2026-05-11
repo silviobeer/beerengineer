@@ -473,13 +473,21 @@ export class Repos {
     return this.insertRow("projects", row)
   }
 
-  createRun(input: { id?: string; workspaceId: string; itemId: string; title: string; owner?: RunOwner; workspaceFsId?: string | null }): RunRow {
+  createRun(input: {
+    id?: string
+    workspaceId: string
+    itemId: string
+    title: string
+    owner?: RunOwner
+    status?: string
+    workspaceFsId?: string | null
+  }): RunRow {
     const row: RunRow = this.withTimestamps({
       id: input.id ?? randomUUID(),
       workspace_id: input.workspaceId,
       item_id: input.itemId,
       title: input.title,
-      status: "running",
+      status: input.status ?? "running",
       current_stage: null,
       owner: input.owner ?? "api",
       recovery_status: null,

@@ -1,3 +1,4 @@
+import type { ImportContextArtifact } from "../../core/importContext.js"
 import type { ItemDecision } from "../../core/itemDecisions.js"
 import type { ChatMessage } from "../../llm/types.js"
 import type { Concept, PRD, WireframeArtifact } from "../../types.js"
@@ -10,6 +11,7 @@ export type RequirementsArtifact = {
 
 export type RequirementsState = {
   concept: Concept
+  importContext?: ImportContextArtifact
   wireframes?: WireframeArtifact
   design?: {
     tone: string

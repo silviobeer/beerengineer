@@ -127,7 +127,7 @@ test("GET /ready OpenAPI and prose contract document workflow readiness", () => 
 
   assert.ok(openapi.paths["/ready"])
   const readySchema = openapi.components.schemas.ReadyResponse
-  for (const field of ["ok", "service", "uptimeMs", "db", "startupRecovery", "shutdown", "leaseWrite"]) {
+  for (const field of ["ok", "service", "uptimeMs", "db", "startupRecovery", "shutdown", "leaseWrite", "effectiveWorkerCap"]) {
     assert.ok(readySchema.properties?.[field], `ReadyResponse must document ${field}`)
   }
   assert.match(contract, /GET \/ready/)
@@ -314,11 +314,14 @@ test("GET /ready returns workflow readiness without growing workflow history", a
       startupRecovery: string
       shutdown: string
       leaseWrite: string
+      effectiveWorkerCap: number
     }
     assert.equal(body.ok, true)
     assert.equal(body.startupRecovery, "complete")
     assert.equal(body.shutdown, "idle")
     assert.equal(body.leaseWrite, "ok")
+    assert.equal(typeof body.effectiveWorkerCap, "number")
+    assert.ok(body.effectiveWorkerCap >= 1)
   } finally {
     await stopServer(proc)
   }
@@ -2034,6 +2037,89 @@ test("startup with no stale runs completes and does not emit spurious recovery m
     assert.deepEqual(messagesBody.entries.filter(entry => entry.type === "startup_recovery"), [])
   } finally {
     await stopServer(proc)
+  }
+})
+
+test("REQ-2 startup above the recovery threshold emits one holdback notice with every affected run id", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-startup-threshold-"))
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: workspaceRoot })
+  const firstItem = repos.createItem({ workspaceId: ws.id, title: "Held back stale run one", description: "" })
+  const secondItem = repos.createItem({ workspaceId: ws.id, title: "Held back stale run two", description: "" })
+  const thirdItem = repos.createItem({ workspaceId: ws.id, title: "Held back stale run three", description: "" })
+  const firstRun = seedStaleRunningRun(repos, {
+    workspaceId: ws.id,
+    itemId: firstItem.id,
+    title: firstItem.title,
+    lease: {
+      workerInstanceId: "cli-held-1",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  const secondRun = seedStaleRunningRun(repos, {
+    workspaceId: ws.id,
+    itemId: secondItem.id,
+    title: secondItem.title,
+    lease: {
+      workerInstanceId: "cli-held-2",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  const thirdRun = seedStaleRunningRun(repos, {
+    workspaceId: ws.id,
+    itemId: thirdItem.id,
+    title: thirdItem.title,
+    lease: {
+      workerInstanceId: "cli-held-3",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  db.close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_WORKER_CAP: "2",
+  })
+  try {
+    await waitForHealth(base)
+
+    const recoveryEntries = (
+      await Promise.all([firstRun.id, secondRun.id, thirdRun.id].map(async runId => {
+        const res = await fetch(`${base}/runs/${runId}/messages?level=2`)
+        assert.equal(res.status, 200)
+        const body = await res.json() as {
+          entries: Array<{ runId: string; type: string; payload: Record<string, unknown> }>
+        }
+        return body.entries.filter(entry => entry.type === "startup_recovery")
+      }))
+    ).flat()
+
+    assert.equal(recoveryEntries.length, 1)
+    assert.equal(recoveryEntries[0]?.runId, firstRun.id)
+    assert.equal(recoveryEntries[0]?.payload.outcome, "skipped")
+    assert.equal(recoveryEntries[0]?.payload.reason, "recovery_threshold_exceeded")
+    assert.deepEqual(
+      recoveryEntries[0]?.payload.heldBackRunIds,
+      [firstRun.id, secondRun.id, thirdRun.id],
+    )
+  } finally {
+    await stopServer(proc)
+  }
+
+  const dbAfter = initDatabase(dbPath)
+  const reposAfter = new Repos(dbAfter)
+  try {
+    for (const runId of [firstRun.id, secondRun.id, thirdRun.id]) {
+      assert.equal(reposAfter.getRun(runId)?.status, "failed")
+      assert.equal(reposAfter.getRun(runId)?.recovery_status, "failed")
+    }
+  } finally {
+    dbAfter.close()
   }
 })
 

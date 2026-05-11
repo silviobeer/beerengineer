@@ -31,6 +31,7 @@ import {
   primeCodexSandboxCapabilityDetection,
   setCodexSandboxCapabilityStore,
 } from "../llm/hosted/providers/codexSandboxPolicy.js"
+import { getWorkerAdmissionController, workerAdmissionStartupLogMessage } from "../core/workerAdmission.js"
 import type { ApiLifecycleHooks, ApiRouteDependencies } from "./entrypointContracts.js"
 
 const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
@@ -85,8 +86,11 @@ export function composeApiPrivilegedDependencies(
       repos.setCodexSandboxCapabilitySnapshot(capability)
     },
   })
+  const admission = getWorkerAdmissionController(repos)
   const itemActions = createItemActionsService(repos)
   const board = createBoardStream(repos, db)
+
+  console.log(workerAdmissionStartupLogMessage(admission.resolution))
 
   seedIfEmpty(db, repos)
 
@@ -175,6 +179,7 @@ export function composeApiPrivilegedDependencies(
           apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
           autoResume: {
             enabled: autoResumeEnabled,
+            recoveryThreshold: admission.resolution.effectiveWorkerCap,
             resumeRun: async run => {
               const result = await autoResumeRunOnStartup(repos, {
                 runId: run.id,
@@ -257,6 +262,11 @@ export function composeApiPrivilegedDependencies(
     closeDatabase(): void {
       try {
         board.dispose()
+      } catch {
+        // best-effort cleanup before DB close
+      }
+      try {
+        admission.dispose()
       } catch {
         // best-effort cleanup before DB close
       }

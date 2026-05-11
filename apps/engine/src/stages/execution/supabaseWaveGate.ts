@@ -3,6 +3,10 @@ import type { WaveDefinition } from "../../types.js"
 import type { Repos } from "../../db/repositories.js"
 import { writeSupabaseHandoff, ensureSupabaseHandoffGitignore } from "../../core/supabase/handoffWriter.js"
 import type { SupabaseHandoffClient } from "../../core/supabase/handoffWriter.js"
+import {
+  humanizeSupabaseProvisioningFailure,
+  type SupabaseProvisioningFailure,
+} from "../../core/supabase/provisioningRecovery.js"
 
 export type SupabaseWaveProvisionResult = {
   dbRelevantWave: boolean
@@ -13,11 +17,20 @@ export type SupabaseWaveProvisionResult = {
 /** Canonical result for the orchestrated provision → poll → handoff → validate sequence. */
 export type SupabaseWaveOrchestrationResult =
   | { ok: true; branchRef: string; handoffPath: string }
-  | { ok: false; error: string; details?: unknown }
+  | ({ ok: false } & SupabaseProvisioningFailure & { details?: unknown })
 
 export function isDbRelevantWave(wave: WaveDefinition): boolean {
   if (typeof wave.dbRelevantWave === "boolean") return wave.dbRelevantWave
   return wave.stories.some(story => story.dbRelevant === true)
+}
+
+function contextWithBranchRef(
+  context: Record<string, unknown> | undefined,
+  branchRef: string,
+): Record<string, unknown> {
+  return context
+    ? { ...context, branchRef }
+    : { branchRef }
 }
 
 /**
@@ -72,29 +85,41 @@ export async function provisionWaveIfDbRelevant(input: {
       dbMode: "direct",
       branchRef: context.branchRef,
     })
-    if (!directHandoff.ok) return directHandoff
+    if (!directHandoff.ok) {
+      return {
+        ok: false,
+        ...humanizeSupabaseProvisioningFailure("handoff", {
+          error: directHandoff.error,
+          details: directHandoff.details,
+          branchRef: context.branchRef,
+        }),
+        details: directHandoff.details,
+      }
+    }
     return { ok: true, branchRef: "", handoffPath: directHandoff.handoffPath }
   }
 
   // Step 1: provision
-  const provisionResult = await adapter.provisionBranch({ ...context, waveId: wave.id })
+  let provisionResult
+  try {
+    provisionResult = await adapter.provisionBranch({ ...context, waveId: wave.id })
+  } catch (err) {
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("provision", err), details: err }
+  }
   if (!provisionResult.ok) {
-    return {
-      ok: false,
-      error: String(provisionResult.context?.message ?? provisionResult.context?.error ?? "provision_failed"),
-      details: provisionResult.context,
-    }
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("provision", provisionResult.context), details: provisionResult.context }
   }
   const branchRef = String(provisionResult.context?.branchRef ?? context.branchRef ?? "")
 
   // Step 2: poll until ACTIVE_HEALTHY
-  const pollResult = await adapter.pollBranchStatus({ ...context, waveId: wave.id, branchRef })
+  let pollResult
+  try {
+    pollResult = await adapter.pollBranchStatus({ ...context, waveId: wave.id, branchRef })
+  } catch (err) {
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("poll", { error: err, branchRef }), details: err }
+  }
   if (!pollResult.ok) {
-    return {
-      ok: false,
-      error: String(pollResult.context?.reason ?? "poll_failed"),
-      details: pollResult.context,
-    }
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("poll", contextWithBranchRef(pollResult.context, branchRef)), details: pollResult.context }
   }
 
   // Step 3: write handoff dotenv (architecture decision 18: write before validation)
@@ -107,24 +132,31 @@ export async function provisionWaveIfDbRelevant(input: {
     dbMode: "branching",
     branchRef,
   })
-  if (!handoff.ok) return handoff
+  if (!handoff.ok) {
+    return {
+      ok: false,
+      ...humanizeSupabaseProvisioningFailure("handoff", { error: handoff.error, details: handoff.details, branchRef }),
+      details: handoff.details,
+    }
+  }
   const handoffPath = handoff.handoffPath
 
   // Step 4: validate (migrations + seeds + DB tests)
-  const validateResult = await adapter.validateBranch({
-    ...context,
-    waveId: wave.id,
-    branchRef,
-  })
+  let validateResult
+  try {
+    validateResult = await adapter.validateBranch({
+      ...context,
+      waveId: wave.id,
+      branchRef,
+    })
+  } catch (err) {
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("validate", { error: err, branchRef }), details: err }
+  }
   if (!validateResult.ok) {
     if (context.runId && input.repos) {
       input.repos.setRunSupabaseLifecycleState(context.runId, "retained-for-diagnosis")
     }
-    return {
-      ok: false,
-      error: String(validateResult.context?.message ?? "validate_failed"),
-      details: validateResult.context,
-    }
+    return { ok: false, ...humanizeSupabaseProvisioningFailure("validate", contextWithBranchRef(validateResult.context, branchRef)), details: validateResult.context }
   }
 
   return { ok: true, branchRef, handoffPath }
@@ -158,11 +190,12 @@ async function writeWaveHandoff(input: {
     })
     return { ok: true, handoffPath: handoff.path }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : ""
     if ((err as NodeJS.ErrnoException).code === "EEXIST" ||
-        (err as Error).message?.includes("already exists")) {
+        errorMessage.includes("already exists")) {
       const { supabaseHandoffPath } = await import("../../core/supabase/handoffWriter.js")
       return { ok: true, handoffPath: supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId) }
     }
-    return { ok: false, error: "handoff_write_failed", details: (err as Error).message }
+    return { ok: false, error: "handoff_write_failed", details: errorMessage || String(err) }
   }
 }
