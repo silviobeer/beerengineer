@@ -284,14 +284,7 @@ export async function handleReplanRun(
         hint: activeResult.hint,
       })
     }
-    switch (result.error) {
-      case "reason_required":
-      case "replan_plan_missing":
-      case "run_not_found":
-        return json(res, result.status, { error: result.error, message: result.message })
-      default:
-        return json(res, result.status, { error: result.error, message: result.message })
-    }
+    return json(res, result.status, { error: result.error, message: result.message })
   }
   json(res, 200, { runId: result.runId, status: "replanned" })
 }
