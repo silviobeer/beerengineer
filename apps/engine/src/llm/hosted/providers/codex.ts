@@ -6,7 +6,6 @@ import type { HostedInvocationResult, HostedProviderInvokeInput } from "../provi
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import { emitHostedThinking, emitHostedTokens, emitHostedToolCalled, emitHostedToolResult, makeJsonLineStreamCallback } from "./_stream.js"
 import {
-  buildCodexBypassRetryFailure,
   codexSandboxBypassEnabled,
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnsupported,
@@ -258,10 +257,6 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
       throw error
     }
     markCodexSandboxCapabilityUnsupported()
-    try {
-      return await invokeCodexAttempt(input, true)
-    } catch (retryError) {
-      throw buildCodexBypassRetryFailure(error, retryError)
-    }
+    return await invokeCodexAttempt(input, true)
   }
 }
