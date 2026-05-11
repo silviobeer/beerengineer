@@ -127,7 +127,7 @@ test("recoverLostWorkerRuns treats worker_owner_kind as authoritative after API 
   assert.ok(recovered?.recovery_summary?.includes("API restart"), "actual API lease owner should get API recovery")
 })
 
-test("classifyStartupAutoResumeEligibility keeps open-prompt and non-orphaned runs off auto-resume", () => {
+test("classifyStartupAutoResumeEligibility ignores open prompts but still respects other non-eligibility rules", () => {
   assert.deepEqual(
     classifyStartupAutoResumeEligibility({
       hasOrphanedWorkerLease: false,
@@ -142,7 +142,7 @@ test("classifyStartupAutoResumeEligibility keeps open-prompt and non-orphaned ru
       hasOpenPrompt: true,
       autoResumeEnabled: true,
     }),
-    { eligible: false, reason: "open_prompt" },
+    { eligible: true },
   )
   assert.deepEqual(
     classifyStartupAutoResumeEligibility({
@@ -150,7 +150,7 @@ test("classifyStartupAutoResumeEligibility keeps open-prompt and non-orphaned ru
       hasOpenPrompt: true,
       autoResumeEnabled: true,
     }),
-    { eligible: false, reason: "open_prompt" },
+    { eligible: false, reason: "worker_lease_not_orphaned" },
   )
   assert.deepEqual(
     classifyStartupAutoResumeEligibility({
