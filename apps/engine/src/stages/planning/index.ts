@@ -1,4 +1,4 @@
-import { runStage } from "../../core/stageRuntime.js"
+import { runStage, writeArtifactFiles } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
@@ -21,6 +21,8 @@ export type StoryDbRelevanceSupport = {
 export type DbRelevanceUnsupportedClaim =
   | { level: "story"; waveId: string; storyId: string; reason: string }
   | { level: "wave"; waveId: string; reason: string }
+
+const MAX_DB_RELEVANCE_REVISION_ROUNDS = 2
 
 const DB_EVIDENCE_PHRASES = [
   "schema",
@@ -204,11 +206,71 @@ export function summarizeWaveDbRelevance(
   }
 }
 
-export function applyDbRelevanceEvidenceValidation(
+export function findUnsupportedDbRelevanceClaims(
+  artifact: ImplementationPlanArtifact,
+  context: PlanningDbRelevanceContext,
+): DbRelevanceUnsupportedClaim[] {
+  const unsupportedClaims: DbRelevanceUnsupportedClaim[] = []
+
+  for (const wave of artifact.plan?.waves ?? []) {
+    if (wave.kind === "setup") continue
+
+    let supportedPositiveStoryCount = 0
+    for (const story of wave.stories ?? []) {
+      if (story.dbRelevant !== true) continue
+      const support = evaluateStoryDbRelevanceSupport({
+        story,
+        hasSupabaseConfigured: context.hasSupabaseConfigured,
+      })
+      if (!support.supported) {
+        unsupportedClaims.push({
+          level: "story",
+          waveId: wave.id,
+          storyId: story.id,
+          reason: support.reason ?? STORY_UNSUPPORTED_REASON,
+        })
+        continue
+      }
+      supportedPositiveStoryCount++
+    }
+
+    const supportedWaveClaim = supportedPositiveStoryCount > 0 || waveHasExplicitDatabaseEvidence(wave)
+    if (wave.dbRelevantWave === true && !supportedWaveClaim) {
+      unsupportedClaims.push({
+        level: "wave",
+        waveId: wave.id,
+        reason: WAVE_UNSUPPORTED_REASON,
+      })
+    }
+  }
+
+  return unsupportedClaims
+}
+
+export function formatDbRelevanceRevisionFeedback(unsupportedClaims: DbRelevanceUnsupportedClaim[]): string {
+  const noun = unsupportedClaims.length === 1 ? "claim" : "claims"
+  const bulletLines = unsupportedClaims.map(claim => {
+    if (claim.level === "story") {
+      return `- Wave ${claim.waveId} story "${claim.storyId}" marks \`dbRelevant:true\`, but the current plan lacks the required database evidence for that claim. ${claim.reason}`
+    }
+    return `- Wave ${claim.waveId} marks \`dbRelevantWave:true\`, but the current plan lacks the required database evidence for that claim. ${claim.reason}`
+  })
+  return [
+    `Revise the implementation plan before approval. The current plan lacks the required database evidence for the following ${noun}:`,
+    ...bulletLines,
+  ].join("\n")
+}
+
+function unsupportedClaimKeys(unsupportedClaims: DbRelevanceUnsupportedClaim[]): Set<string> {
+  return new Set(unsupportedClaims.map(claim => claim.level === "story" ? `story:${claim.waveId}:${claim.storyId}` : `wave:${claim.waveId}`))
+}
+
+export function applyDeterministicDbRelevanceFallback(
   artifact: ImplementationPlanArtifact,
   context: PlanningDbRelevanceContext,
 ): { artifact: ImplementationPlanArtifact; unsupportedClaims: DbRelevanceUnsupportedClaim[] } {
-  const unsupportedClaims: DbRelevanceUnsupportedClaim[] = []
+  const unsupportedClaims = findUnsupportedDbRelevanceClaims(artifact, context)
+  const unsupportedKeys = unsupportedClaimKeys(unsupportedClaims)
 
   for (const wave of artifact.plan?.waves ?? []) {
     if (wave.kind === "setup") {
@@ -219,33 +281,29 @@ export function applyDbRelevanceEvidenceValidation(
 
     for (const story of wave.stories ?? []) {
       if (story.dbRelevant !== true) continue
-      const support = evaluateStoryDbRelevanceSupport({
-        story,
-        hasSupabaseConfigured: context.hasSupabaseConfigured,
-      })
-      if (support.supported) continue
-      unsupportedClaims.push({
-        level: "story",
-        waveId: wave.id,
-        storyId: story.id,
-        reason: support.reason ?? STORY_UNSUPPORTED_REASON,
-      })
+      if (!unsupportedKeys.has(`story:${wave.id}:${story.id}`)) continue
       story.dbRelevant = false
     }
 
     const summary = summarizeWaveDbRelevance(wave)
-    if (wave.dbRelevantWave === true && !summary.dbRelevantWave) {
-      unsupportedClaims.push({
-        level: "wave",
-        waveId: wave.id,
-        reason: WAVE_UNSUPPORTED_REASON,
-      })
-    }
     wave.dbRelevantStoryCount = summary.dbRelevantStoryCount
-    wave.dbRelevantWave = summary.dbRelevantWave
+    if (wave.dbRelevantWave === true && unsupportedKeys.has(`wave:${wave.id}`)) {
+      wave.dbRelevantWave = false
+      continue
+    }
+    if (wave.dbRelevantWave === true || summary.dbRelevantWave) {
+      wave.dbRelevantWave = summary.dbRelevantWave
+    }
   }
 
   return { artifact, unsupportedClaims }
+}
+
+export function applyDbRelevanceEvidenceValidation(
+  artifact: ImplementationPlanArtifact,
+  context: PlanningDbRelevanceContext,
+): { artifact: ImplementationPlanArtifact; unsupportedClaims: DbRelevanceUnsupportedClaim[] } {
+  return applyDeterministicDbRelevanceFallback(artifact, context)
 }
 
 export function applyDbRelevanceSummaries(artifact: ImplementationPlanArtifact): ImplementationPlanArtifact {
@@ -263,7 +321,6 @@ export function applyDbRelevanceSummaries(artifact: ImplementationPlanArtifact):
 }
 
 function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): string | null {
-  applyDbRelevanceSummaries(artifact)
   const prdIds = new Set(prd.stories.map(s => s.id))
   const seen = new Set<string>()
   const issues: string[] = []
@@ -289,6 +346,70 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
     if (!seen.has(s.id)) issues.push(`PRD story "${s.id}" is not assigned to any wave.`)
   }
   return issues.length > 0 ? issues.join(" ") : null
+}
+
+function createPlanningArtifactContents(
+  run: Parameters<typeof stageSummary>[0],
+  artifact: ImplementationPlanArtifact,
+): Array<{
+  kind: "json" | "md" | "txt"
+  label: string
+  fileName: string
+  content: string
+}> {
+  return [
+    {
+      kind: "json",
+      label: "Implementation Plan JSON",
+      fileName: "implementation-plan.json",
+      content: JSON.stringify(artifact, null, 2),
+    },
+    {
+      kind: "md",
+      label: "Implementation Plan Markdown",
+      fileName: "implementation-plan.md",
+      content: renderPlanMarkdown(artifact),
+    },
+    summaryArtifactFile(
+      "planning",
+      stageSummary(run, [`Waves: ${Array.isArray(artifact.plan?.waves) ? artifact.plan.waves.length : 0}`]),
+    ),
+  ]
+}
+
+export function createPlanningReviewer<S>(
+  inner: ReviewAgentAdapter<S, ImplementationPlanArtifact>,
+  input: {
+    validate: (artifact: ImplementationPlanArtifact) => string | null
+    dbRelevanceContext: PlanningDbRelevanceContext
+  },
+): ReviewAgentAdapter<S, ImplementationPlanArtifact> {
+  let dbRevisionRounds = 0
+
+  return {
+    async review(reviewInput): Promise<ReviewAgentResponse> {
+      if (!reviewInput) return inner.review(reviewInput)
+
+      const validationFeedback = input.validate(reviewInput.artifact)
+      if (validationFeedback) return { kind: "revise", feedback: validationFeedback }
+
+      const unsupportedClaims = findUnsupportedDbRelevanceClaims(reviewInput.artifact, input.dbRelevanceContext)
+      if (unsupportedClaims.length > 0) {
+        if (dbRevisionRounds < MAX_DB_RELEVANCE_REVISION_ROUNDS) {
+          dbRevisionRounds++
+          return {
+            kind: "revise",
+            feedback: formatDbRelevanceRevisionFeedback(unsupportedClaims),
+          }
+        }
+        applyDeterministicDbRelevanceFallback(reviewInput.artifact, input.dbRelevanceContext)
+      }
+
+      return inner.review(reviewInput)
+    },
+    getSessionId: inner.getSessionId?.bind(inner),
+    setSessionId: inner.setSessionId?.bind(inner),
+  }
 }
 
 function validateWaveShape(
@@ -439,35 +560,19 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       revisionCount: 0,
     }),
     stageAgent: createPlanningStage(ctx.project, llm),
-    reviewer: validatingReviewer(createPlanningReview(llm), artifact => validatePlanStoryIds(artifact, ctx.prd)),
+    reviewer: createPlanningReviewer(validatingReviewer(createPlanningReview(llm), artifact => validatePlanStoryIds(artifact, ctx.prd)), {
+      validate: artifact => validatePlanStoryIds(artifact, ctx.prd),
+      dbRelevanceContext: {
+        hasSupabaseConfigured: ctx.supabase?.configured === true,
+      },
+    }),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
-      applyDbRelevanceEvidenceValidation(artifact, {
-        hasSupabaseConfigured: ctx.supabase?.configured === true,
-      })
-      return [
-        {
-          kind: "json",
-          label: "Implementation Plan JSON",
-          fileName: "implementation-plan.json",
-          content: JSON.stringify(artifact, null, 2),
-        },
-        {
-          kind: "md",
-          label: "Implementation Plan Markdown",
-          fileName: "implementation-plan.md",
-          content: renderPlanMarkdown(artifact),
-        },
-        summaryArtifactFile(
-          "planning",
-          stageSummary(run, [`Waves: ${Array.isArray(artifact.plan?.waves) ? artifact.plan.waves.length : 0}`]),
-        ),
-      ]
+      return createPlanningArtifactContents(run, artifact)
     },
     async onApproved(artifact, run) {
-      applyDbRelevanceEvidenceValidation(artifact, {
-        hasSupabaseConfigured: ctx.supabase?.configured === true,
-      })
+      applyDbRelevanceSummaries(artifact)
+      run.files = await writeArtifactFiles(run.stageArtifactsDir, createPlanningArtifactContents(run, artifact))
       stagePresent.ok("Planning review: implementation plan is ready.")
       // Post-validate: downgrade `internallyParallelizable: true` to
       // false on any wave whose stories share files (or fail to declare
