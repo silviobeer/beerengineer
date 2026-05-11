@@ -112,6 +112,13 @@ const SIMPLE_PRESENTATIONS: Partial<Record<MessageEntry["type"], (entry: Message
   run_finished: entry => ({ icon: "🏁", label: "run finished", detail: payloadString(entry.payload.status, "completed") }),
   run_failed: entry => ({ icon: "💥", label: "run failed", detail: payloadString(entry.payload.summary) }),
   run_blocked: entry => ({ icon: "🧱", label: "run blocked", detail: payloadString(entry.payload.summary) }),
+  dirty_master_allowlist_restore: entry => ({
+    icon: entry.payload.status === "failed" ? "⚠" : "🧹",
+    label: entry.payload.status === "failed" ? "allowlisted restore failed" : "allowlisted paths auto-restored",
+    detail: typeof entry.payload.branch === "string"
+      ? `${payloadString(entry.payload.branch)} / ${stringPayloadList(entry.payload.paths).join(", ")}`
+      : stringPayloadList(entry.payload.paths).join(", "),
+  }),
   phase_started: entry => ({ icon: "→", label: "stage entered", detail: payloadString(entry.payload.stageKey) }),
   phase_completed: entry => ({ icon: "✓", label: "stage done", detail: payloadString(entry.payload.stageKey) }),
   phase_failed: entry => ({ icon: "✗", label: "stage failed", detail: payloadString(entry.payload.stageKey) }),

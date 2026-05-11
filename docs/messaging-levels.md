@@ -62,6 +62,7 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `run_finished` | L2 | |
 | `run_blocked` | L2 (force) | Always delivered. |
 | `run_failed` | L2 (force) | Always delivered. |
+| `dirty_master_allowlist_restore` | L1 | Shared dirty-master gate attempted tracked allowlisted auto-restore before the final gate decision; payload includes branch, paths, and success/failure. |
 | `startup_recovery` | L2 (force on failed) | Startup recovery outcome for a stale run: auto-resumed, skipped, or auto-resume failed and fell back to manual recovery. |
 | `run_resumed` | L2 | |
 | `external_remediation_recorded` | L2 | |
