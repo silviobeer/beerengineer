@@ -1,4 +1,4 @@
-import { runStage, writeArtifactFiles } from "../../core/stageRuntime.js"
+import { runStage, writeArtifactFiles, type StageRun } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
@@ -541,6 +541,67 @@ function validatingReviewer<S>(
   }
 }
 
+function createPlanningInitialState(ctx: WithArchitecture): PlanningState {
+  return {
+    projectId: ctx.project.id,
+    prd: ctx.prd,
+    architectureSummary: renderArchitectureSummary(ctx.architecture),
+    codebase: ctx.codebase,
+    decisions: ctx.decisions,
+    revisionCount: 0,
+  }
+}
+
+function createPlanningStageReviewer(
+  ctx: WithArchitecture,
+  llm?: RunLlmConfig,
+): ReviewAgentAdapter<PlanningState, ImplementationPlanArtifact> {
+  const validate = (artifact: ImplementationPlanArtifact) => validatePlanStoryIds(artifact, ctx.prd)
+  return createPlanningReviewer(validatingReviewer(createPlanningReview(llm), validate), {
+    validate,
+    dbRelevanceContext: {
+      hasSupabaseConfigured: ctx.supabase?.configured === true,
+    },
+  })
+}
+
+function presentApprovedPlanningWaves(
+  ctx: WithArchitecture,
+  artifact: ImplementationPlanArtifact,
+): void {
+  const decisions = enforceWaveParallelism(artifact, { runId: ctx.runId })
+  for (const decision of decisions) {
+    const reasonText = decision.cause === "missing_shared_files"
+      ? `wave ${decision.waveId}: forced sequential because stories did not declare sharedFiles (overlap unknown)`
+      : `wave ${decision.waveId}: forced sequential due to shared-file overlap on ${decision.overlappingFiles.join(", ")}`
+    stagePresent.warn(reasonText)
+  }
+
+  const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
+  waves.forEach(wave => {
+    let tag = "(stories run sequentially)"
+    if (wave.kind === "setup") tag = "(shared infra setup)"
+    else if (wave.internallyParallelizable) tag = "(stories can run in parallel)"
+    let entries: Array<{ title: string }> = []
+    if (wave.kind === "setup") entries = Array.isArray(wave.tasks) ? wave.tasks : []
+    else entries = Array.isArray(wave.stories) ? wave.stories : []
+    stagePresent.chat(`Wave ${wave.number} ${tag}`, entries.map(story => story.title).join(", "))
+  })
+}
+
+async function finalizeApprovedPlanningArtifact(
+  ctx: WithArchitecture,
+  artifact: ImplementationPlanArtifact,
+  run: StageRun<PlanningState, ImplementationPlanArtifact>,
+): Promise<ImplementationPlanArtifact> {
+  applyDbRelevanceSummaries(artifact)
+  run.files = await writeArtifactFiles(run.stageArtifactsDir, createPlanningArtifactContents(run, artifact))
+  stagePresent.ok("Planning review: implementation plan is ready.")
+  presentApprovedPlanningWaves(ctx, artifact)
+  printStageCompletion(run, "planning")
+  return artifact
+}
+
 export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promise<ImplementationPlanArtifact> {
   stagePresent.header(`planning — ${ctx.project.name}`)
 
@@ -551,53 +612,14 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     workspaceId: ctx.workspaceId,
     workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
-    createInitialState: (): PlanningState => ({
-      projectId: ctx.project.id,
-      prd: ctx.prd,
-      architectureSummary: renderArchitectureSummary(ctx.architecture),
-      codebase: ctx.codebase,
-      decisions: ctx.decisions,
-      revisionCount: 0,
-    }),
+    createInitialState: () => createPlanningInitialState(ctx),
     stageAgent: createPlanningStage(ctx.project, llm),
-    reviewer: createPlanningReviewer(validatingReviewer(createPlanningReview(llm), artifact => validatePlanStoryIds(artifact, ctx.prd)), {
-      validate: artifact => validatePlanStoryIds(artifact, ctx.prd),
-      dbRelevanceContext: {
-        hasSupabaseConfigured: ctx.supabase?.configured === true,
-      },
-    }),
+    reviewer: createPlanningStageReviewer(ctx, llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
       return createPlanningArtifactContents(run, artifact)
     },
-    async onApproved(artifact, run) {
-      applyDbRelevanceSummaries(artifact)
-      run.files = await writeArtifactFiles(run.stageArtifactsDir, createPlanningArtifactContents(run, artifact))
-      stagePresent.ok("Planning review: implementation plan is ready.")
-      // Post-validate: downgrade `internallyParallelizable: true` to
-      // false on any wave whose stories share files (or fail to declare
-      // sharedFiles, treated as overlap-unknown). Mutates `artifact` in
-      // place; emits canonical `wave_serialized` events for audit.
-      const decisions = enforceWaveParallelism(artifact, { runId: ctx.runId })
-      for (const decision of decisions) {
-        const reasonText = decision.cause === "missing_shared_files"
-          ? `wave ${decision.waveId}: forced sequential because stories did not declare sharedFiles (overlap unknown)`
-          : `wave ${decision.waveId}: forced sequential due to shared-file overlap on ${decision.overlappingFiles.join(", ")}`
-        stagePresent.warn(reasonText)
-      }
-      const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
-      waves.forEach(wave => {
-        let tag = "(stories run sequentially)"
-        if (wave.kind === "setup") tag = "(shared infra setup)"
-        else if (wave.internallyParallelizable) tag = "(stories can run in parallel)"
-        let entries: Array<{ title: string }> = []
-        if (wave.kind === "setup") entries = Array.isArray(wave.tasks) ? wave.tasks : []
-        else entries = Array.isArray(wave.stories) ? wave.stories : []
-        stagePresent.chat(`Wave ${wave.number} ${tag}`, entries.map(story => story.title).join(", "))
-      })
-      printStageCompletion(run, "planning")
-      return artifact
-    },
+    onApproved: (artifact, run) => finalizeApprovedPlanningArtifact(ctx, artifact, run),
     maxReviews: 4,
   })
 
