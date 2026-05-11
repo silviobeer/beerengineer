@@ -125,14 +125,31 @@ function nonEmptyString(value: unknown): string | null {
 }
 
 function isNotFoundError(err: unknown): boolean {
-  return typeof err === "object"
-    && err !== null
-    && "status" in err
-    && (err as { status?: unknown }).status === 404
+  return (err as { status?: unknown } | undefined)?.status === 404
 }
 
 function recoveryReuseFailure(message: string, branchRef?: string): SupabaseAdapterResult {
   return { ok: false, context: { error: "recovery_branch_unusable", message, branchRef } }
+}
+
+function validateRecoveryReuseTarget(
+  runId: string,
+  recovery: NonNullable<ReturnType<typeof parseSupabaseProvisioningRecoveryPayload>>,
+  context: Required<Pick<SupabaseWorkspaceContext, "workspaceId" | "projectRef" | "waveId">>,
+): string | null {
+  if (recovery.runId !== runId) {
+    return "Supabase recovery refused to reuse the persisted branch because the recovery record belongs to a different run."
+  }
+  if (recovery.workspaceId && recovery.workspaceId !== context.workspaceId) {
+    return "Supabase recovery refused to reuse the persisted branch because it targets a different workspace."
+  }
+  if (recovery.projectRef && recovery.projectRef !== context.projectRef) {
+    return "Supabase recovery refused to reuse the persisted branch because it targets a different Supabase project."
+  }
+  if (recovery.waveId !== context.waveId) {
+    return "Supabase recovery refused to reuse the persisted branch because it belongs to a different execution wave."
+  }
+  return null
 }
 
 async function reuseRecoverableWaveBranch(input: {
@@ -150,18 +167,12 @@ async function reuseRecoverableWaveBranch(input: {
   const recovery = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
   if (!recovery) return null
 
-  if (recovery.runId !== run.id) {
-    return recoveryReuseFailure("Supabase recovery refused to reuse the persisted branch because the recovery record belongs to a different run.")
-  }
-  if (recovery.workspaceId && recovery.workspaceId !== context.workspaceId) {
-    return recoveryReuseFailure("Supabase recovery refused to reuse the persisted branch because it targets a different workspace.")
-  }
-  if (recovery.projectRef && recovery.projectRef !== context.projectRef) {
-    return recoveryReuseFailure("Supabase recovery refused to reuse the persisted branch because it targets a different Supabase project.")
-  }
-  if (recovery.waveId !== context.waveId) {
-    return recoveryReuseFailure("Supabase recovery refused to reuse the persisted branch because it belongs to a different execution wave.")
-  }
+  const targetMismatch = validateRecoveryReuseTarget(run.id, recovery, {
+    workspaceId: context.workspaceId,
+    projectRef: context.projectRef,
+    waveId: context.waveId,
+  })
+  if (targetMismatch) return recoveryReuseFailure(targetMismatch)
 
   const branchRef = nonEmptyString(run.supabase_branch_ref) ?? nonEmptyString(recovery.branchRef)
   if (!branchRef) {
