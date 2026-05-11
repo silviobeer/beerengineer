@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import { randomUUID } from "node:crypto"
+import { isBlockedRunError } from "./blockedError.js"
 import { getWorkflowIO, hasWorkflowIO, type WorkflowEvent } from "./io.js"
 import { assertWorkflowNotCancelled } from "./workflowCancellation.js"
 
@@ -49,6 +50,7 @@ export async function withStageLifecycle<T>(
       emitEvent({ type: "stage_completed", runId: current.runId, stageRunId, stageKey, status: "completed" })
       return result
     } catch (err) {
+      if (isBlockedRunError(err)) throw err
       emitEvent({
         type: "stage_completed",
         runId: current.runId,
