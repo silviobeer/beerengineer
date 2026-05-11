@@ -6,6 +6,7 @@ import { join } from "node:path"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
+import { recordAnswer } from "../src/core/conversation.js"
 import { claimWorkerLease } from "../src/core/workerLease.js"
 import { recoverLostWorkerRuns } from "../src/core/orphanRecovery.js"
 import { projectStageLogRow } from "../src/core/messagingProjection.js"
@@ -338,6 +339,113 @@ test("startup recovery preserves a single unresolved prompt across repeated auto
       .prepare("SELECT COUNT(*) as count FROM pending_prompts WHERE run_id = ? AND answered_at IS NULL")
       .get(run.id) as { count: number }
     assert.equal(pendingCount.count, 1)
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery keeps the original prompt answerable after repeated auto-resume cycles", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+    const prompt = repos.createPendingPrompt({
+      id: "p-repeat-answer",
+      runId: run.id,
+      prompt: "Need approval?\nExplain the rollout impact.",
+    })
+
+    for (const now of [1_700_000_130_001, 1_700_000_260_002]) {
+      const result = await recoverLostWorkerRuns(repos, {
+        apiWorkerInstanceId: "api-current",
+        now,
+        autoResume: {
+          enabled: true,
+          resumeRun: async staleRun => {
+            repos.clearRunRecovery(staleRun.id)
+            repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+          },
+        },
+      })
+      assert.equal(result.outcomes[0]?.outcome, "auto_resumed")
+      assert.equal(repos.getOpenPrompt(run.id)?.id, prompt.id)
+      claimWorkerLease(repos, {
+        runId: run.id,
+        workerInstanceId: "cli-stale",
+        workerOwnerKind: "cli",
+        now: now - 130_001,
+      })
+    }
+
+    const answered = recordAnswer(repos, {
+      runId: run.id,
+      promptId: prompt.id,
+      answer: "Ship it",
+      source: "api",
+    })
+    assert.equal(answered.ok, true)
+    if (answered.ok) {
+      assert.equal(answered.promptId, prompt.id)
+      assert.equal(answered.conversation.openPrompt, null)
+      assert.ok(answered.conversation.entries.some(entry => entry.kind === "answer" && entry.answerTo === prompt.id))
+    }
+    assert.equal(repos.getPendingPrompt(prompt.id)?.answer, "Ship it")
+    assert.equal(repos.getOpenPrompt(run.id), undefined)
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery rejects answers that do not target the preserved prompt_id", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+    const prompt = repos.createPendingPrompt({ id: "p-original", runId: run.id, prompt: "Need approval?" })
+
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async staleRun => {
+          repos.clearRunRecovery(staleRun.id)
+          repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+        },
+      },
+    })
+
+    assert.equal(result.outcomes[0]?.outcome, "auto_resumed")
+    const wrongAnswer = recordAnswer(repos, {
+      runId: run.id,
+      promptId: "p-does-not-exist",
+      answer: "Wrong target",
+      source: "api",
+    })
+    assert.deepEqual(wrongAnswer, { ok: false, code: "prompt_not_open" })
+    assert.equal(repos.getOpenPrompt(run.id)?.id, prompt.id)
+    assert.equal(repos.getPendingPrompt(prompt.id)?.answer, null)
+
+    const correctAnswer = recordAnswer(repos, {
+      runId: run.id,
+      promptId: prompt.id,
+      answer: "Correct target",
+      source: "api",
+    })
+    assert.equal(correctAnswer.ok, true)
+    assert.equal(repos.getPendingPrompt(prompt.id)?.answer, "Correct target")
   } finally {
     db.close()
   }
