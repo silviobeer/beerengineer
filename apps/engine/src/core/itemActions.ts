@@ -1,7 +1,14 @@
 import { EventEmitter } from "node:events"
 import type { ExternalRemediationRow, ItemRow, Repos, RunRow } from "../db/repositories.js"
 import { recordAnswer } from "./conversation.js"
+import {
+  isStructuredMergeConflictRecoveryRun,
+  readMergeConflictRecoveryArtifact,
+  validateMergeConflictResolution,
+} from "./mergeConflictRecovery.js"
 import { loadResumeReadiness } from "./resume.js"
+import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
+import type { WorkflowResumeInput } from "../workflow.js"
 
 export type ItemAction =
   | "start_brainstorm"
@@ -13,6 +20,7 @@ export type ItemAction =
   | "rerun_design_prep"
   | "resume_run"
   | "promote_to_base"
+  | "confirm_merge_resolved"
   | "cancel_promotion"
   | "mark_done"
 
@@ -22,6 +30,7 @@ export type VisibleItemAction =
   | "start_frontend_design"
   | "promote_to_requirements"
   | "cancel_promotion"
+  | "confirm_merge_resolved"
   | "promote_to_base"
 
 export const ITEM_ACTIONS: readonly ItemAction[] = [
@@ -34,6 +43,7 @@ export const ITEM_ACTIONS: readonly ItemAction[] = [
   "rerun_design_prep",
   "resume_run",
   "promote_to_base",
+  "confirm_merge_resolved",
   "cancel_promotion",
   "mark_done"
 ] as const
@@ -95,11 +105,19 @@ export type ItemActionResult =
       promptAnswer?: string
       branch?: string
       reviewNotes?: string
+      resume?: WorkflowResumeInput
       column: ItemRow["current_column"]
       phaseStatus: ItemRow["phase_status"]
     }
   | { ok: false; status: 404; error: "item_not_found" }
-  | { ok: false; status: 409; error: "invalid_transition" | "not_resumable" | "resume_in_progress"; current: { column: string; phaseStatus: string }; action: ItemAction }
+  | {
+      ok: false
+      status: 409
+      error: "invalid_transition" | "not_resumable" | "resume_in_progress" | "merge_resolution_incomplete" | "manual_resolution_commit_required"
+      message?: string
+      current: { column: string; phaseStatus: string }
+      action: ItemAction
+    }
   | { ok: false; status: 422; error: "remediation_required"; action: ItemAction }
 
 export type ItemActionEvent =
@@ -117,6 +135,7 @@ type Transition =
   | { kind: "state"; to: { column: ItemRow["current_column"]; phase: ItemRow["phase_status"] } }
   | { kind: "start-run"; column: ItemRow["current_column"] }
   | { kind: "resume" }
+  | { kind: "confirm-merge-resolved" }
   | { kind: "answer-prompt-or-resume"; promoteAnswer: string; resumeWhenNoPrompt: boolean }
 
 type ColumnKey = ItemRow["current_column"]
@@ -178,6 +197,9 @@ export const ITEM_ACTION_MATRIX: Record<ItemAction, Record<string, Transition>> 
   promote_to_base: {
     "merge/review_required": { kind: "answer-prompt-or-resume", promoteAnswer: "promote", resumeWhenNoPrompt: true }
   },
+  confirm_merge_resolved: {
+    "merge/review_required": { kind: "confirm-merge-resolved" }
+  },
   cancel_promotion: {
     "merge/review_required": { kind: "answer-prompt-or-resume", promoteAnswer: "cancel", resumeWhenNoPrompt: false }
   },
@@ -198,6 +220,7 @@ export function visibleActionsForItem(input: {
   hasOpenPrompt?: boolean
   hasReviewGateWaiting?: boolean
   hasBlockedRun?: boolean
+  hasMergeConflictBlockedRun?: boolean
 }): VisibleItemAction[] {
   const phase = input.phase
   const stage = input.currentStage ?? null
@@ -216,6 +239,7 @@ export function visibleActionsForItem(input: {
   if (input.column === "merge") {
     const actions: VisibleItemAction[] = []
     if (input.hasReviewGateWaiting) actions.push("cancel_promotion")
+    if (input.hasMergeConflictBlockedRun) actions.push("confirm_merge_resolved")
     if (input.hasReviewGateWaiting || input.hasBlockedRun || input.hasOpenPrompt) actions.push("promote_to_base")
     return actions
   }
@@ -266,6 +290,19 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
   const latestResumableRun = (item: ItemRow): RunRow | undefined => {
     return repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
   }
+
+  const invalidTransition = (
+    item: ItemRow,
+    action: ItemAction,
+    overrides: Partial<Extract<ItemActionResult, { ok: false; status: 409 }>> = {},
+  ): Extract<ItemActionResult, { ok: false; status: 409 }> => ({
+    ok: false,
+    status: 409,
+    error: "invalid_transition",
+    current: { column: item.current_column, phaseStatus: item.phase_status },
+    action,
+    ...overrides,
+  })
 
   const promptSupportsAnswer = (runId: string, expected: string): { runId: string; promptId: string } | null => {
     const open = repos.getOpenPrompt(runId)
@@ -367,13 +404,7 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
         source: "api",
       })
       if (!answered.ok) {
-        return {
-          ok: false,
-          status: 409,
-          error: "invalid_transition",
-          current: { column: item.current_column, phaseStatus: item.phase_status },
-          action,
-        }
+        return invalidTransition(item, action)
       }
       return {
         ok: true,
@@ -385,24 +416,12 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     }
 
     if (!transition.resumeWhenNoPrompt) {
-      return {
-        ok: false,
-        status: 409,
-        error: "invalid_transition",
-        current: { column: item.current_column, phaseStatus: item.phase_status },
-        action,
-      }
+      return invalidTransition(item, action)
     }
 
     const recoverable = repos.latestRecoverableRunForItem(item.id)
     if (recoverable?.recovery_status !== "blocked" || recoverable.recovery_scope_ref !== "merge-gate") {
-      return {
-        ok: false,
-        status: 409,
-        error: "invalid_transition",
-        current: { column: item.current_column, phaseStatus: item.phase_status },
-        action,
-      }
+      return invalidTransition(item, action)
     }
 
     const readiness = await loadResumeReadiness(repos, recoverable.id)
@@ -437,6 +456,55 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     }
   }
 
+  const confirmMergeResolved = async (
+    item: ItemRow,
+    action: ItemAction,
+  ): Promise<ItemActionResult> => {
+    const recoverable = repos.latestRecoverableRunForItem(item.id)
+    if (!isStructuredMergeConflictRecoveryRun(recoverable)) return invalidTransition(item, action)
+
+    const readiness = await loadResumeReadiness(repos, recoverable.id)
+    if (readiness.kind === "not_resumable") {
+      return {
+        ok: false,
+        status: 409,
+        error: readiness.reason === "resume_in_progress" ? "resume_in_progress" : "not_resumable",
+        current: { column: item.current_column, phaseStatus: item.phase_status },
+        action,
+      }
+    }
+    if (readiness.kind !== "ready") return invalidTransition(item, action)
+
+    const ctx = resolveWorkflowContextForRun(repos, recoverable)
+    if (!ctx) return invalidTransition(item, action)
+
+    const artifact = await readMergeConflictRecoveryArtifact(ctx)
+    if (!artifact) return invalidTransition(item, action)
+
+    const validation = validateMergeConflictResolution(ctx.workspaceRoot!, artifact)
+    if (!validation.ok) {
+      return invalidTransition(item, action, {
+        error: validation.error,
+        message: validation.message,
+      })
+    }
+
+    return {
+      ok: true,
+      kind: "resume_run",
+      itemId: item.id,
+      runId: recoverable.id,
+      summary: `Operator confirmed manual merge resolution for ${item.code}.`,
+      resume: {
+        scope: { type: "stage", runId: recoverable.id, stageId: "merge-gate" },
+        currentStage: "merge-gate",
+        skipMergeGate: true,
+      },
+      column: item.current_column,
+      phaseStatus: item.phase_status,
+    }
+  }
+
   return {
     async perform(itemId, action, input): Promise<ItemActionResult> {
       const item = repos.getItem(itemId)
@@ -458,6 +526,8 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
           return recordStartRunIntent(item, action, transition.column)
         case "resume":
           return recordResumeIntent(item, action, input)
+        case "confirm-merge-resolved":
+          return confirmMergeResolved(item, action)
         case "answer-prompt-or-resume":
           return recordPromptOrResumeIntent(item, action, transition)
       }

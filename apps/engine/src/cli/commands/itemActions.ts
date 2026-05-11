@@ -544,6 +544,7 @@ async function resumeItemActionResult(
       io,
       runId: result.runId,
       remediation,
+      resume: result.resume,
       workerOwnerKind: "cli",
     })
     const refreshed = ctx.repos.getRun(result.runId)
@@ -583,7 +584,7 @@ async function runDefaultItemAction(
         console.error(`  Not resumable: ${result.error}`)
         return 2
       } else {
-        console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
+        console.error(`  ${result.message ?? `Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`}`)
       }
       return 1
     }
