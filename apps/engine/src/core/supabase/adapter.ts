@@ -349,6 +349,7 @@ async function reuseExistingWaveBranch(input: {
   repos: Repos
   client: WaveClient
   context: Required<Pick<SupabaseWorkspaceContext, "runId" | "workspaceId" | "workspaceKey" | "itemId" | "projectId" | "projectRef" | "waveId">>
+  allowFreshCreateOnUnhealthyCandidate?: boolean
 }): Promise<SupabaseAdapterResult | null> {
   const expectedName = expectedWaveBranchName(input.context)
   const run = input.repos.getRun(input.context.runId)
@@ -373,7 +374,7 @@ async function reuseExistingWaveBranch(input: {
   if (namedBranch.kind === "missing") return null
   if (namedBranch.kind === "ambiguous") return namedBranch.failure
   const branchFailure = validateHealthyReusableBranch(namedBranch.branch, expectedName)
-  if (branchFailure) return branchFailure
+  if (branchFailure) return input.allowFreshCreateOnUnhealthyCandidate ? null : branchFailure
 
   return markRunBranchReusable({
     repos: input.repos,
@@ -382,6 +383,38 @@ async function reuseExistingWaveBranch(input: {
     branchName: expectedName,
     existingLifecycleState: run.supabase_branch_lifecycle_state,
   })
+}
+
+async function discardStaleWaveAttachment(input: {
+  repos: Repos
+  client: WaveClient
+  context: Required<Pick<SupabaseWorkspaceContext, "runId" | "projectRef" | "waveId" | "workspaceKey" | "itemId" | "projectId">>
+}): Promise<boolean> {
+  const run = input.repos.getRun(input.context.runId)
+  if (!run?.supabase_branch_ref) return false
+
+  const expectedName = expectedWaveBranchName(input.context)
+  const persistedName = nonEmptyString(run.supabase_branch_name)
+  let staleAttachment = false
+
+  if (input.client.getBranch) {
+    try {
+      const branch = await input.client.getBranch(input.context.projectRef, run.supabase_branch_ref)
+      const actualName = nonEmptyString(branch.name)
+      staleAttachment = actualName != null
+        ? actualName !== expectedName
+        : persistedName != null && persistedName !== expectedName
+    } catch (err) {
+      if (isNotFoundError(err)) staleAttachment = true
+      else throw err
+    }
+  } else if (persistedName) {
+    staleAttachment = persistedName !== expectedName
+  }
+
+  if (!staleAttachment) return false
+  input.repos.clearRunSupabaseBranch(input.context.runId)
+  return true
 }
 
 export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }): SupabaseAdapter {
@@ -404,6 +437,18 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
           context,
         })
         if (reused) return reused
+        const staleAttachmentDiscarded = await discardStaleWaveAttachment({
+          repos: deps.repos,
+          client: deps.client,
+          context: {
+            runId: context.runId,
+            projectRef: context.projectRef,
+            waveId: context.waveId,
+            workspaceKey: context.workspaceKey ?? workspace.key,
+            itemId: context.itemId,
+            projectId: context.projectId,
+          },
+        })
         const existing = await reuseExistingWaveBranch({
           repos: deps.repos,
           client: deps.client,
@@ -416,6 +461,7 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
             projectRef: context.projectRef,
             waveId: context.waveId,
           },
+          allowFreshCreateOnUnhealthyCandidate: staleAttachmentDiscarded,
         })
         if (existing) return existing
         const name = waveBranchName({
