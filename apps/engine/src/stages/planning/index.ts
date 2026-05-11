@@ -9,6 +9,39 @@ import type { ImplementationPlanArtifact, PRD, WithArchitecture } from "../../ty
 import type { ReviewAgentAdapter, ReviewAgentResponse } from "../../core/adapters.js"
 import type { PlanningState } from "./types.js"
 
+export type PlanningDbRelevanceContext = {
+  hasSupabaseConfigured: boolean
+}
+
+export type StoryDbRelevanceSupport = {
+  supported: boolean
+  reason?: string
+}
+
+export type DbRelevanceUnsupportedClaim =
+  | { level: "story"; waveId: string; storyId: string; reason: string }
+  | { level: "wave"; waveId: string; reason: string }
+
+const DB_EVIDENCE_PATTERNS = [
+  /\b(?:schema|table|column|index|foreign key|data model|storage|datastore|persisted data|database read|database write|read from (?:the )?(?:database|db)|write to (?:the )?(?:database|db)|query (?:the )?(?:database|db)|sql query|backfill|seed|sqlite|postgres(?:ql)?|mysql|mariadb)\b/i,
+  /\b(?:migrat(?:e|ion|ions)|insert(?:ing)? into|upsert(?:ing)?|delete(?:ing)? from|update(?:ing)? (?:the )?(?:database|db|table|row|record)|persist(?:ing|ed)?|store in (?:the )?(?:database|db))\b/i,
+  /(?:^|\/)(?:supabase\/migrations|db\/migrations)\//i,
+  /\.sql\b/i,
+  /\bschema\.prisma\b/i,
+]
+
+const MIGRATION_PATH_PATTERNS = [
+  /\b(?:migration path|migrat(?:e|ion|ions)|backfill|seed|manual sql|sql script|prisma migrate|prisma migration|drizzle(?:-kit)?|knex|typeorm)\b/i,
+]
+
+const DATASTORE_PATTERNS = [
+  /\b(?:sqlite|postgres(?:ql)?|mysql|mariadb|database|db|sql|supabase|prisma)\b/i,
+]
+
+const STORY_UNSUPPORTED_REASON = "Story marked dbRelevant:true but does not describe concrete database work in the plan output."
+const STORY_MISSING_PATH_REASON = "Story marked dbRelevant:true in a workspace without Supabase, but the plan does not name an explicit migration path or equivalent database approach."
+const WAVE_UNSUPPORTED_REASON = "Wave marked dbRelevantWave:true but neither the wave nor its supported stories describe concrete database work in the plan output."
+
 export function validatePlanStoryEnvelope(
   waveNumber: number,
   ref: { id?: unknown; title?: unknown; dbRelevant?: unknown; dbRelevanceOverride?: unknown; dbRelevanceOverrideReason?: unknown },
@@ -30,12 +63,116 @@ export function validatePlanStoryEnvelope(
   return null
 }
 
+function normalizedText(parts: Array<string | undefined | null>): string {
+  return parts
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n")
+}
+
+function hasAnyPattern(text: string, patterns: RegExp[]): boolean {
+  return patterns.some(pattern => pattern.test(text))
+}
+
+function hasConcreteDatabaseEvidence(text: string): boolean {
+  return hasAnyPattern(text, DB_EVIDENCE_PATTERNS)
+}
+
+function hasExplicitMigrationPath(text: string): boolean {
+  return hasAnyPattern(text, MIGRATION_PATH_PATTERNS) && hasAnyPattern(text, DATASTORE_PATTERNS)
+}
+
+function storyEvidenceText(
+  story: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number]["stories"][number],
+): string {
+  return normalizedText([
+    story.title,
+    ...(story.sharedFiles ?? []),
+  ])
+}
+
+function waveEvidenceText(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+): string {
+  return normalizedText([
+    wave.goal,
+    ...(wave.exitCriteria ?? []),
+    ...((wave.tasks ?? []).map(task => task.title)),
+  ])
+}
+
+function waveHasExplicitDatabaseEvidence(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+): boolean {
+  return hasConcreteDatabaseEvidence(waveEvidenceText(wave))
+}
+
+export function evaluateStoryDbRelevanceSupport(input: {
+  story: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number]["stories"][number]
+  hasSupabaseConfigured: boolean
+}): StoryDbRelevanceSupport {
+  const text = storyEvidenceText(input.story)
+  if (!hasConcreteDatabaseEvidence(text)) {
+    return { supported: false, reason: STORY_UNSUPPORTED_REASON }
+  }
+  if (!input.hasSupabaseConfigured && !hasExplicitMigrationPath(text)) {
+    return { supported: false, reason: STORY_MISSING_PATH_REASON }
+  }
+  return { supported: true }
+}
+
 export function summarizeWaveDbRelevance(
   wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
 ): { dbRelevantStoryCount: number; dbRelevantWave: boolean } {
   const storyList = Array.isArray(wave.stories) ? wave.stories : []
   const dbRelevantStoryCount = storyList.filter(story => story.dbRelevant === true).length
-  return { dbRelevantStoryCount, dbRelevantWave: dbRelevantStoryCount > 0 }
+  return {
+    dbRelevantStoryCount,
+    dbRelevantWave: dbRelevantStoryCount > 0 || waveHasExplicitDatabaseEvidence(wave),
+  }
+}
+
+export function applyDbRelevanceEvidenceValidation(
+  artifact: ImplementationPlanArtifact,
+  context: PlanningDbRelevanceContext,
+): { artifact: ImplementationPlanArtifact; unsupportedClaims: DbRelevanceUnsupportedClaim[] } {
+  const unsupportedClaims: DbRelevanceUnsupportedClaim[] = []
+
+  for (const wave of artifact.plan?.waves ?? []) {
+    if (wave.kind === "setup") {
+      wave.dbRelevantStoryCount = 0
+      wave.dbRelevantWave = false
+      continue
+    }
+
+    for (const story of wave.stories ?? []) {
+      if (story.dbRelevant !== true) continue
+      const support = evaluateStoryDbRelevanceSupport({
+        story,
+        hasSupabaseConfigured: context.hasSupabaseConfigured,
+      })
+      if (support.supported) continue
+      unsupportedClaims.push({
+        level: "story",
+        waveId: wave.id,
+        storyId: story.id,
+        reason: support.reason ?? STORY_UNSUPPORTED_REASON,
+      })
+      story.dbRelevant = false
+    }
+
+    const summary = summarizeWaveDbRelevance(wave)
+    if (wave.dbRelevantWave === true && !summary.dbRelevantWave) {
+      unsupportedClaims.push({
+        level: "wave",
+        waveId: wave.id,
+        reason: WAVE_UNSUPPORTED_REASON,
+      })
+    }
+    wave.dbRelevantStoryCount = summary.dbRelevantStoryCount
+    wave.dbRelevantWave = summary.dbRelevantWave
+  }
+
+  return { artifact, unsupportedClaims }
 }
 
 export function applyDbRelevanceSummaries(artifact: ImplementationPlanArtifact): ImplementationPlanArtifact {
@@ -232,7 +369,9 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     reviewer: validatingReviewer(createPlanningReview(llm), artifact => validatePlanStoryIds(artifact, ctx.prd)),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
-      applyDbRelevanceSummaries(artifact)
+      applyDbRelevanceEvidenceValidation(artifact, {
+        hasSupabaseConfigured: ctx.supabase?.configured === true,
+      })
       return [
         {
           kind: "json",
@@ -253,6 +392,9 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       ]
     },
     async onApproved(artifact, run) {
+      applyDbRelevanceEvidenceValidation(artifact, {
+        hasSupabaseConfigured: ctx.supabase?.configured === true,
+      })
       stagePresent.ok("Planning review: implementation plan is ready.")
       // Post-validate: downgrade `internallyParallelizable: true` to
       // false on any wave whose stories share files (or fail to declare
