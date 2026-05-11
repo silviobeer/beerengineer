@@ -32,7 +32,7 @@ export function parseCodexSandboxBypassOverride(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean | null {
   const raw = env.BEERENGINEER_CODEX_SANDBOX_BYPASS?.trim().toLowerCase()
-  if (!raw) return null
+  if (raw === undefined || raw === "") return null
   if (TRUE_VALUES.has(raw)) return true
   if (FALSE_VALUES.has(raw)) return false
   return null
@@ -51,17 +51,15 @@ function rememberCapability(capability: CodexSandboxCapability): void {
 
 function startCapabilityProbe(): Promise<CodexSandboxCapability> {
   if (cachedCapability !== "unknown") return Promise.resolve(cachedCapability)
-  if (!inFlightProbe) {
-    inFlightProbe = capabilityProbe()
-      .then(capability => {
-        rememberCapability(capability)
-        return normalizeCapability(capability)
-      })
-      .catch(() => "unknown" as const)
-      .finally(() => {
-        inFlightProbe = null
-      })
-  }
+  inFlightProbe ??= capabilityProbe()
+    .then(capability => {
+      rememberCapability(capability)
+      return normalizeCapability(capability)
+    })
+    .catch(() => "unknown" as const)
+    .finally(() => {
+      inFlightProbe = null
+    })
   return inFlightProbe
 }
 

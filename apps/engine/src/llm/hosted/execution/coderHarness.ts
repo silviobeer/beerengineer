@@ -6,7 +6,7 @@ import { buildExecutionPrompt } from "../promptEnvelope.js"
 import { invokeHostedCli, parseJsonObject } from "../hostedCliAdapter.js"
 import type { HostedSession } from "../providerRuntime.js"
 import type { ResolvedHarness, RuntimePolicy } from "../../registry.js"
-import { buildCodexWorkerStartFailure } from "../providers/codexSandboxPolicy.js"
+import { buildCodexWorkerStartFailure, isHostedWorkerLaunchFailure } from "../providers/codexSandboxPolicy.js"
 
 type GitBaseline = {
   headSha: string | null
@@ -127,7 +127,8 @@ export async function runCoderHarness(input: {
       { harness, sessionId: input.sessionId ?? null } satisfies HostedSession,
     )
   } catch (error) {
-    throw buildCodexWorkerStartFailure(error)
+    if (isHostedWorkerLaunchFailure(error)) throw buildCodexWorkerStartFailure(error)
+    throw error
   }
   const parsed = parseJsonObject(result.outputText) as CoderHarnessOutput
   return {

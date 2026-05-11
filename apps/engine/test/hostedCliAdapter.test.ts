@@ -145,7 +145,10 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
           state: { item: "demo" },
           stageContext: { turnCount: 1, phase: "begin" },
         }),
-      /Provider output did not contain a JSON object/i,
+      error =>
+        error instanceof Error
+        && !/worker start failed/i.test(error.message)
+        && /non-empty message/i.test(error.message),
     )
   } finally {
     if (previousPath === undefined) delete process.env.PATH
