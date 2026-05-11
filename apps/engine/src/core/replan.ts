@@ -258,6 +258,10 @@ function planJsonArchiveLabel(version: number): string {
   return `Archived Implementation Plan JSON (plan-v${version})`
 }
 
+function formatWaveList(waves: PlanRevisionWaveSummary[]): string {
+  return waves.map(wave => `${wave.number}:${wave.id}`).join(", ")
+}
+
 function auditMarkdown(record: PlanRegenerationRecord): string {
   return [
     "# Plan Regeneration Audit",
@@ -268,11 +272,11 @@ function auditMarkdown(record: PlanRegenerationRecord): string {
     "",
     "## Before",
     `- Plan: ${record.before.planId}`,
-    `- Waves: ${record.before.waves.map(wave => `${wave.number}:${wave.id}`).join(", ")}`,
+    `- Waves: ${formatWaveList(record.before.waves)}`,
     "",
     "## After",
     `- Plan: ${record.after.planId}`,
-    `- Waves: ${record.after.waves.map(wave => `${wave.number}:${wave.id}`).join(", ")}`,
+    `- Waves: ${formatWaveList(record.after.waves)}`,
     "",
     "## Archived Artifacts",
     ...record.archivedArtifacts.map(artifact => `- ${artifact.kind}: ${artifact.sourcePath} -> ${artifact.archivedPath}`),
@@ -528,7 +532,8 @@ async function activatePreparedReplan(
       })
     }
   } catch (error) {
-    for (const moved of movedPaths.reverse()) {
+    const movedPathsInReverse = [...movedPaths].reverse()
+    for (const moved of movedPathsInReverse) {
       if (await pathExists(moved.archived)) {
         await ensureDir(dirname(moved.source))
         await rename(moved.archived, moved.source)
