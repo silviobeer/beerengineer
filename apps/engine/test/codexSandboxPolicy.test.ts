@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
+  isKnownCodexSandboxCapabilityFailure,
   markCodexSandboxCapabilityUnknown,
   markCodexSandboxCapabilityUnsupported,
   markCodexSandboxCapabilitySupported,
@@ -173,4 +174,43 @@ test("malformed persisted capability bypasses immediately while revalidating in 
   const second = await resolveCodexSandboxBypass("safe-workspace-write", {})
   assert.deepEqual(second, { bypass: false, source: "capability" })
   assert.equal(persisted, "supported")
+})
+
+test("runtime sandbox failure classification only accepts recognized bwrap capability families", () => {
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure("bwrap: command not found"),
+    true,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure("spawn bwrap ENOENT"),
+    true,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure("spawn /usr/bin/bwrap ENOENT"),
+    true,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure(
+      "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted",
+    ),
+    true,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure(
+      "bwrap: missing capability CAP_NET_ADMIN for loopback setup",
+    ),
+    true,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure("codex error: tool call failed"),
+    false,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure("exit 1: application test failure"),
+    false,
+  )
+  assert.equal(
+    isKnownCodexSandboxCapabilityFailure("generic launch failure"),
+    false,
+  )
 })

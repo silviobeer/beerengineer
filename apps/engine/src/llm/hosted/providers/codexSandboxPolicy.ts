@@ -131,7 +131,7 @@ export function isKnownCodexSandboxCapabilityFailure(text: string): boolean {
     || /\bCAP_NET_ADMIN\b/i.test(text)
     || /\bcap_net_admin\b/i.test(text)
     || /\bbwrap:\s*command not found\b/i.test(text)
-    || /\bspawn bwrap\b.*\bENOENT\b/i.test(text)
+    || /\bspawn\b.*\bbwrap\b.*\bENOENT\b/i.test(text)
     || /\bbwrap:.*No such file or directory\b/i.test(text)
     || /\bbwrap:.*Operation not permitted\b/i.test(text)
   )
