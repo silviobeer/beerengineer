@@ -5,9 +5,12 @@ import { dirname, join } from "node:path"
 import { renderPlanMarkdown } from "../render/plan.js"
 import type { Repos, RunRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
-import type { ImplementationPlanArtifact } from "../types.js"
+import type { ArchitectureArtifact, ImplementationPlanArtifact, PRD, Project, WithArchitecture } from "../types.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
+import { projectPrdFileName } from "./preparedImport.js"
 import { requireWorkflowContextForRun } from "./workflowContextResolver.js"
+import { planning } from "../stages/planning/index.js"
+import type { RunLlmConfig } from "../llm/registry.js"
 
 export type PlanRevisionWaveSummary = {
   id: string
@@ -78,6 +81,12 @@ export type PerformExplicitReplanInput = {
   }
 }
 
+export type GenerateReplacementPlanFromArtifactsInput = {
+  repos: Repos
+  runId: string
+  llm?: RunLlmConfig
+}
+
 type PreparedReplanActivation = {
   operationId: string
   before: PlanRevisionSummary
@@ -120,6 +129,32 @@ async function readPersistedPlan(path: string): Promise<PersistedImplementationP
     metadata?: Partial<PersistedImplementationPlanArtifact["metadata"]>
   }
   return applyPersistedMetadata(parsed)
+}
+
+async function readJson<T>(path: string): Promise<T> {
+  return JSON.parse(await readFile(path, "utf8")) as T
+}
+
+async function loadProjectForPlan(ctx: WorkflowContext, projectId: string): Promise<Project> {
+  const projects = await readJson<Project[]>(join(layout.stageArtifactsDir(ctx, "brainstorm"), "projects.json"))
+  const project = projects.find(candidate => candidate.id === projectId)
+  if (!project) throw new Error(`replan_project_not_found:${projectId}`)
+  return project
+}
+
+async function loadPrdForPlan(ctx: WorkflowContext, projectId: string): Promise<PRD> {
+  const requirementsDir = layout.stageArtifactsDir(ctx, "requirements")
+  const projectScopedPath = join(requirementsDir, projectPrdFileName(projectId))
+  if (await pathExists(projectScopedPath)) {
+    return (await readJson<{ prd: PRD }>(projectScopedPath)).prd
+  }
+  return (await readJson<{ prd: PRD }>(join(requirementsDir, "prd.json"))).prd
+}
+
+async function loadArchitectureForPlan(ctx: WorkflowContext): Promise<ArchitectureArtifact> {
+  return await readJson<ArchitectureArtifact>(
+    join(layout.stageArtifactsDir(ctx, "architecture"), "architecture.json"),
+  )
 }
 
 function applyPersistedMetadata(
@@ -268,6 +303,31 @@ function archivedPath(finalRoot: string, path: string, targetName: string): stri
 
 function supabaseRunHandoffDir(ctx: WorkflowContext): string {
   return join(layout.artefactsRoot(ctx.workspaceRoot!), "handoff", "supabase", ctx.runId)
+}
+
+export async function generateReplacementPlanFromArtifacts(
+  input: GenerateReplacementPlanFromArtifactsInput,
+): Promise<ImplementationPlanArtifact> {
+  const run = input.repos.getRun(input.runId)
+  if (!run) throw new Error(`run_not_found:${input.runId}`)
+  const ctx = requireWorkflowContextForRun(input.repos, run)
+  const currentPlan = await readPersistedPlan(join(layout.stageArtifactsDir(ctx, "planning"), "implementation-plan.json"))
+  const project = await loadProjectForPlan(ctx, currentPlan.project.id)
+  const prd = await loadPrdForPlan(ctx, project.id)
+  const architecture = await loadArchitectureForPlan(ctx)
+  const previewRunId = `${run.id}__replan_preview__${randomUUID().slice(0, 8)}`
+  const previewCtx = {
+    ...ctx,
+    runId: previewRunId,
+    project,
+    prd,
+    architecture,
+  } satisfies WithArchitecture
+  try {
+    return await planning(previewCtx, input.llm)
+  } finally {
+    await rm(layout.runDir({ ...ctx, runId: previewRunId }), { recursive: true, force: true })
+  }
 }
 
 async function prepareReplanActivation(

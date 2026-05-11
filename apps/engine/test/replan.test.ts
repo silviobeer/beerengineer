@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -10,12 +11,13 @@ import { attachRunSubscribers } from "../src/core/runSubscribers.js"
 import type { WorkflowEvent } from "../src/core/io.js"
 import { projectStageLogRow } from "../src/core/messagingProjection.js"
 import { performExplicitReplan, type PersistedImplementationPlanArtifact } from "../src/core/replan.js"
+import { handleReplanRun } from "../src/api/routes/runs.js"
 import { buildSupabaseReadinessRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { supabaseHandoffPath } from "../src/core/supabase/handoffWriter.js"
 import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos, type RunRow } from "../src/db/repositories.js"
-import type { ImplementationPlanArtifact } from "../src/types.js"
+import type { ArchitectureArtifact, ImplementationPlanArtifact, PRD, Project } from "../src/types.js"
 
 function workflowContext(root: string, workspaceId: string, runId: string): WorkflowContext {
   return {
@@ -80,6 +82,73 @@ async function seedPlanArtifacts(ctx: WorkflowContext, plan: ImplementationPlanA
     join(planningDir, "implementation-plan.md"),
     `# ${plan.project.name}\n\n${plan.plan.summary}\n`,
   )
+}
+
+async function seedApprovedUpstreamContext(ctx: WorkflowContext): Promise<void> {
+  const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
+  const requirementsDir = layout.stageArtifactsDir(ctx, "requirements")
+  const architectureDir = layout.stageArtifactsDir(ctx, "architecture")
+  mkdirSync(brainstormDir, { recursive: true })
+  mkdirSync(requirementsDir, { recursive: true })
+  mkdirSync(architectureDir, { recursive: true })
+
+  const projects: Project[] = [{
+    id: "proj-1",
+    name: "Project One",
+    description: "Project for replan testing",
+    concept: {
+      summary: "Operator-visible replan",
+      problem: "Plans need safe replacement",
+      users: ["operators"],
+      constraints: ["single run row"],
+    },
+  }]
+  const prd: PRD = {
+    stories: [
+      {
+        id: "REQ-1",
+        title: "First story",
+        acceptanceCriteria: [{ id: "AC-1", text: "Do the first thing", priority: "must", category: "functional" }],
+      },
+      {
+        id: "REQ-2",
+        title: "Second story",
+        acceptanceCriteria: [{ id: "AC-2", text: "Do the second thing", priority: "must", category: "functional" }],
+      },
+    ],
+  }
+  const architecture: ArchitectureArtifact = {
+    project: {
+      id: "proj-1",
+      name: "Project One",
+      description: "Project for replan testing",
+    },
+    concept: {
+      summary: "Operator-visible replan",
+      problem: "Plans need safe replacement",
+      users: ["operators"],
+      constraints: ["single run row"],
+    },
+    prdSummary: {
+      storyCount: 2,
+      storyIds: ["REQ-1", "REQ-2"],
+    },
+    architecture: {
+      summary: "Run control owns explicit replan.",
+      systemShape: "Single-process engine.",
+      components: [{ name: "Run Service", responsibility: "Coordinates explicit replan." }],
+      dataModelNotes: [],
+      apiNotes: [],
+      deploymentNotes: [],
+      constraints: ["Do not auto-resume."],
+      risks: [],
+      openQuestions: [],
+    },
+  }
+
+  await writeFile(join(brainstormDir, "projects.json"), `${JSON.stringify(projects, null, 2)}\n`)
+  await writeFile(join(requirementsDir, "prd.json"), `${JSON.stringify({ prd }, null, 2)}\n`)
+  await writeFile(join(architectureDir, "architecture.json"), `${JSON.stringify(architecture, null, 2)}\n`)
 }
 
 function makeBus(): { bus: EventBus; io: ReturnType<typeof busToWorkflowIO>; events: WorkflowEvent[] } {
@@ -380,6 +449,52 @@ test("late abort after replacement preparation keeps the original plan active an
     assert.equal(existsSync(supabaseHandoffPath(f.dir, f.run.id, "W1")), true)
     assert.equal(existsSync(join(layout.runDir(f.ctx), "replans")), false)
     assert.equal(f.repos.listLogsForRun(f.run.id).filter(log => log.event_type === "plan_regenerated").length, 0)
+  } finally {
+    f.close()
+  }
+})
+
+test("POST /runs/:id/replan regenerates the replacement plan from persisted upstream artifacts", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [
+        { id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] },
+        { id: "W2", number: 2, goal: "Original wave two", storyIds: ["REQ-2"] },
+      ],
+    }))
+    await seedApprovedUpstreamContext(f.ctx)
+    await seedBlockedExecutionState(f)
+
+    const server = createServer((req, res) => {
+      void handleReplanRun(f.repos, req, res, f.run.id)
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Operator requested replanning from the API." }),
+      })
+      assert.equal(response.status, 200)
+      assert.deepEqual(await response.json(), { runId: f.run.id, status: "replanned" })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+    ) as PersistedImplementationPlanArtifact
+    assert.equal(persisted.metadata.activePlan.version, 2)
+    assert.deepEqual(
+      persisted.plan.waves.map(wave => wave.id),
+      ["W1--r2", "W2--r2", "W3--r2"],
+    )
+    assert.equal(f.repos.listLogsForRun(f.run.id).filter(log => log.event_type === "plan_regenerated").length, 1)
   } finally {
     f.close()
   }
