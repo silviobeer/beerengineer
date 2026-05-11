@@ -224,6 +224,16 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     cause: typeof data.cause === "string" ? data.cause : "",
     summary: row.message,
   }),
+  dirty_master_allowlist_restore: (row, data) => ({
+    type: "dirty_master_allowlist_restore",
+    runId: row.run_id,
+    itemId: typeof data.itemId === "string" ? data.itemId : "",
+    title: typeof data.title === "string" ? data.title : "",
+    branch: typeof data.branch === "string" ? data.branch : "",
+    paths: Array.isArray(data.paths) ? data.paths.filter((value): value is string => typeof value === "string") : [],
+    status: data.status === "failed" ? "failed" : "completed",
+    error: typeof data.error === "string" ? data.error : undefined,
+  }),
   startup_recovery: (row, data) => ({
     type: "startup_recovery",
     runId: row.run_id,

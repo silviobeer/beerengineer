@@ -67,6 +67,16 @@ export type WorkflowEvent =
   | ({ type: "run_blocked"; runId: string; itemId: string; title: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
   | ({
+      type: "dirty_master_allowlist_restore"
+      runId: string
+      itemId: string
+      title: string
+      branch: string
+      paths: string[]
+      status: "completed" | "failed"
+      error?: string
+    } & WorkflowEventMeta)
+  | ({
       type: "startup_recovery"
       runId: string
       outcome: StartupRecoveryOutcome
