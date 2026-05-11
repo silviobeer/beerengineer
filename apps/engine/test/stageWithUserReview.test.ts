@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -11,7 +11,14 @@ import type {
   StageAgentInput,
   StageAgentResponse,
 } from "../src/core/adapters.js"
+import { initDatabase } from "../src/db/connection.js"
+import { Repos } from "../src/db/repositories.js"
+import { createBus, busToWorkflowIO } from "../src/core/bus.js"
 import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../src/core/constants.js"
+import { withPromptPersistence } from "../src/core/promptPersistence.js"
+import { runWithActiveRun } from "../src/core/runContext.js"
+import { runWithWorkflowIO } from "../src/core/io.js"
+import { layout } from "../src/core/workspaceLayout.js"
 import { runStageWithUserReview, type RevisableState } from "../src/core/stageWithUserReview.js"
 
 type Artifact = { value: string }
@@ -42,6 +49,18 @@ function withTmpCwd(): { restore: () => void } {
   return {
     restore: () => {
       process.chdir(prev)
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+function tmpDb() {
+  const dir = mkdtempSync(join(tmpdir(), "be2-user-review-db-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
+  return {
+    db,
+    cleanup: () => {
+      db.close()
       rmSync(dir, { recursive: true, force: true })
     },
   }
@@ -130,6 +149,73 @@ test("non-interactive sentinel at review gate throws instead of approving", asyn
     )
   } finally {
     env.restore()
+  }
+})
+
+test("non-interactive review gate blocks the run and preserves the open prompt", async () => {
+  const env = withTmpCwd()
+  const db = tmpDb()
+  try {
+    const repos = new Repos(db.db)
+    const workspace = repos.upsertWorkspace({ key: "test", name: "Test", rootPath: process.cwd() })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "T", description: "D" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title })
+    const bus = createBus()
+    const io = busToWorkflowIO(bus)
+    const detachPromptPersistence = withPromptPersistence(bus, repos)
+
+    bus.subscribe(event => {
+      if (event.type === "prompt_requested") {
+        bus.answer(event.promptId, NON_INTERACTIVE_NO_ANSWER_SENTINEL)
+      }
+    })
+
+    await assert.rejects(
+      () =>
+        runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: run.id, itemId: item.id, title: item.title }, () =>
+            runStageWithUserReview<State, Artifact, Artifact>({
+              stageId: "frontend-design",
+              stageAgentLabel: "Visual Designer",
+              reviewerLabel: "Design Review",
+              workspaceId: "ws-1",
+              workspaceRoot: process.cwd(),
+              baseRunId: "run-1",
+              stageAgent: new StaticStage(),
+              reviewer: new StaticReviewer(),
+              askUser: prompt => io.ask(prompt),
+              buildFreshState: ({ revisionFeedback, reviewRound }) => makeState(revisionFeedback, reviewRound),
+              async persistArtifacts() {
+                return [{ kind: "json" as const, label: "Artifact", fileName: "artifact.json", content: "{}" }]
+              },
+              buildGatePrompt: () => "approve or revise",
+              async onUserApprove({ artifact }) {
+                return artifact
+              },
+              maxReviews: 1,
+            }),
+          ),
+        ),
+      /non-interactive run/,
+    )
+
+    const prompt = repos.getOpenPrompt(run.id)
+    assert.ok(prompt)
+    assert.equal(prompt?.prompt, "approve or revise")
+    assert.equal(repos.getPendingPrompt(prompt!.id)?.answered_at, null)
+
+    const runSnapshot = JSON.parse(readFileSync(layout.runFile({ workspaceId: "ws-1", workspaceRoot: process.cwd(), runId: "run-1" }), "utf8")) as {
+      status: string
+      currentStage: string
+    }
+    assert.equal(runSnapshot.status, "blocked")
+    assert.equal(runSnapshot.currentStage, "frontend-design")
+
+    detachPromptPersistence()
+    io.close()
+  } finally {
+    env.restore()
+    db.cleanup()
   }
 })
 

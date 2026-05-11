@@ -5,7 +5,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { mergeGate } from "../src/stages/mergeGate/index.js"
+import { createBus, busToWorkflowIO } from "../src/core/bus.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../src/core/constants.js"
 import { runWithWorkflowIO } from "../src/core/io.js"
+import { withPromptPersistence } from "../src/core/promptPersistence.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 import type { GitAdapter } from "../src/core/gitAdapter.js"
 import type { SupabaseWorkflowHook } from "../src/core/supabase/workflowHook.js"
@@ -130,6 +133,59 @@ test("mergeGate accepts common approval wording as promotion", async () => {
   )
 
   assert.equal(merged, true)
+})
+
+test("mergeGate keeps the prompt open when a non-interactive run has no queued answer", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-gate-prompt-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+
+  try {
+    const workspace = repos.upsertWorkspace({ key: "test", name: "Test", rootPath: dir })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Item", description: "Desc" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: "Run" })
+    const git = makeGit()
+    const bus = createBus()
+    const io = busToWorkflowIO(bus)
+    const detachPromptPersistence = withPromptPersistence(bus, repos)
+
+    bus.subscribe(event => {
+      if (event.type === "prompt_requested") {
+        bus.answer(event.promptId, NON_INTERACTIVE_NO_ANSWER_SENTINEL)
+      }
+    })
+
+    let blocked: { summary: string; cause?: string } | null = null
+    await assert.rejects(
+      runWithWorkflowIO(io, () =>
+        runWithActiveRun({ runId: run.id, itemId: item.id }, () =>
+          mergeGate(
+            makeContext({ workspaceId: workspace.id, workspaceRoot: dir, runId: run.id, itemSlug: "demo-item" }),
+            git,
+            async (_ctx, summary, opts) => {
+              blocked = { summary, cause: opts?.cause }
+              throw new Error("blocked")
+            },
+          ),
+        ),
+      ),
+      /blocked/,
+    )
+
+    const prompt = repos.getOpenPrompt(run.id)
+    assert.ok(prompt)
+    assert.match(prompt?.prompt ?? "", /Promote .* into master\?/)
+    assert.equal(repos.getPendingPrompt(prompt!.id)?.answered_at, null)
+    assert.equal(blocked?.cause, "merge_gate_failed")
+    assert.match(blocked?.summary ?? "", /non-interactive run/)
+    assert.doesNotMatch(blocked?.summary ?? "", /unsupported answer/i)
+
+    detachPromptPersistence()
+    io.close()
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("REQ-3 AC-3.4: direct-mode merge gate skips automatic production migration", async () => {
