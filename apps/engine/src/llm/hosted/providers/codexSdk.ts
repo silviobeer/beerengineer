@@ -305,10 +305,6 @@ export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<
     }
     return result
   } catch (error) {
-    if (resolution.bypass && resolution.source === "capability") {
-      markCodexSandboxCapabilityUnsupported()
-      throw buildCodexBypassRetryFailure("cached sandbox capability required bypass", error)
-    }
     if (
       !shouldRetryCodexWithSandboxBypass({
         error,
