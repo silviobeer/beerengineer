@@ -44,7 +44,7 @@ import {
   runWorkspaceWorktreeGcCommand,
 } from "./cli/commands/workspaces.js"
 import { runSetupTelegramStatusCommand } from "./cli/commands/setup.js"
-import { runItemAction, runItemImportPrepared } from "./cli/commands/itemActions.js"
+import { runItemAction, runItemImportPrepared, runRunResumeCommand } from "./cli/commands/itemActions.js"
 import { runManagedInstallCommand } from "./cli/commands/install.js"
 import { runUpdateCommand } from "./cli/commands/update.js"
 import { runInteractiveWorkflow } from "./cli/workflow.js"
@@ -128,6 +128,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   "run-list": cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),
+  "run-resume": cmd => runRunResumeCommand(cmd.runId, cmd.resume),
   "run-open": cmd => runRunOpenCommand(cmd.runId),
   "run-tail": cmd => runRunTailCommand(cmd),
   "run-messages": cmd => runRunMessagesCommand(cmd),
