@@ -8,6 +8,14 @@ import {
   emitHostedToolResult,
 } from "./_stream.js"
 import { appendReplayMessages, makeReplaySession, readReplayMessages } from "./_sdkSession.js"
+import {
+  buildCodexBypassRetryFailure,
+  codexSandboxBypassEnabled,
+  markCodexSandboxCapabilitySupported,
+  markCodexSandboxCapabilityUnsupported,
+  resolveCodexSandboxBypass,
+  shouldRetryCodexWithSandboxBypass,
+} from "./codexSandboxPolicy.js"
 
 /**
  * Codex SDK adapter — runs the OpenAI Codex agent in-process via
@@ -115,7 +123,10 @@ function ensureApiKey(): void {
  * sandbox/approval flags in `codex.ts`. When the SDK lacks a clean analogue,
  * we pick the stricter setting, never broader.
  */
-function policyToThreadOptions(input: HostedProviderInvokeInput): ThreadOptions {
+function policyToThreadOptions(
+  input: HostedProviderInvokeInput,
+  bypass = codexSandboxBypassEnabled(process.env),
+): ThreadOptions {
   const opts: ThreadOptions = {
     model: input.runtime.model,
     workingDirectory: input.runtime.workspaceRoot,
@@ -124,11 +135,11 @@ function policyToThreadOptions(input: HostedProviderInvokeInput): ThreadOptions 
   switch (input.runtime.policy.mode) {
     case "no-tools":
     case "safe-readonly":
-      opts.sandboxMode = "read-only"
+      opts.sandboxMode = bypass && input.runtime.policy.mode !== "no-tools" ? "danger-full-access" : "read-only"
       opts.approvalPolicy = "never"
       break
     case "safe-workspace-write":
-      opts.sandboxMode = "workspace-write"
+      opts.sandboxMode = bypass ? "danger-full-access" : "workspace-write"
       opts.approvalPolicy = "never"
       break
     case "unsafe-autonomous-write":
@@ -216,7 +227,10 @@ function finalText(state: CollectorState): string {
   return ""
 }
 
-export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
+async function invokeCodexSdkAttempt(
+  input: HostedProviderInvokeInput,
+  bypass: boolean,
+): Promise<HostedInvocationResult> {
   ensureApiKey()
   const Codex = await loadCodexSdk()
 
@@ -230,7 +244,7 @@ export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<
   const fullPrompt = promptParts.join("\n\n")
 
   const codex = new Codex({ apiKey: process.env.OPENAI_API_KEY })
-  const threadOptions = policyToThreadOptions(input)
+  const threadOptions = policyToThreadOptions(input, bypass)
   const thread = input.session?.sessionId
     ? codex.resumeThread(input.session.sessionId, threadOptions)
     : codex.startThread(threadOptions)
@@ -279,5 +293,37 @@ export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<
       cachedInputTokens: state.usage?.cached_input_tokens ?? 0,
       totalInputTokens: state.usage?.input_tokens ?? 0,
     },
+  }
+}
+
+export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
+  const resolution = await resolveCodexSandboxBypass(input.runtime.policy.mode, process.env)
+  try {
+    const result = await invokeCodexSdkAttempt(input, resolution.bypass)
+    if (resolution.bypass === false && input.runtime.policy.mode !== "no-tools") {
+      markCodexSandboxCapabilitySupported()
+    }
+    return result
+  } catch (error) {
+    if (resolution.bypass && resolution.source === "capability") {
+      markCodexSandboxCapabilityUnsupported()
+      throw buildCodexBypassRetryFailure("cached sandbox capability required bypass", error)
+    }
+    if (
+      !shouldRetryCodexWithSandboxBypass({
+        error,
+        mode: input.runtime.policy.mode,
+        env: process.env,
+        alreadyBypassing: resolution.bypass,
+      })
+    ) {
+      throw error
+    }
+    markCodexSandboxCapabilityUnsupported()
+    try {
+      return await invokeCodexSdkAttempt(input, true)
+    } catch (retryError) {
+      throw buildCodexBypassRetryFailure(error, retryError)
+    }
   }
 }
