@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { createBus, busToWorkflowIO } from "../src/core/bus.js"
-import { generateImportContext, importContextArtifactPath, writeImportContextArtifact, type GeneratedImportContext } from "../src/core/importContext.js"
+import { generateImportContext, importContextArtifactPath, readImportContextArtifact, writeImportContextArtifact, type GeneratedImportContext } from "../src/core/importContext.js"
 import { loadPreparedImportBundle, preparedImportSourceSnapshotDir, seedPreparedImportArtifacts } from "../src/core/preparedImport.js"
 import { prepareForegroundPreparedImportRun } from "../src/core/runService.js"
 import { layout } from "../src/core/workspaceLayout.js"
@@ -14,6 +14,7 @@ import { resolveWorkflowContextForItemRun } from "../src/core/workflowContextRes
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
+import { architecture } from "../src/stages/architecture/index.js"
 
 function tempRepos(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -412,6 +413,10 @@ test("prepared import persists the same import-context contract produced by the 
 
     const persisted = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8")) as typeof direct.importContext
     assert.deepEqual(persisted, direct.importContext)
+    assert.deepEqual(
+      repos.listArtifactsForRun(prepared.runId).map(artifact => ({ label: artifact.label, kind: artifact.kind, path: artifact.path })),
+      [{ label: "Import Context", kind: "json", path: importContextArtifactPath(ctx) }],
+    )
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
@@ -494,6 +499,169 @@ test("prepared import accepts degraded shared import-context results without blo
       assert.deepEqual(persisted.files, fixture.files)
       assert.deepEqual(persisted.warnings, fixture.warnings)
     }
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("prepared import records an explicit empty import-context outcome", async () => {
+  const { dir, db, repos } = tempRepos("be2-import-context-empty-")
+  const repoRoot = join(dir, "repo")
+  const sourceDir = join(dir, "prepared")
+  seedGitRepo(repoRoot)
+  mkdirSync(sourceDir, { recursive: true })
+  try {
+    const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
+    const io = makeIo()
+
+    const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+      sourceDir,
+      workspaceKey: workspace.key,
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: fakeScheduler(),
+    })
+
+    assert.equal(prepared.ok, true)
+    if (!prepared.ok) return
+
+    const item = repos.getItem(prepared.itemId)
+    const run = repos.getRun(prepared.runId)
+    assert.ok(item)
+    assert.ok(run)
+    if (!item || !run) return
+
+    const ctx = resolveWorkflowContextForItemRun(repos, item, run)
+    assert.ok(ctx)
+    if (!ctx) return
+
+    const persisted = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8")) as { status: string; files: unknown[] }
+    assert.equal(persisted.status, "empty")
+    assert.deepEqual(persisted.files, [])
+    assert.equal(repos.listArtifactsForRun(prepared.runId)[0]?.label, "Import Context")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("repeated identical prepared imports persist identical semantic import-context output", async () => {
+  const { dir, db, repos } = tempRepos("be2-import-context-repeat-")
+  const repoRoot = join(dir, "repo")
+  const sourceDir = join(dir, "prepared")
+  seedGitRepo(repoRoot)
+  try {
+    mkdirSync(join(sourceDir, "1_brainstorm"), { recursive: true })
+    mkdirSync(join(sourceDir, "3_PRDs"), { recursive: true })
+    writeFileSync(join(sourceDir, "1_brainstorm", "PROJ-1-concept.md"), "# PROJ-1: Shared Context\n")
+    writeFileSync(
+      join(sourceDir, "3_PRDs", "PROJ-1-PRD-1-overview.md"),
+      [
+        "# Overview PRD",
+        "",
+        "### US-1: Review imported context",
+        "- AC-1: Imported context is visible downstream.",
+      ].join("\n"),
+    )
+    writeFileSync(join(sourceDir, "notes.txt"), "omitted from downstream context\n")
+
+    const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
+    const io = makeIo()
+    const outputs: Array<unknown> = []
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+        sourceDir,
+        workspaceKey: workspace.key,
+        owner: "cli",
+        appConfig: appConfigFor(dir),
+        workerLeaseScheduler: fakeScheduler(),
+      })
+      assert.equal(prepared.ok, true)
+      if (!prepared.ok) continue
+
+      const item = repos.getItem(prepared.itemId)
+      const run = repos.getRun(prepared.runId)
+      assert.ok(item)
+      assert.ok(run)
+      if (!item || !run) continue
+
+      const ctx = resolveWorkflowContextForItemRun(repos, item, run)
+      assert.ok(ctx)
+      if (!ctx) continue
+      outputs.push(JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8")))
+    }
+
+    assert.equal(outputs.length, 2)
+    assert.deepEqual(outputs[0], outputs[1])
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("prepared import injects import-context into downstream stage state", async () => {
+  const { dir, db, repos } = tempRepos("be2-import-context-stage-")
+  const repoRoot = join(dir, "repo")
+  const sourceDir = join(dir, "prepared")
+  seedGitRepo(repoRoot)
+  try {
+    mkdirSync(sourceDir, { recursive: true })
+    writeFileSync(
+      join(sourceDir, "concept.json"),
+      JSON.stringify({ summary: "Prepared", problem: "Import", users: ["operator"], constraints: [] }),
+    )
+    writeFileSync(
+      join(sourceDir, "projects.json"),
+      JSON.stringify([{ id: "P01", name: "Core", description: "Core", concept: { summary: "Core", problem: "", users: [], constraints: [] } }]),
+    )
+    writeFileSync(
+      join(sourceDir, "P01.prd.json"),
+      JSON.stringify({ prd: { stories: [{ id: "US-1", title: "Import", acceptanceCriteria: [] }] } }),
+    )
+    writeFileSync(join(sourceDir, "notes.txt"), "omitted from downstream context\n")
+
+    const direct = await generateImportContext(sourceDir, { title: "Fallback", description: "Desc" })
+    const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
+    const io = makeIo()
+
+    const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+      sourceDir,
+      workspaceKey: workspace.key,
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: fakeScheduler(),
+    })
+
+    assert.equal(prepared.ok, true)
+    if (!prepared.ok) return
+
+    const item = repos.getItem(prepared.itemId)
+    const run = repos.getRun(prepared.runId)
+    assert.ok(item)
+    assert.ok(run)
+    if (!item || !run) return
+
+    const ctx = resolveWorkflowContextForItemRun(repos, item, run)
+    assert.ok(ctx)
+    if (!ctx) return
+
+    const imported = await readImportContextArtifact(ctx)
+    assert.deepEqual(imported, direct.importContext)
+    await architecture({
+      ...ctx,
+      project: direct.bundle.projects[0]!,
+      prd: direct.bundle.prdsByProjectId.P01!,
+      importContext: imported ?? undefined,
+    })
+
+    const architectureRun = JSON.parse(readFileSync(layout.stageRunFile(ctx, "architecture"), "utf8")) as {
+      state: { importContext?: unknown }
+      status: string
+    }
+    assert.equal(architectureRun.status, "approved")
+    assert.deepEqual(architectureRun.state.importContext, direct.importContext)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })

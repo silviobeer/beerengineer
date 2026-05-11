@@ -1,4 +1,5 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 import type { RunLlmConfig } from "../llm/registry.js"
@@ -191,4 +192,12 @@ export function writeImportContextArtifact(context: WorkflowContext, artifact: I
   mkdirSync(join(layout.runDir(context), "imports"), { recursive: true })
   writeFileSync(path, JSON.stringify(artifact, null, 2))
   return path
+}
+
+export async function readImportContextArtifact(context: WorkflowContext): Promise<ImportContextArtifact | null> {
+  try {
+    return JSON.parse(await readFile(importContextArtifactPath(context), "utf8")) as ImportContextArtifact
+  } catch {
+    return null
+  }
 }

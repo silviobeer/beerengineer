@@ -882,7 +882,13 @@ export async function prepareForegroundPreparedImportRun(
   const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
   if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
-  writeImportContextArtifact(ctx, importContext)
+  const importContextPath = writeImportContextArtifact(ctx, importContext)
+  repos.recordArtifact({
+    runId: prepared.runId,
+    label: "Import Context",
+    kind: "json",
+    path: importContextPath,
+  })
   return {
     ok: true,
     runId: prepared.runId,
