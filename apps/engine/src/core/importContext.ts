@@ -45,11 +45,26 @@ export type ImportContextGeneratorInput = {
 
 export type ImportContextGenerator = (input: ImportContextGeneratorInput) => Promise<GeneratedImportContext>
 
+function compareAlphabetically(left: string, right: string): number {
+  return left.localeCompare(right)
+}
+
 function collectFiles(root: string): string[] {
-  return readdirSync(root)
+  let entries: string[]
+  try {
+    entries = readdirSync(root)
+  } catch {
+    return []
+  }
+  return entries
     .map(name => join(root, name))
     .flatMap(path => {
-      const stat = lstatSync(path)
+      let stat
+      try {
+        stat = lstatSync(path)
+      } catch {
+        return []
+      }
       if (stat.isSymbolicLink()) return []
       if (stat.isDirectory()) return collectFiles(path)
       return stat.isFile() ? [path] : []
@@ -69,22 +84,30 @@ function isPrdJsonFile(relativePath: string, base: string): boolean {
   return base === "prd.json" || base.endsWith(".prd.json") || /^prds\//i.test(relativePath) || /^3_PRDs\//i.test(relativePath)
 }
 
+function isVisibleMarkdownContent(content: string, relativePath: string): boolean {
+  return /^###\s+(US-[\w-]+|Story\s+\d+)/im.test(content) || /^3_PRDs\//i.test(relativePath) || /^prds\//i.test(relativePath)
+}
+
 function visibleMarkdownFiles(sourceDir: string, files: string[]): Set<string> {
   const conceptFile =
     files.find(path => /(?:^|\/)1_brainstorm\/.*concept.*\.md$/i.test(path)) ??
     files.find(path => path.toLowerCase().endsWith("concept.md")) ??
     files.find(path => extname(path).toLowerCase() === ".md")
 
+  const conceptPath = conceptFile ? resolve(conceptFile) : null
   const visible = new Set<string>()
-  if (conceptFile) visible.add(resolve(conceptFile))
+  if (conceptPath) visible.add(conceptPath)
 
   for (const file of files) {
-    if (extname(file).toLowerCase() !== ".md" || resolve(file) === resolve(conceptFile ?? "")) continue
+    if (extname(file).toLowerCase() !== ".md" || resolve(file) === conceptPath) continue
     const rel = relativeImportPath(sourceDir, file)
-    const content = readFileSync(file, "utf8")
-    if (/^###\s+(US-[\w-]+|Story\s+\d+)/im.test(content) || /^3_PRDs\//i.test(rel) || /^prds\//i.test(rel)) {
-      visible.add(resolve(file))
+    let content: string
+    try {
+      content = readFileSync(file, "utf8")
+    } catch {
+      continue
     }
+    if (isVisibleMarkdownContent(content, rel)) visible.add(resolve(file))
   }
   return visible
 }
@@ -93,7 +116,7 @@ function jsonOutcome(sourceDir: string, file: string): ImportContextFileOutcome 
   const rel = relativeImportPath(sourceDir, file)
   const base = basename(file).toLowerCase()
   try {
-    JSON.parse(readFileSync(file, "utf8")) as unknown
+    JSON.parse(readFileSync(file, "utf8"))
   } catch {
     return { path: rel, outcome: "omitted", reason: "unsupported" }
   }
@@ -103,52 +126,52 @@ function jsonOutcome(sourceDir: string, file: string): ImportContextFileOutcome 
   return { path: rel, outcome: "omitted", reason: "unsupported" }
 }
 
+function importContextMetadata(bundle: PreparedImportBundle): ImportContextArtifact["context"] {
+  return {
+    conceptSummary: bundle.concept.summary,
+    hasUi: bundle.concept.hasUi === true,
+    projectIds: bundle.projects.map(project => project.id),
+    prdProjectIds: Object.keys(bundle.prdsByProjectId).sort(compareAlphabetically),
+  }
+}
+
 function buildImportContextArtifact(sourceDir: string, bundle: PreparedImportBundle): ImportContextArtifact {
   const files = collectFiles(sourceDir)
     .map(file => resolve(file))
     .filter(file => !isPathInside(join(resolve(sourceDir), ".beerengineer"), file))
-    .sort((a, b) => relativeImportPath(sourceDir, a).localeCompare(relativeImportPath(sourceDir, b)))
+    .sort((left, right) => compareAlphabetically(relativeImportPath(sourceDir, left), relativeImportPath(sourceDir, right)))
 
   if (files.length === 0) {
     return {
       status: "empty",
       files: [],
-      context: {
-        conceptSummary: bundle.concept.summary,
-        hasUi: bundle.concept.hasUi === true,
-        projectIds: bundle.projects.map(project => project.id),
-        prdProjectIds: Object.keys(bundle.prdsByProjectId).sort(),
-      },
+      context: importContextMetadata(bundle),
       warnings: bundle.warnings,
     }
   }
 
   const visibleMarkdown = visibleMarkdownFiles(sourceDir, files)
-  const outcomes = files.map(file => {
+  const outcomes = files.map<ImportContextFileOutcome>(file => {
     const rel = relativeImportPath(sourceDir, file)
     const ext = extname(file).toLowerCase()
     if (ext === ".json") return jsonOutcome(sourceDir, file)
     if (ext === ".md") {
       if (visibleMarkdown.has(resolve(file))) {
         const reason = /concept/i.test(basename(file)) ? "concept_markdown" : "prd_markdown"
-        return { path: rel, outcome: "visible", reason } satisfies ImportContextFileOutcome
+        return { path: rel, outcome: "visible", reason }
       }
     }
-    return { path: rel, outcome: "omitted", reason: "unsupported" } satisfies ImportContextFileOutcome
+    return { path: rel, outcome: "omitted", reason: "unsupported" }
   })
   const visibleCount = outcomes.filter(file => file.outcome === "visible").length
-  const status: ImportContextStatus =
-    visibleCount === 0 ? "empty" : visibleCount === outcomes.length ? "full" : "partial"
+  let status: ImportContextStatus = "partial"
+  if (visibleCount === 0) status = "empty"
+  else if (visibleCount === outcomes.length) status = "full"
 
   return {
     status,
     files: outcomes,
-    context: {
-      conceptSummary: bundle.concept.summary,
-      hasUi: bundle.concept.hasUi === true,
-      projectIds: bundle.projects.map(project => project.id),
-      prdProjectIds: Object.keys(bundle.prdsByProjectId).sort(),
-    },
+    context: importContextMetadata(bundle),
     warnings: bundle.warnings,
   }
 }
@@ -163,12 +186,7 @@ export const defaultImportContextGenerator: ImportContextGenerator = async ({ so
       importContext: {
         status: "unavailable",
         files: [],
-        context: {
-          conceptSummary: bundle.concept.summary,
-          hasUi: bundle.concept.hasUi === true,
-          projectIds: bundle.projects.map(project => project.id),
-          prdProjectIds: Object.keys(bundle.prdsByProjectId).sort(),
-        },
+        context: importContextMetadata(bundle),
         warnings: [...bundle.warnings, `import-context generation unavailable: ${(error as Error).message}`],
       },
     }
