@@ -32,7 +32,7 @@ type BlockRunFn = (
 
 type ActiveMergeRun = NonNullable<ReturnType<typeof getActiveRun>>
 
-function normalizeMergeGateAnswer(answer: string): "promote" | "cancel" | string {
+function normalizeMergeGateAnswer(answer: string): string {
   const normalized = answer.trim().toLowerCase()
   if (["promote", "approve", "approved", "yes", "y"].includes(normalized)) return "promote"
   if (["cancel", "no", "n"].includes(normalized)) return "cancel"
@@ -155,7 +155,7 @@ async function promptForMergeAnswer(
   git: GitAdapter,
   activeRun: ActiveMergeRun,
   itemBranch: string,
-): Promise<"promote" | "cancel" | string> {
+): Promise<string> {
   const prompt = `Promote ${itemBranch} into ${git.mode.baseBranch}?`
   const actions = [
     { label: `Promote to ${git.mode.baseBranch}`, value: "promote" },

@@ -153,6 +153,7 @@ export interface AppConfigView {
     workspaceId?: string;
     projectRef?: string;
     region?: string;
+    dbMode?: "branching" | "direct";
     persistentTestBranchName?: string;
     persistentTestBranchRef?: string;
     persistentTestBranchStatus?: string;
@@ -212,6 +213,7 @@ export interface SupabaseReadinessSnapshot {
     id?: string;
     key?: string;
     projectRef?: string;
+    dbMode?: "branching" | "direct";
     persistentTestBranchRef?: string;
     persistentTestBranchName?: string;
   };
