@@ -5,6 +5,14 @@ import { sanitizePreviewValue } from "../../../core/messagePreview.js"
 import type { HostedInvocationResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import { emitHostedThinking, emitHostedTokens, emitHostedToolCalled, emitHostedToolResult, makeJsonLineStreamCallback } from "./_stream.js"
+import {
+  buildCodexBypassRetryFailure,
+  codexSandboxBypassEnabled,
+  markCodexSandboxCapabilitySupported,
+  markCodexSandboxCapabilityUnsupported,
+  resolveCodexSandboxBypass,
+  shouldRetryCodexWithSandboxBypass,
+} from "./codexSandboxPolicy.js"
 
 type CodexStreamEvent = {
   type?: string
@@ -83,34 +91,14 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
   }
 }
 
-/**
- * Operator opt-in: when set to a truthy value, codex's built-in OS sandbox is
- * skipped for `safe-readonly` and `safe-workspace-write` policies. The CLI
- * runs with `--full-auto --dangerously-bypass-approvals-and-sandbox` instead.
- *
- * Why this exists: codex's `--sandbox <mode>` relies on host primitives
- * (Linux landlock + seccomp). On hosts where those primitives are missing or
- * broken — e.g. unprivileged containers, certain distro/kernel combos, or
- * hosts whose seccomp policy strips the syscalls codex needs — every shell
- * call inside the sandbox is silently rejected. The model then reports
- * "execution environment rejected every local command invocation" and
- * cannot inspect the repo or run tests. Setting this env var trades the
- * OS-level sandbox for trust in the host (beerengineer_ already runs codex
- * in the registered worktree the operator owns). `no-tools` policy still
- * pins to `read-only` since it never needs shell access at all.
- *
- * Truthy: `1`, `true`, `yes` (case-insensitive). Anything else is false.
- */
-export function codexSandboxBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.BEERENGINEER_CODEX_SANDBOX_BYPASS?.trim().toLowerCase()
-  return raw === "1" || raw === "true" || raw === "yes"
-}
+export { codexSandboxBypassEnabled } from "./codexSandboxPolicy.js"
 
 export function buildCodexCommand(
   input: HostedProviderInvokeInput,
   state: CodexStreamState,
   tempDir: string,
   env: NodeJS.ProcessEnv = process.env,
+  bypassOverride?: boolean,
 ): string[] {
   state.tempDir = tempDir
   state.responsePath = join(tempDir, "last-message.txt")
@@ -122,7 +110,7 @@ export function buildCodexCommand(
   // and `--dangerously-bypass-approvals-and-sandbox`. Route the safe-readonly /
   // safe-workspace-write modes through `-c sandbox_mode=<mode>` on resume, which
   // both subcommands accept.
-  const bypass = codexSandboxBypassEnabled(env)
+  const bypass = bypassOverride ?? codexSandboxBypassEnabled(env)
   applyCodexSandboxMode(command, input.runtime.policy.mode, { isResume, bypass })
   if (input.runtime.model) command.push("--model", input.runtime.model)
   // `codex exec resume` inherits cwd from the original session and rejects
@@ -197,17 +185,15 @@ function parseUsage(stdout: string): { sessionId: string | null; cachedInputToke
   return { sessionId, cachedInputTokens, totalInputTokens }
 }
 
-/**
- * Codex needs a fresh temp dir per-attempt because `--output-last-message`
- * writes to a file path. We pre-allocate it before the driver builds the
- * command and clean it up in `afterEach`.
- */
-export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
+async function invokeCodexAttempt(
+  input: HostedProviderInvokeInput,
+  bypass: boolean,
+): Promise<HostedInvocationResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "beerengineer-codex-"))
   const driver: ProviderDriver<CodexStreamState> = {
     tag: "codex",
     createStreamState: createCodexStreamState,
-    buildCommand: activeInput => buildCodexCommand(activeInput, state, tempDir),
+    buildCommand: activeInput => buildCodexCommand(activeInput, state, tempDir, process.env, bypass),
     streamCallback: ownState =>
       makeJsonLineStreamCallback<CodexStreamEvent>({
         summarize: event => summarizeCodexEvent(event, ownState),
@@ -244,5 +230,42 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
     return await invokeProviderCli(driver, input)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Codex needs a fresh temp dir per-attempt because `--output-last-message`
+ * writes to a file path. We pre-allocate it before the driver builds the
+ * command and clean it up in `afterEach`.
+ */
+export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
+  const resolution = await resolveCodexSandboxBypass(input.runtime.policy.mode, process.env)
+  try {
+    const result = await invokeCodexAttempt(input, resolution.bypass)
+    if (!resolution.bypass && input.runtime.policy.mode !== "no-tools") {
+      markCodexSandboxCapabilitySupported()
+    }
+    return result
+  } catch (error) {
+    if (resolution.bypass && resolution.source === "capability") {
+      markCodexSandboxCapabilityUnsupported()
+      throw buildCodexBypassRetryFailure("cached sandbox capability required bypass", error)
+    }
+    if (
+      !shouldRetryCodexWithSandboxBypass({
+        error,
+        mode: input.runtime.policy.mode,
+        env: process.env,
+        alreadyBypassing: resolution.bypass,
+      })
+    ) {
+      throw error
+    }
+    markCodexSandboxCapabilityUnsupported()
+    try {
+      return await invokeCodexAttempt(input, true)
+    } catch (retryError) {
+      throw buildCodexBypassRetryFailure(error, retryError)
+    }
   }
 }

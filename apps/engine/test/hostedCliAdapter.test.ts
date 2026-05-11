@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { HostedStageAdapter } from "../src/llm/hosted/hostedCliAdapter.js"
+import { resetCodexSandboxPolicyForTests } from "../src/llm/hosted/providers/codexSandboxPolicy.js"
 
 function makeStubBin(dir: string, name: string, body: string): string {
   mkdirSync(dir, { recursive: true })
@@ -63,5 +64,49 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"{
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("qa hosted stage surfaces worker start failures with recovery-friendly wording", async () => {
+  resetCodexSandboxPolicyForTests()
+  const dir = mkdtempSync(join(tmpdir(), "be2-hosted-stage-"))
+  const binDir = join(dir, "bin")
+  const previousPath = process.env.PATH
+
+  try {
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+printf '%s\n' 'generic launch failure' >&2
+exit 1
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    const adapter = new HostedStageAdapter<{ item: string }, { ok: boolean }>({
+      stageId: "qa",
+      harness: "codex",
+      runtime: "cli",
+      provider: "openai",
+      model: "gpt-5.4",
+      workspaceRoot: dir,
+      runtimePolicy: { mode: "safe-workspace-write" },
+    })
+
+    await assert.rejects(
+      () =>
+        adapter.step({
+          kind: "begin",
+          state: { item: "demo" },
+          stageContext: { turnCount: 1, phase: "begin" },
+        }),
+      /worker start failed: .*generic launch failure/i,
+    )
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
   }
 })

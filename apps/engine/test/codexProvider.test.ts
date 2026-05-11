@@ -1,8 +1,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { buildCodexCommand, codexSandboxBypassEnabled } from "../src/llm/hosted/providers/codex.js"
 import type { HostedProviderInvokeInput } from "../src/llm/hosted/providerRuntime.js"
+import { invokeCodex } from "../src/llm/hosted/providers/codex.js"
+import { resetCodexSandboxPolicyForTests } from "../src/llm/hosted/providers/codexSandboxPolicy.js"
 
 function inputFor(policyMode: "no-tools" | "safe-readonly" | "safe-workspace-write" | "unsafe-autonomous-write", opts: { resume?: boolean } = {}): HostedProviderInvokeInput {
   return {
@@ -17,6 +22,14 @@ function inputFor(policyMode: "no-tools" | "safe-readonly" | "safe-workspace-wri
 }
 
 const STATE = () => ({ streamedSummary: false, tempDir: null, responsePath: null })
+
+function makeStubBin(dir: string, name: string, body: string): string {
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, name)
+  writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`, "utf8")
+  chmodSync(path, 0o755)
+  return path
+}
 
 test("codexSandboxBypassEnabled accepts 1 / true / yes (case-insensitive); ignores everything else", () => {
   for (const v of ["1", "true", "TRUE", "yes", "Yes"]) {
@@ -89,4 +102,122 @@ test("buildCodexCommand: unsafe-autonomous-write emits bypass flag alone (existi
   const cmd = buildCodexCommand(inputFor("unsafe-autonomous-write"), STATE(), "/tmp/codex-6", {})
   assert.ok(!cmd.includes("--full-auto"))
   assert.ok(cmd.includes("--dangerously-bypass-approvals-and-sandbox"))
+})
+
+test("invokeCodex retries once with bypass after a known bwrap networking failure", async () => {
+  resetCodexSandboxPolicyForTests()
+  const dir = mkdtempSync(join(tmpdir(), "be2-codex-provider-"))
+  const binDir = join(dir, "bin")
+  const attemptsPath = join(dir, "attempts.log")
+  const previousPath = process.env.PATH
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+
+  try {
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+count=0
+if [ -f "${attemptsPath}" ]; then
+  count="$(wc -l < "${attemptsPath}")"
+fi
+count="$((count + 1))"
+printf '%s\n' "$*" >> "${attemptsPath}"
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' 'bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted' >&2
+  exit 1
+fi
+response=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then
+    response="$arg"
+    break
+  fi
+  prev="$arg"
+done
+printf '{"summary":"done"}' > "$response"
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-1"}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    const result = await invokeCodex({
+      prompt: "hello",
+      runtime: {
+        harness: "codex",
+        runtime: "cli",
+        provider: "openai",
+        workspaceRoot: dir,
+        policy: { mode: "safe-workspace-write" },
+      } as HostedProviderInvokeInput["runtime"],
+      session: null,
+    })
+
+    const attempts = readFileSync(attemptsPath, "utf8").trim().split(/\r?\n/)
+    assert.equal(attempts.length, 2)
+    assert.match(attempts[0] ?? "", /--sandbox workspace-write/)
+    assert.doesNotMatch(attempts[0] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+    assert.match(attempts[1] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+    assert.equal(result.outputText, "{\"summary\":\"done\"}")
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})
+
+test("invokeCodex does not retry generic non-networking launch failures", async () => {
+  resetCodexSandboxPolicyForTests()
+  const dir = mkdtempSync(join(tmpdir(), "be2-codex-provider-"))
+  const binDir = join(dir, "bin")
+  const attemptsPath = join(dir, "attempts.log")
+  const previousPath = process.env.PATH
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+
+  try {
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+printf '%s\n' "$*" >> "${attemptsPath}"
+printf '%s\n' 'generic launch failure' >&2
+exit 1
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    await assert.rejects(
+      () =>
+        invokeCodex({
+          prompt: "hello",
+          runtime: {
+            harness: "codex",
+            runtime: "cli",
+            provider: "openai",
+            workspaceRoot: dir,
+            policy: { mode: "safe-workspace-write" },
+          } as HostedProviderInvokeInput["runtime"],
+          session: null,
+        }),
+      /generic launch failure/,
+    )
+
+    const attempts = readFileSync(attemptsPath, "utf8").trim().split(/\r?\n/)
+    assert.equal(attempts.length, 1)
+    assert.doesNotMatch(attempts[0] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
 })

@@ -6,6 +6,7 @@ import { buildExecutionPrompt } from "../promptEnvelope.js"
 import { invokeHostedCli, parseJsonObject } from "../hostedCliAdapter.js"
 import type { HostedSession } from "../providerRuntime.js"
 import type { ResolvedHarness, RuntimePolicy } from "../../registry.js"
+import { buildCodexWorkerStartFailure } from "../providers/codexSandboxPolicy.js"
 
 type GitBaseline = {
   headSha: string | null
@@ -119,10 +120,15 @@ export async function runCoderHarness(input: {
       reviewFeedback: input.reviewFeedback ?? null,
     },
   }
-  const result = await invokeHostedCli(
-    request,
-    { harness, sessionId: input.sessionId ?? null } satisfies HostedSession,
-  )
+  let result
+  try {
+    result = await invokeHostedCli(
+      request,
+      { harness, sessionId: input.sessionId ?? null } satisfies HostedSession,
+    )
+  } catch (error) {
+    throw buildCodexWorkerStartFailure(error)
+  }
   const parsed = parseJsonObject(result.outputText) as CoderHarnessOutput
   return {
     summary: typeof parsed.summary === "string" ? parsed.summary : "Execution completed.",

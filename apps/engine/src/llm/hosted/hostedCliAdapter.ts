@@ -16,6 +16,7 @@ import { invokeCodex } from "./providers/codex.js"
 import { invokeOpenCode } from "./providers/opencode.js"
 import { invokeClaudeSdk } from "./providers/claudeSdk.js"
 import { invokeCodexSdk } from "./providers/codexSdk.js"
+import { buildCodexWorkerStartFailure } from "./providers/codexSandboxPolicy.js"
 
 export type HostedProviderAdapter = {
   invoke(input: HostedProviderInvokeInput): Promise<HostedInvocationResult>
@@ -208,12 +209,19 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const { envelope: response, session } = await invokeAndParse<StageAgentResponse<A>>({
-      request: { kind: "stage", runtime, prompt, payload: request },
-      session: this.session,
-      parse: raw => mapStageEnvelopeToResponse(raw as HostedStageOutputEnvelope<A>),
-      retryHint: STAGE_RETRY_HINT,
-    })
+    let response
+    let session
+    try {
+      ({ envelope: response, session } = await invokeAndParse<StageAgentResponse<A>>({
+        request: { kind: "stage", runtime, prompt, payload: request },
+        session: this.session,
+        parse: raw => mapStageEnvelopeToResponse(raw as HostedStageOutputEnvelope<A>),
+        retryHint: STAGE_RETRY_HINT,
+      }))
+    } catch (error) {
+      if (this.input.stageId === "qa") throw buildCodexWorkerStartFailure(error)
+      throw error
+    }
     this.session = session
     return response
   }
