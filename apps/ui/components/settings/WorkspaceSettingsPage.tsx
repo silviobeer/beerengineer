@@ -26,6 +26,8 @@ export function WorkspaceSettingsPage({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const connected = Boolean(readiness.workspace.projectRef);
+  const dbMode = readiness.workspace.dbMode;
+  const isDirectMode = connected && dbMode === "direct";
 
   async function refreshReadiness(): Promise<SupabaseReadinessSnapshot | null> {
     const query = readiness.retry.runId ? `?runId=${encodeURIComponent(readiness.retry.runId)}` : "";
@@ -116,9 +118,18 @@ export function WorkspaceSettingsPage({
           <section id="supabase" className="scroll-mt-24 space-y-4" data-testid="workspace-settings-supabase">
             <div>
               <h2 className="font-display text-xl">Supabase</h2>
-              <p className="text-sm text-zinc-400">Workspace-scoped project access and persistent test branch readiness.</p>
+              <p className="text-sm text-zinc-400">
+                {isDirectMode
+                  ? "Workspace-scoped project access for direct mode. Persistent test branches and automatic production migrations stay unavailable."
+                  : "Workspace-scoped project access and persistent test branch readiness."}
+              </p>
             </div>
             <SupabaseReadinessSummary readiness={readiness} onRetry={retryRun} />
+            {isDirectMode ? (
+              <div className="border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-300">
+                Direct mode is active for this workspace. Review database changes manually before applying them to the linked database.
+              </div>
+            ) : null}
             {!connected ? (
               <div className="border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-300">
                 Supabase is not configured for this workspace. Paste the project ref and Management API token below.
@@ -139,18 +150,23 @@ export function WorkspaceSettingsPage({
                 <button type="button" onClick={() => void refreshReadiness()} className="border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200">Recheck readiness</button>
               </div>
             </div>
-            <fieldset className="space-y-3 border border-zinc-800 bg-zinc-900 p-4">
-              <legend className="text-sm text-zinc-300">Persistent test branch</legend>
-              <div className="flex flex-wrap gap-3 text-sm">
-                <label className="inline-flex items-center gap-2"><input type="radio" checked={branchMode === "create"} onChange={() => setBranchMode("create")} /> Create</label>
-                <label className="inline-flex items-center gap-2"><input type="radio" checked={branchMode === "attach"} onChange={() => setBranchMode("attach")} /> Attach existing</label>
-              </div>
-              <button type="button" disabled={!connected} onClick={() => void setupBranch()} className="border border-amber-500 px-3 py-1.5 text-sm text-amber-300 disabled:opacity-45">Create or attach persistent branch</button>
-            </fieldset>
+            {!isDirectMode ? (
+              <fieldset className="space-y-3 border border-zinc-800 bg-zinc-900 p-4">
+                <legend className="text-sm text-zinc-300">Persistent test branch</legend>
+                <div className="flex flex-wrap gap-3 text-sm">
+                  <label className="inline-flex items-center gap-2"><input type="radio" checked={branchMode === "create"} onChange={() => setBranchMode("create")} /> Create</label>
+                  <label className="inline-flex items-center gap-2"><input type="radio" checked={branchMode === "attach"} onChange={() => setBranchMode("attach")} /> Attach existing</label>
+                </div>
+                <button type="button" disabled={!connected} onClick={() => void setupBranch()} className="border border-amber-500 px-3 py-1.5 text-sm text-amber-300 disabled:opacity-45">Create or attach persistent branch</button>
+              </fieldset>
+            ) : null}
             {connected ? (
               <div className="grid gap-3 border border-zinc-800 bg-zinc-900 p-4 md:grid-cols-2">
                 <p className="text-sm"><span className="text-zinc-400">Project ref</span><br /><span className="font-mono">{readiness.workspace.projectRef}</span></p>
-                <p className="text-sm"><span className="text-zinc-400">Persistent branch</span><br /><span className="font-mono">{readiness.workspace.persistentTestBranchName ?? "not created"}</span></p>
+                <p className="text-sm"><span className="text-zinc-400">Database mode</span><br /><span className="font-mono">{dbMode ?? "branching"}</span></p>
+                {!isDirectMode ? (
+                  <p className="text-sm"><span className="text-zinc-400">Persistent branch</span><br /><span className="font-mono">{readiness.workspace.persistentTestBranchName ?? "not created"}</span></p>
+                ) : null}
               </div>
             ) : null}
             {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}

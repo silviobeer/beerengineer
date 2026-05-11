@@ -192,6 +192,13 @@ export async function handleWorkspaceSupabaseRotate(repos: Repos, req: IncomingM
 export async function handleWorkspaceSupabaseBranch(repos: Repos, req: IncomingMessage, res: ServerResponse, key: string): Promise<void> {
   const workspace = repos.getWorkspaceByKey(key)
   if (!workspace) return json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
+  if (workspace.supabase_db_mode === "direct") {
+    return json(res, 409, {
+      ok: false,
+      error: "branching_unavailable",
+      message: "Persistent test branches are unavailable in direct mode. Reconnect the workspace to use branching mode.",
+    })
+  }
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
   if (!token) return json(res, 400, { ok: false, error: "token_required", message: "Supabase Management API token is required" })
   const body = await readJson(req) as { mode?: unknown }

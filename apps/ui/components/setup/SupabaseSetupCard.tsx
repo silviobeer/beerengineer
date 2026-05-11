@@ -27,6 +27,8 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const connected = isConnected && Boolean(supabase?.projectRef);
+  const dbMode = supabase?.dbMode;
+  const isDirectMode = connected && dbMode === "direct";
   const projectRefInvalid = projectRef.length > 0 && !PROJECT_REF_PATTERN.test(projectRef);
 
   async function validate() {
@@ -111,8 +113,12 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
   return (
     <article className="space-y-4 border border-zinc-800 bg-zinc-900 p-4" data-testid="supabase-setup-card">
       <div>
-        <h3 className="text-sm font-medium text-zinc-100">Supabase Cloud Branching</h3>
-        <p className="text-sm text-zinc-400">Connect a Supabase project for DB-relevant wave isolation.</p>
+        <h3 className="text-sm font-medium text-zinc-100">Supabase database connection</h3>
+        <p className="text-sm text-zinc-400">
+          {isDirectMode
+            ? "Direct mode is active. Persistent test branches are unavailable for this project."
+            : "Connect a Supabase project for DB-relevant wave isolation."}
+        </p>
       </div>
       {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
       {error || projectRefInvalid ? (
@@ -144,6 +150,10 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
           <label className="block space-y-1 text-sm">
             <span className="text-zinc-300">Region</span>
             <input readOnly aria-label="Connected Supabase region" className="w-full border border-zinc-800 bg-zinc-950 p-2 text-zinc-400" value={supabase?.region ?? ""} />
+          </label>
+          <label className="block space-y-1 text-sm md:col-span-2">
+            <span className="text-zinc-300">Database mode</span>
+            <input readOnly aria-label="Connected Supabase database mode" className="w-full border border-zinc-800 bg-zinc-950 p-2 text-zinc-400" value={dbMode ?? "branching"} />
           </label>
         </div>
       ) : null}
