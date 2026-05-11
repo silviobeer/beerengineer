@@ -405,8 +405,8 @@ async function discardStaleWaveAttachment(input: {
         ? actualName !== expectedName
         : persistedName != null && persistedName !== expectedName
     } catch (err) {
-      if (!isNotFoundError(err)) throw err
-      staleAttachment = true
+      if (isNotFoundError(err)) staleAttachment = true
+      else throw err
     }
   } else if (persistedName) {
     staleAttachment = persistedName !== expectedName
