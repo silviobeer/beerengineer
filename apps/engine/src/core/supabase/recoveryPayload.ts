@@ -216,7 +216,7 @@ function provisioningGuidanceReason(value: unknown): SupabaseProvisioningGuidanc
     : null
 }
 
-function provisioningGuidance(value: unknown): SupabaseProvisioningRecoveryGuidance | undefined {
+export function parseSupabaseProvisioningGuidance(value: unknown): SupabaseProvisioningRecoveryGuidance | undefined {
   const row = objectValue(value)
   if (!row) return undefined
   const reason = provisioningGuidanceReason(row.reason)
@@ -271,7 +271,7 @@ export function parseSupabaseProvisioningRecoveryPayload(raw: string | null | un
     failedStep,
     failureCause,
     userMessage,
-    guidance: provisioningGuidance(row.guidance),
+    guidance: parseSupabaseProvisioningGuidance(row.guidance),
     operatorAction: provisioningOperatorAction(row.operatorAction),
   }
 }

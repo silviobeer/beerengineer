@@ -5,6 +5,7 @@ import { emitEvent } from "../runContext.js"
 import { layout } from "../workspaceLayout.js"
 import {
   buildSupabaseProvisioningRecoveryPayload,
+  parseSupabaseProvisioningGuidance,
   type SupabaseProvisioningRecoveryGuidance,
   type SupabaseProvisioningFailureStep,
 } from "./recoveryPayload.js"
@@ -66,7 +67,7 @@ export function humanizeSupabaseProvisioningFailure(
     failedStep: step,
     failureCause,
     branchRef: nonEmptyString(row?.branchRef) ?? nonEmptyString(row?.branch_ref) ?? undefined,
-    guidance: objectValue(row?.guidance) as SupabaseProvisioningRecoveryGuidance | undefined,
+    guidance: parseSupabaseProvisioningGuidance(row?.guidance),
   }
 }
 
