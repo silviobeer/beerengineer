@@ -13,6 +13,7 @@ import {
   type ItemActionsService,
 } from "../../core/itemActions.js"
 import { runEntryFactsForItem } from "../../core/itemRunEntryFacts.js"
+import { isStructuredMergeConflictRecoveryRun } from "../../core/mergeConflictRecovery.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import {
   isWorkflowCapabilityBlockedResult,
@@ -64,9 +65,10 @@ export function projectItemDetail(repos: Repos, itemId: string): ProjectedItemDe
   const latestRun = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
   const openPrompt = latestRun ? repos.getOpenPrompt(latestRun.id) : undefined
   const hasReviewGateWaiting = reviewGateWaiting(openPrompt?.actions_json)
+  const hasMergeConflictBlockedRun = isStructuredMergeConflictRecoveryRun(latestRun)
   return {
     ...item,
-    allowedActions: allowedActionsForItem(item),
+    allowedActions: allowedActionsForItem(item, latestRun),
     visibleActions: visibleActionsForItem({
       column: item.current_column,
       phase: item.phase_status,
@@ -74,14 +76,18 @@ export function projectItemDetail(repos: Repos, itemId: string): ProjectedItemDe
       hasOpenPrompt: Boolean(openPrompt),
       hasReviewGateWaiting,
       hasBlockedRun: latestRun?.recovery_status === "blocked",
+      hasMergeConflictBlockedRun,
     }),
     visibleActionsFreshness: VISIBLE_ACTION_FACTS_FRESHNESS,
     ...runEntryFactsForItem(repos, item.id),
   }
 }
 
-function allowedActionsForItem(item: ItemRow): string[] {
-  return ITEM_ACTIONS.filter(action => lookupTransition(action, item.current_column, item.phase_status).kind !== "reject")
+function allowedActionsForItem(item: ItemRow, latestRun?: ReturnType<Repos["latestActiveRunForItem"]> | ReturnType<Repos["latestRecoverableRunForItem"]>): string[] {
+  return ITEM_ACTIONS.filter(action => {
+    if (action === "confirm_merge_resolved") return isStructuredMergeConflictRecoveryRun(latestRun)
+    return lookupTransition(action, item.current_column, item.phase_status).kind !== "reject"
+  })
 }
 
 function reviewGateWaiting(actionsJson: string | null | undefined): boolean {
@@ -123,6 +129,7 @@ function respondInvalidItemAction(res: ServerResponse): void {
       "import_prepared",
       "rerun_design_prep",
       "promote_to_base",
+      "confirm_merge_resolved",
       "cancel_promotion",
       "mark_done",
     ],
@@ -253,6 +260,7 @@ function respondItemActionFailure(
   json(res, 409, {
     error: result.error,
     code: result.error,
+    message: result.message,
     current: result.current,
     action: result.action,
   })
@@ -314,6 +322,7 @@ async function maybeResumeItemActionRun(
     branch: result.branch,
     reviewNotes: result.reviewNotes,
     promptAnswer: result.promptAnswer,
+    resume: result.resume,
   })
   if (!resumed.ok) {
     json(res, resumed.status, isWorkflowCapabilityBlockedResult(resumed)

@@ -4,6 +4,7 @@ import {
   VISIBLE_ACTION_FACTS_FRESHNESS,
   visibleActionsForItem,
 } from "../core/itemActions.js"
+import { isStructuredMergeConflictRecoveryRun } from "../core/mergeConflictRecovery.js"
 import {
   CHAT_ENTRY_FACT_FRESHNESS,
   MESSAGES_ENTRY_FACT_FRESHNESS,
@@ -130,6 +131,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
               hasOpenPrompt: baseCard.hasOpenPrompt,
               hasReviewGateWaiting: baseCard.hasReviewGateWaiting,
               hasBlockedRun: baseCard.hasBlockedRun,
+              hasMergeConflictBlockedRun: isStructuredMergeConflictRecoveryRun(latestRun),
             }),
             visibleActionsFreshness: VISIBLE_ACTION_FACTS_FRESHNESS,
           }

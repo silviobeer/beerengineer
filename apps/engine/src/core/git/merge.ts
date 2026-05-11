@@ -21,8 +21,35 @@ type MergeBranchOptions = GitMergeOptions & {
   root?: string
 }
 
+export class GitMergeConflictError extends Error {
+  readonly conflictedPaths: string[]
+  readonly gitMessage: string
+
+  constructor(conflictedPaths: string[], gitMessage: string) {
+    super(`git merge conflict: ${conflictedPaths.join(", ") || "<unknown>"}`)
+    this.name = "GitMergeConflictError"
+    this.conflictedPaths = conflictedPaths
+    this.gitMessage = gitMessage
+  }
+}
+
 function tipSha(root: string, ref: string): string {
   return runGit(root, ["rev-parse", ref]).stdout
+}
+
+function listConflictedPaths(root: string): string[] {
+  const result = runGit(root, ["diff", "--name-only", "--diff-filter=U"])
+  if (!result.ok || !result.stdout) return []
+  return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+}
+
+function hasPendingMerge(root: string): boolean {
+  return runGit(root, ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"]).ok
+}
+
+function tryFinishGitResolvedMerge(root: string): boolean {
+  if (!hasPendingMerge(root)) return false
+  return runGit(root, ["commit", "--no-edit"]).ok
 }
 
 function tryResolveAndCommit(
@@ -83,7 +110,12 @@ function mergeBranchInto(
   if (merge.ok) return { mergeSha: tipSha(root, "HEAD") }
   const stderr = merge.stderr || merge.stdout
   if (tryResolveAndCommit(root, message, opts, stderr)) return { mergeSha: tipSha(root, "HEAD") }
+  const conflictedPaths = listConflictedPaths(root)
+  if (conflictedPaths.length === 0 && tryFinishGitResolvedMerge(root)) return { mergeSha: tipSha(root, "HEAD") }
   runGit(root, ["merge", "--abort"])
+  if (conflictedPaths.length > 0) {
+    throw new GitMergeConflictError(conflictedPaths, stderr)
+  }
   throw new Error(`git: merge ${source} → ${target} failed: ${stderr}`)
 }
 
@@ -107,7 +139,12 @@ async function mergeBranchIntoAsync(
   if (merge.ok) return { mergeSha: tipSha(root, "HEAD") }
   const stderr = merge.stderr || merge.stdout
   if (await tryResolveAndCommitAsync(root, message, opts, stderr)) return { mergeSha: tipSha(root, "HEAD") }
+  const conflictedPaths = listConflictedPaths(root)
+  if (conflictedPaths.length === 0 && tryFinishGitResolvedMerge(root)) return { mergeSha: tipSha(root, "HEAD") }
   runGit(root, ["merge", "--abort"])
+  if (conflictedPaths.length > 0) {
+    throw new GitMergeConflictError(conflictedPaths, stderr)
+  }
   throw new Error(`git: merge ${source} → ${target} failed: ${stderr}`)
 }
 

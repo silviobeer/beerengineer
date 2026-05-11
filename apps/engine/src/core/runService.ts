@@ -937,6 +937,7 @@ export async function resumeRunInProcess(
     commit?: string
     reviewNotes?: string
     promptAnswer?: string
+    resume?: WorkflowResumeInput
     apiWorkerInstanceId?: string
     workerLeaseClock?: () => number
     workerLeaseScheduler?: WorkerLeaseScheduler
@@ -954,6 +955,7 @@ export async function resumeRunInProcess(
     commit: input.commit,
     reviewNotes: input.reviewNotes,
     promptAnswer: input.promptAnswer,
+    resume: input.resume,
     workerOwnerKind: "api",
     workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
     workerLeaseClock: input.workerLeaseClock,
@@ -1058,6 +1060,7 @@ export async function prepareForegroundResumeRun(
     commit?: string
     reviewNotes?: string
     promptAnswer?: string
+    resume?: WorkflowResumeInput
     workerOwnerKind?: "cli" | "api"
     workerInstanceId?: string
     workerLeaseClock?: () => number
@@ -1107,9 +1110,9 @@ export async function prepareForegroundResumeRun(
     summary,
     branch: input.branch,
     commitSha: input.commit,
-    reviewNotes: input.reviewNotes,
-    source: "api",
-  })
+          reviewNotes: input.reviewNotes,
+          source: "api",
+        })
 
   // A resume summary is an operator scope decision in plain text — persist
   // it at the workspace level so future runs of the same item respect it,
@@ -1153,6 +1156,7 @@ export async function prepareForegroundResumeRun(
           io,
           runId: input.runId,
           remediation,
+          resume: input.resume,
           workerOwnerKind: input.workerOwnerKind ?? "api",
           workerInstanceId: input.workerInstanceId,
           workerLeaseClock: input.workerLeaseClock,

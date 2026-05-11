@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto"
+import { mkdir, writeFile } from "node:fs/promises"
+import { existsSync, readFileSync } from "node:fs"
 import { branchNameItem } from "../../core/branchNames.js"
 import { hasEventBus } from "../../core/bus.js"
 import type { GitAdapter } from "../../core/gitAdapter.js"
+import { GitMergeConflictError } from "../../core/git/merge.js"
+import { runGit } from "../../core/git/shared.js"
 import { getWorkflowIO } from "../../core/io.js"
 import type { RecoveryCause, RecoveryScope } from "../../core/recovery.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import type { WorkflowContext } from "../../core/workspaceLayout.js"
+import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 import type { SupabaseWorkflowHook } from "../../core/supabase/workflowHook.js"
 import {
   finalWaveValidationGate,
@@ -16,7 +20,8 @@ import {
 } from "./supabaseGates.js"
 import { detectDestructiveMigrations } from "../../core/supabase/destructiveDetector.js"
 import { listSupabaseSqlFiles } from "../../core/supabase/migrationRunner.js"
-import { readFileSync } from "node:fs"
+import { dirname } from "node:path"
+import { readWorkspaceConfig } from "../../core/workspaces/configFile.js"
 
 type BlockRunFn = (
   context: WorkflowContext,
@@ -31,6 +36,20 @@ type BlockRunFn = (
 ) => Promise<never>
 
 type ActiveMergeRun = NonNullable<ReturnType<typeof getActiveRun>>
+
+type MergeConflictArtifacts = {
+  humanPath: string
+  machinePath: string
+  recordedAt: string
+}
+
+function currentHeadSha(workspaceRoot: string): string {
+  const result = runGit(workspaceRoot, ["rev-parse", "HEAD"])
+  if (!result.ok || !result.stdout) {
+    throw new Error(`git: failed to inspect HEAD before recording merge conflict: ${result.stderr || result.stdout}`)
+  }
+  return result.stdout.trim()
+}
 
 function normalizeMergeGateAnswer(answer: string): string {
   const normalized = answer.trim().toLowerCase()
@@ -68,6 +87,7 @@ export async function mergeGate(
   stagePresent.header("MERGE")
   stagePresent.step(`Awaiting promotion of ${itemBranch} into ${git.mode.baseBranch}`)
   await requirePromotionAnswer({ context, git, activeRun, itemBranch, blockRun })
+  await configureWorkspaceRerere(git.mode.workspaceRoot)
 
   const performGitMerge = () => {
     const { mergeSha } = git.mergeItemIntoBase()
@@ -101,6 +121,20 @@ export async function mergeGate(
 
   // Non-Supabase path: unconditional merge.
   await mergeOrBlock({ context, git, activeRun, itemBranch, blockRun, performGitMerge })
+}
+
+async function configureWorkspaceRerere(workspaceRoot: string): Promise<void> {
+  if (!existsSync(workspaceRoot)) return
+  const rerereEnabled = (await readWorkspaceConfig(workspaceRoot))?.git?.rerere === true
+  for (const [key, value] of [
+    ["rerere.enabled", rerereEnabled ? "true" : "false"],
+    ["rerere.autoupdate", rerereEnabled ? "true" : "false"],
+  ] as const) {
+    const result = runGit(workspaceRoot, ["config", key, value])
+    if (!result.ok) {
+      throw new Error(`git: failed to configure ${key}: ${result.stderr || result.stdout}`)
+    }
+  }
 }
 
 function mergeGateWithoutActiveRun(git: GitAdapter): void {
@@ -193,6 +227,27 @@ async function mergeOrBlock(input: {
   try {
     input.performGitMerge()
   } catch (error) {
+    if (error instanceof GitMergeConflictError) {
+      const artifacts = await writeMergeConflictArtifacts({
+        context: input.context,
+        activeRun: input.activeRun,
+        baseBranch: input.git.mode.baseBranch,
+        itemBranch: input.itemBranch,
+        recordedHeadSha: currentHeadSha(input.git.mode.workspaceRoot),
+        conflictedPaths: error.conflictedPaths,
+      })
+      await input.blockRun(
+        input.context,
+        mergeConflictBlockedSummary(input.git.mode.baseBranch, input.itemBranch, artifacts.humanPath),
+        {
+          cause: "merge_gate_failed",
+          scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+          detail: mergeConflictRecoveryDetail(artifacts, error.conflictedPaths),
+          evidencePaths: [artifacts.humanPath, artifacts.machinePath],
+          branch: input.itemBranch,
+        },
+      )
+    }
     await input.blockRun(
       input.context,
       `Merge into ${input.git.mode.baseBranch} failed for ${input.itemBranch}: ${(error as Error).message}`,
@@ -203,6 +258,92 @@ async function mergeOrBlock(input: {
       },
     )
   }
+}
+
+function mergeConflictBlockedSummary(baseBranch: string, itemBranch: string, artifactPath: string): string {
+  return [
+    `Merge conflict blocked promotion of ${itemBranch} into ${baseBranch}.`,
+    `Recovery artifact: ${artifactPath}.`,
+    "After resolving the conflict and creating a manual resolution commit, continue with `confirm_merge_resolved`.",
+  ].join(" ")
+}
+
+function mergeConflictRecoveryDetail(
+  artifacts: MergeConflictArtifacts,
+  conflictedPaths: string[],
+): string {
+  return [
+    `Merge conflict recorded at ${artifacts.recordedAt}.`,
+    `Resolve conflicted paths: ${conflictedPaths.join(", ")}.`,
+    `Operator artifact: ${artifacts.humanPath}.`,
+    `Machine artifact: ${artifacts.machinePath}.`,
+    "Continue with `confirm_merge_resolved` after the manual resolution commit exists.",
+  ].join(" ")
+}
+
+async function writeMergeConflictArtifacts(input: {
+  context: WorkflowContext
+  activeRun: ActiveMergeRun
+  baseBranch: string
+  itemBranch: string
+  recordedHeadSha: string
+  conflictedPaths: string[]
+}): Promise<MergeConflictArtifacts> {
+  const recordedAt = new Date().toISOString()
+  const artifactsDir = layout.stageArtifactsDir(input.context, "merge-gate")
+  const humanPath = `${artifactsDir}/merge-conflict-recovery.md`
+  const machinePath = `${artifactsDir}/merge-conflict-recovery.json`
+  const conflictedPaths = [...input.conflictedPaths]
+  await mkdir(dirname(humanPath), { recursive: true })
+  await writeFile(humanPath, renderMergeConflictArtifact({
+    itemId: input.activeRun.itemId,
+    runId: input.activeRun.runId,
+    baseBranch: input.baseBranch,
+    itemBranch: input.itemBranch,
+    recordedAt,
+    recordedHeadSha: input.recordedHeadSha,
+    conflictedPaths,
+  }))
+  await writeFile(machinePath, `${JSON.stringify({
+    type: "merge_conflict_recovery",
+    itemId: input.activeRun.itemId,
+    runId: input.activeRun.runId,
+    recordedAt,
+    recordedHeadSha: input.recordedHeadSha,
+    conflictedPaths,
+  }, null, 2)}\n`)
+  return { humanPath, machinePath, recordedAt }
+}
+
+function renderMergeConflictArtifact(input: {
+  itemId: string
+  runId: string
+  baseBranch: string
+  itemBranch: string
+  recordedAt: string
+  recordedHeadSha: string
+  conflictedPaths: string[]
+}): string {
+  const conflictedPaths = input.conflictedPaths.map(path => `- ${path}`).join("\n")
+  return [
+    "# Merge Conflict Recovery",
+    "",
+    `Item ID: ${input.itemId}`,
+    `Run ID: ${input.runId}`,
+    `Recorded At: ${input.recordedAt}`,
+    `Recorded HEAD: ${input.recordedHeadSha}`,
+    `Base Branch: ${input.baseBranch}`,
+    `Item Branch: ${input.itemBranch}`,
+    "",
+    "Conflicted Paths:",
+    conflictedPaths || "- <none reported>",
+    "",
+    "Recovery Guidance:",
+    "1. Resolve the conflicted files in the workspace repository.",
+    "2. Stage the resolved files and create a manual resolution commit.",
+    "3. Continue with `confirm_merge_resolved` after the resolution commit is ready.",
+    "",
+  ].join("\n")
 }
 
 async function runSupabaseMergeGate(input: {
