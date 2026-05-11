@@ -153,6 +153,18 @@ test("one process reuses the first non-success verdict without duplicate cleanup
   control.close()
 })
 
+test("explicit override DB opens do not trigger legacy shadow reconciliation", () => {
+  const dataDir = mkdtempSync(join(tmpRoot, "data-"))
+  seedConfiguredDb(dataDir)
+  seedEmptyLegacyDb()
+  process.env.BEERENGINEER_CONFIG_PATH = writeTmpConfig(tmpRoot, dataDir)
+
+  initDatabase(join(tmpRoot, "override.sqlite")).close()
+
+  assert.equal(existsSync(LEGACY_DB_PATH()), true)
+  assert.deepEqual(readCleanupEvents(dataDir), [])
+})
+
 function writeTmpConfig(root: string, dataDir: string): string {
   const configPath = join(root, "config.json")
   writeFileSync(configPath, JSON.stringify(buildAppConfig(dataDir), null, 2), "utf8")

@@ -76,7 +76,9 @@ export function resolveDbPath(override?: string | null): string {
 }
 
 export function openDatabase(dbPath?: string | null): Db {
-  ensureLegacyDbReconciled()
+  if (dbPath == null && !process.env.BEERENGINEER_UI_DB_PATH && getConfiguredDataDirOrNull() != null) {
+    ensureLegacyDbReconciled()
+  }
   const p = resolveDbPath(dbPath)
   mkdirSync(dirname(p), { recursive: true })
   const db = new Database(p)

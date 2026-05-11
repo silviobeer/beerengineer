@@ -112,14 +112,51 @@ function deleteLegacyDbFamily(legacyDbPath: string): Exclude<LegacyDbCleanupOutc
     `${legacyDbPath}-shm`,
     legacyDbPath,
   ].filter(path => fs.existsSync(path))
+  const backups = targets.map((target, index) => ({
+    target,
+    backup: `${target}.beerengineer-cleanup-backup-${process.pid}-${Date.now()}-${index}`,
+  }))
 
   try {
-    for (const target of targets) removeLegacyDbTarget(target)
+    for (const { target, backup } of backups) fs.copyFileSync(target, backup)
   } catch {
+    cleanupBackups(backups)
     return "failed-deletion"
   }
 
-  return targets.every(target => !fs.existsSync(target)) ? "cleaned" : "failed-deletion"
+  try {
+    for (const { target } of backups) removeLegacyDbTarget(target)
+    if (backups.some(({ target }) => fs.existsSync(target))) throw new Error("legacy_cleanup_incomplete")
+  } catch {
+    restoreTargets(backups)
+    cleanupBackups(backups)
+    return "failed-deletion"
+  }
+
+  cleanupBackups(backups)
+  return "cleaned"
+}
+
+function cleanupBackups(backups: Array<{ backup: string }>): void {
+  for (const { backup } of backups) {
+    if (!fs.existsSync(backup)) continue
+    try {
+      fs.rmSync(backup, { force: true })
+    } catch {
+      // Best-effort only; the cleanup verdict is determined by the original family.
+    }
+  }
+}
+
+function restoreTargets(backups: Array<{ target: string; backup: string }>): void {
+  for (const { target, backup } of backups) {
+    if (fs.existsSync(target) || !fs.existsSync(backup)) continue
+    try {
+      fs.copyFileSync(backup, target)
+    } catch {
+      // Best-effort only. The shadow remains unresolved either way.
+    }
+  }
 }
 
 function appendCleanupEvent(input: {
