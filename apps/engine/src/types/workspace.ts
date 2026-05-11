@@ -241,6 +241,7 @@ export type WorkspaceConfigFile = {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy: WorkspaceRuntimePolicy
+  autoPromoteOnGreenQa: boolean
   dirtyMasterAllowlist?: string[]
   autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig

@@ -1,6 +1,11 @@
+import { BlockedRunError } from "./blockedError.js"
 import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
+import { writeRecoveryRecord } from "./recovery.js"
+import { emitEvent, getActiveRun } from "./runContext.js"
 import { stagePresent } from "./stagePresentation.js"
 import { runStage, type StageArtifactContent, type StageDefinition, type StageRun } from "./stageRuntime.js"
+import { nowIso, persistRun, workflowContextForRun } from "./stageRuntimePersistence.js"
+import { layout } from "./workspaceLayout.js"
 import type { ReviewAgentAdapter, StageAgentAdapter } from "./adapters.js"
 
 /**
@@ -56,14 +61,46 @@ async function readUserReviewDecision<S extends RevisableState, A, R>(
   run: StageRun<S, A>,
 ): Promise<{ kind: "approved"; value: R } | { kind: "revise"; feedback: string }> {
   while (true) {
-    const userReply = (await opts.askUser(opts.buildGatePrompt({ artifact, run }))).trim()
+    const gatePrompt = opts.buildGatePrompt({ artifact, run })
+    const userReply = (await opts.askUser(gatePrompt)).trim()
 
     if (userReply === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
-      throw new Error(
+      const summary =
         `Stage "${opts.stageId}" reached the post-artifact review gate in a non-interactive run with no queued answer. ` +
-        "Resume the run from the UI or API so the review gate emits a pending_prompt event, " +
-        "then answer with \"approve\" or \"revise: <feedback>\".",
-      )
+        "The run remains blocked on the open pending_prompt until a real answer arrives with \"approve\" or \"revise: <feedback>\"."
+      run.status = "blocked"
+      run.logs.push({
+        at: nowIso(),
+        type: "status_changed",
+        message: summary,
+        data: { cause: "non_interactive_review_gate_waiting", prompt: gatePrompt },
+      })
+      run.updatedAt = nowIso()
+      await persistRun(run)
+
+      const ctx = workflowContextForRun(run)
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "stage", runId: run.runId, stageId: run.stage },
+        summary,
+        detail:
+          "Resume the run from the UI or API so the review gate emits a pending_prompt event, " +
+          "then answer with \"approve\" or \"revise: <feedback>\".",
+        evidencePaths: [layout.stageRunFile(ctx, run.stage), layout.stageLogFile(ctx, run.stage)],
+        findings: [{ source: "stage-user-review", severity: "high", message: gatePrompt }],
+      })
+      const activeRun = getActiveRun()
+      emitEvent({
+        type: "run_blocked",
+        runId: run.runId,
+        itemId: activeRun?.itemId ?? "unknown-item",
+        title: activeRun?.title ?? activeRun?.itemId ?? "unknown-item",
+        scope: { type: "stage", runId: run.runId, stageId: run.stage },
+        cause: "stage_error",
+        summary,
+      })
+      throw new BlockedRunError(summary)
     }
 
     if (/^approve$/i.test(userReply)) {

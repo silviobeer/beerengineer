@@ -1,6 +1,7 @@
 import type { ItemRow, Repos } from "../db/repositories.js"
 import type { EventBus } from "./bus.js"
 import { mapStageToColumn } from "./boardColumns.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 import type { WorkflowEvent } from "./io.js"
 import { parseSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 
@@ -162,6 +163,7 @@ export function attachDbSync(
       data: { promptId: event.promptId, prompt: event.prompt, actions: event.actions },
     })),
     prompt_answered: createEventHandler<"prompt_answered">(event => {
+      if (event.answer === NON_INTERACTIVE_NO_ANSWER_SENTINEL) return
       if (event.source === "bridge") return
       persistLogOnlyEvent(repos, track, event, current => ({
         runId: current.runId,

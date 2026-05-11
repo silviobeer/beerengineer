@@ -178,6 +178,7 @@ export function buildWorkspaceConfigFile(input: {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
+  autoPromoteOnGreenQa?: boolean
   dirtyMasterAllowlist?: string[]
   autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig
@@ -193,6 +194,7 @@ export function buildWorkspaceConfigFile(input: {
     name: input.name,
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
+    autoPromoteOnGreenQa: input.autoPromoteOnGreenQa ?? true,
     dirtyMasterAllowlist: input.dirtyMasterAllowlist?.map(value => value.trim()).filter(Boolean),
     autoRestoreAllowlisted: input.autoRestoreAllowlisted,
     preview: input.preview,
@@ -210,6 +212,7 @@ function parseWorkspaceConfigFile(raw: {
   name?: unknown
   harnessProfile?: unknown
   runtimePolicy?: unknown
+  autoPromoteOnGreenQa?: unknown
   dirtyMasterAllowlist?: unknown
   autoRestoreAllowlisted?: unknown
   preview?: unknown
@@ -238,6 +241,7 @@ function parseWorkspaceConfigFile(raw: {
     name: raw.name,
     harnessProfile: raw.harnessProfile,
     runtimePolicy,
+    autoPromoteOnGreenQa: raw.autoPromoteOnGreenQa !== false,
     dirtyMasterAllowlist: normalizeDirtyMasterAllowlist(raw.dirtyMasterAllowlist),
     autoRestoreAllowlisted: normalizeOptionalBoolean(raw.autoRestoreAllowlisted),
     preview,
