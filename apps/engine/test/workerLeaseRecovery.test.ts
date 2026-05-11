@@ -24,6 +24,14 @@ function latestProjectedMessage(repos: Repos, runId: string) {
   return projectStageLogRow(row)
 }
 
+function startupRecoveryMessages(repos: Repos, runIds: string[]) {
+  return runIds.flatMap(runId =>
+    repos.listLogsForRun(runId)
+      .map(row => projectStageLogRow(row))
+      .filter((entry): entry is NonNullable<ReturnType<typeof projectStageLogRow>> => entry?.type === "startup_recovery"),
+  )
+}
+
 function seedManualStaleRun(
   repos: Repos,
   input: {
@@ -563,6 +571,143 @@ test("startup recovery emits no recovery outcomes when no stale runs are present
     assert.deepEqual(result.outcomes, [])
     assert.equal(repos.getRun(run.id)?.status, "running")
     assert.equal(repos.listLogsForRun(run.id).filter(log => log.event_type === "startup_recovery").length, 0)
+  } finally {
+    db.close()
+  }
+})
+
+test("REQ-2 startup recovery holds back the full eligible stale set when it exceeds the threshold", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const firstRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "first held-back run",
+      lease: {
+        workerInstanceId: "cli-held-1",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
+    })
+    const secondRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "second held-back run",
+      lease: {
+        workerInstanceId: "cli-held-2",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
+    })
+    const thirdRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "third held-back run",
+      lease: {
+        workerInstanceId: "cli-held-3",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
+    })
+
+    let resumeCalls = 0
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        recoveryThreshold: 2,
+        resumeRun: async () => {
+          resumeCalls += 1
+        },
+      },
+    })
+
+    assert.equal(result.recovered, 0)
+    assert.equal(resumeCalls, 0)
+    assert.deepEqual(result.outcomes, [{
+      runId: firstRun.id,
+      outcome: "skipped",
+      reason: "recovery_threshold_exceeded",
+      heldBackRunIds: [firstRun.id, secondRun.id, thirdRun.id],
+    }])
+    for (const runId of [firstRun.id, secondRun.id, thirdRun.id]) {
+      assert.equal(repos.getRun(runId)?.status, "failed")
+      assert.equal(repos.getRun(runId)?.recovery_status, "failed")
+    }
+
+    const messages = startupRecoveryMessages(repos, [firstRun.id, secondRun.id, thirdRun.id])
+    assert.equal(messages.length, 1)
+    assert.equal(messages[0]?.runId, firstRun.id)
+    assert.equal(messages[0]?.payload.outcome, "skipped")
+    assert.equal(messages[0]?.payload.reason, "recovery_threshold_exceeded")
+    assert.deepEqual(messages[0]?.payload.heldBackRunIds, [firstRun.id, secondRun.id, thirdRun.id])
+  } finally {
+    db.close()
+  }
+})
+
+test("REQ-2 startup recovery ignores ineligible stale runs when comparing the threshold", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const firstEligibleRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "first eligible run",
+      lease: {
+        workerInstanceId: "cli-eligible-1",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
+    })
+    const secondEligibleRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "second eligible run",
+      lease: {
+        workerInstanceId: "cli-eligible-2",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
+    })
+    const waitingRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "waiting for operator",
+      lease: {
+        workerInstanceId: "cli-waiting",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
+    })
+    repos.createPendingPrompt({ runId: waitingRun.id, prompt: "Need approval?" })
+
+    const resumedRunIds: string[] = []
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        recoveryThreshold: 2,
+        resumeRun: async staleRun => {
+          resumedRunIds.push(staleRun.id)
+          repos.clearRunRecovery(staleRun.id)
+          repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+        },
+      },
+    })
+
+    assert.deepEqual(resumedRunIds, [firstEligibleRun.id, secondEligibleRun.id])
+    assert.equal(repos.getRun(firstEligibleRun.id)?.status, "running")
+    assert.equal(repos.getRun(secondEligibleRun.id)?.status, "running")
+    assert.equal(repos.getRun(waitingRun.id)?.status, "failed")
+    assert.ok(repos.getOpenPrompt(waitingRun.id), "ineligible stale runs must keep their prompt state")
+    assert.equal(
+      result.outcomes.some(outcome => outcome.reason === "recovery_threshold_exceeded"),
+      false,
+    )
+    const messages = startupRecoveryMessages(repos, [firstEligibleRun.id, secondEligibleRun.id, waitingRun.id])
+    assert.equal(messages.filter(message => message.payload.reason === "recovery_threshold_exceeded").length, 0)
   } finally {
     db.close()
   }
