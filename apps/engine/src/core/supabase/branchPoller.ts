@@ -17,6 +17,10 @@ export type BranchPollerClock = {
   sleep(ms: number): Promise<void>
 }
 
+export function isSupabaseBranchReady(branch: SupabaseBranch): boolean {
+  return branch.status === "ACTIVE_HEALTHY" || branch.status === "FUNCTIONS_DEPLOYED"
+}
+
 export async function pollSupabaseBranch(input: {
   poll(): Promise<SupabaseBranch>
   isReady?: (branch: SupabaseBranch) => boolean
@@ -26,7 +30,7 @@ export async function pollSupabaseBranch(input: {
   timeoutMs?: number
 }): Promise<SupabaseBranch> {
   const clock = input.clock ?? { now: () => Date.now(), sleep: (ms: number) => new Promise(resolve => setTimeout(resolve, ms)) }
-  const isReady = input.isReady ?? ((branch: SupabaseBranch) => branch.status === "ACTIVE_HEALTHY")
+  const isReady = input.isReady ?? isSupabaseBranchReady
   const startedAt = clock.now()
   const timeoutMs = input.timeoutMs ?? 10 * 60_000
   let delayMs = input.initialDelayMs ?? 5_000

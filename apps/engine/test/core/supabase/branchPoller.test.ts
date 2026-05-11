@@ -27,6 +27,17 @@ test("PROJ-4 PRD-2 US-3: branch poller respects 5s/30s/10min contract", async ()
   assert.deepEqual(c.sleeps, [5_000, 10_000, 20_000])
 })
 
+test("branch poller treats FUNCTIONS_DEPLOYED as ready", async () => {
+  const c = clock()
+  const branch = await pollSupabaseBranch({
+    clock: c,
+    poll: async () => ({ id: "br", ref: "br", status: "FUNCTIONS_DEPLOYED" }),
+  })
+
+  assert.equal(branch.status, "FUNCTIONS_DEPLOYED")
+  assert.deepEqual(c.sleeps, [])
+})
+
 test("PROJ-4 PRD-2 US-3: branch poller times out and honors retry-after without extending budget", async () => {
   const c = clock()
   await assert.rejects(() => pollSupabaseBranch({

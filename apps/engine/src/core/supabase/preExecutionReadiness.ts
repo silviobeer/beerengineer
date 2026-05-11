@@ -1,7 +1,7 @@
 import { getSecretMetadata, type SecretStoreOptions } from "../../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
 import type { RunRow, WorkspaceRow } from "../../db/repositories.js"
-import { SupabaseBranchPollTimeoutError, pollSupabaseBranch, type BranchPollerClock } from "./branchPoller.js"
+import { SupabaseBranchPollTimeoutError, isSupabaseBranchReady, pollSupabaseBranch, type BranchPollerClock } from "./branchPoller.js"
 import { SupabaseManagementError } from "./managementClient.js"
 import type {
   ImplementationPlanArtifact,
@@ -22,6 +22,7 @@ export const SUPABASE_READINESS_BRANCH_POLL_BUDGET_MS = 60_000
 export type SupabaseReadinessManagementClient = {
   getProject(projectRef: string): Promise<SupabaseProject>
   getBranch(projectRef: string, branchRef: string): Promise<SupabaseBranch>
+  listBranches?(projectRef: string): Promise<SupabaseBranch[]>
 }
 
 export type SupabaseReadinessRepos = {
@@ -113,6 +114,20 @@ function messageForError(err: unknown): string {
   return "Supabase readiness check failed"
 }
 
+async function findReadyBranchFromList(input: {
+  client: SupabaseReadinessManagementClient
+  projectRef: string
+  branchRef: string
+  branchName?: string
+}): Promise<SupabaseBranch | null> {
+  if (!input.client.listBranches) return null
+  const branches = await input.client.listBranches(input.projectRef)
+  return branches.find(branch =>
+    (normalize(branch.ref) === input.branchRef || normalize(branch.id) === input.branchRef || normalize(branch.name) === normalize(input.branchName))
+    && isSupabaseBranchReady(branch)
+  ) ?? null
+}
+
 function blocked(input: {
   workspace: SupabaseReadinessWorkspace
   runId?: string
@@ -163,8 +178,23 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
     const branch = await pollSupabaseBranch({
       clock: input.clock,
       timeoutMs: input.branchPollBudgetMs ?? getSupabaseReadinessBranchPollBudgetMs(input.env),
-      poll: () => input.managementClient!.getBranch(projectRef, branchRef),
-      isReady: candidate => candidate.status === "ACTIVE_HEALTHY",
+      poll: async () => {
+        try {
+          return await input.managementClient!.getBranch(projectRef, branchRef)
+        } catch (err) {
+          const listed = err instanceof SupabaseManagementError && err.status === 404
+            ? await findReadyBranchFromList({
+              client: input.managementClient!,
+              projectRef,
+              branchRef,
+              branchName: workspace.persistentTestBranchName,
+            })
+            : null
+          if (listed) return listed
+          throw err
+        }
+      },
+      isReady: isSupabaseBranchReady,
     })
     return {
       status: "ready",

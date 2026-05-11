@@ -98,3 +98,19 @@ test("createBranch sends Supabase Management API branch_name payload", async () 
     parent_ref: "parent_ref",
   })
 })
+
+test("branch responses normalize id-only provider payloads to ref", async () => {
+  const client = new SupabaseManagementClient({
+    token: "sbp_secret",
+    baseUrl: "https://example.test",
+    fetch: (async (url) => {
+      if (String(url).endsWith("/branches")) {
+        return Response.json([{ id: "branch_id", name: "branch", status: "FUNCTIONS_DEPLOYED" }])
+      }
+      return Response.json({ id: "branch_id", name: "branch", status: "FUNCTIONS_DEPLOYED" })
+    }) as typeof fetch,
+  })
+
+  assert.equal((await client.listBranches("proj"))[0]?.ref, "branch_id")
+  assert.equal((await client.getBranch("proj", "branch_id")).ref, "branch_id")
+})

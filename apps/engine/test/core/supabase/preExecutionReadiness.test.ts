@@ -119,6 +119,43 @@ test("PROJ-6 PRD-1 US-3: readiness validates project access and active healthy p
   }
 })
 
+test("readiness falls back to branch list when provider getBranch cannot read preview branch", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    const readiness = await createSupabasePreExecutionReadiness({
+      workspace: {
+        id: "ws",
+        key: "alpha",
+        rootPath: "/repo",
+        projectRef: "proj_alpha",
+        persistentTestBranchRef: "branch_id",
+        persistentTestBranchName: "persistent-alpha",
+      },
+      secretStore: { storePath: paths.storePath },
+      branchPollBudgetMs: 1_000,
+      clock: { now: () => 0, sleep: async () => undefined },
+      managementClient: {
+        getProject: async (projectRef) => ({ id: "p1", ref: projectRef, branchingEnabled: true }),
+        getBranch: async () => {
+          throw new SupabaseManagementError("provider", "Preview branch not found.", 404)
+        },
+        listBranches: async () => [{
+          id: "branch_id",
+          ref: "branch_id",
+          name: "persistent-alpha",
+          status: "FUNCTIONS_DEPLOYED",
+        }],
+      },
+    })
+
+    assert.equal(readiness.status, "ready")
+    assert.equal(readiness.branch?.providerStatus, "FUNCTIONS_DEPLOYED")
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
 test("PROJ-6 PRD-1 US-3: readiness budget defaults to 60s, can be overridden, and blocks execution on timeout", async () => {
   const paths = tempStore()
   try {

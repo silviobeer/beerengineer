@@ -24,6 +24,14 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : []
 }
 
+function normalizeBranch(value: unknown): SupabaseBranch {
+  const branch = value as SupabaseBranch
+  return {
+    ...branch,
+    ref: branch.ref ?? branch.id,
+  }
+}
+
 async function readProviderMessage(response: Response): Promise<string> {
   const fallback = `Supabase Management API returned ${response.status}`
   try {
@@ -55,7 +63,7 @@ export class SupabaseManagementClient {
   }
 
   async listBranches(projectRef: string): Promise<SupabaseBranch[]> {
-    return asArray<SupabaseBranch>(await this.request(managementEndpoints.listBranches(projectRef)))
+    return asArray<unknown>(await this.request(managementEndpoints.listBranches(projectRef))).map(normalizeBranch)
   }
 
   async createBranch(projectRef: string, input: { name: string; parentRef?: string }): Promise<SupabaseBranch> {
@@ -63,17 +71,17 @@ export class SupabaseManagementClient {
     // (provisioning a database). Override the global timeout for this
     // single call so we don't spuriously fail-fast and orphan a branch
     // that's actually in-flight.
-    return await this.request(managementEndpoints.createBranch(projectRef), {
+    return normalizeBranch(await this.request(managementEndpoints.createBranch(projectRef), {
       method: "POST",
       body: JSON.stringify({
         branch_name: input.name,
         parent_ref: input.parentRef,
       }),
-    }, { timeoutMs: 30_000 }) as SupabaseBranch
+    }, { timeoutMs: 30_000 }))
   }
 
   async getBranch(projectRef: string, branchRef: string): Promise<SupabaseBranch> {
-    return await this.request(managementEndpoints.getBranch(projectRef, branchRef)) as SupabaseBranch
+    return normalizeBranch(await this.request(managementEndpoints.getBranch(projectRef, branchRef)))
   }
 
   async deleteBranch(projectRef: string, branchRef: string): Promise<void> {

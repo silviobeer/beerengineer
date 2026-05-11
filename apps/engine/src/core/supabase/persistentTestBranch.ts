@@ -1,6 +1,6 @@
 import type { Repos } from "../../db/repositories.js"
 import type { SupabaseBranch } from "./types.js"
-import { pollSupabaseBranch, SupabaseBranchPollTimeoutError, type BranchPollerClock } from "./branchPoller.js"
+import { isSupabaseBranchReady, pollSupabaseBranch, SupabaseBranchPollTimeoutError, type BranchPollerClock } from "./branchPoller.js"
 
 export type PersistentBranchClient = {
   listBranches(projectRef: string): Promise<SupabaseBranch[]>
@@ -26,7 +26,7 @@ export function persistentTestBranchName(workspaceKey: string): string {
 }
 
 function branchReady(branch: SupabaseBranch): boolean {
-  return branch.status === "ACTIVE_HEALTHY"
+  return isSupabaseBranchReady(branch)
 }
 
 function isAlreadyExistsError(err: unknown): boolean {
