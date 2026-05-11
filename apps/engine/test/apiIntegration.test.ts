@@ -12,6 +12,7 @@ import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { createDatabaseBackup } from "../src/core/updateMode.js"
 import { claimWorkerLease } from "../src/core/workerLease.js"
+import { recoverLostWorkerRuns } from "../src/core/orphanRecovery.js"
 import { getBoard } from "../src/api/board.js"
 
 test("PROJ-3-PRD-2 AC-4 workspace API contract keeps existing fields and adds capabilities", () => {
@@ -1845,17 +1846,22 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
   const ws = repos.upsertWorkspace({ key: "t", name: "T" })
   const skippedItem = repos.createItem({ workspaceId: ws.id, title: "Skipped stale run", description: "" })
   const failedItem = repos.createItem({ workspaceId: ws.id, title: "Failed stale run", description: "" })
-  const skippedRun = seedStaleRunningRun(repos, {
-    workspaceId: ws.id,
-    itemId: skippedItem.id,
-    title: skippedItem.title,
-    lease: {
-      workerInstanceId: "cli-waiting",
-      workerOwnerKind: "cli",
-      now: 1_700_000_000_000,
-    },
+  const freshLeaseNow = Date.now()
+  const skippedRun = repos.createRun({ workspaceId: ws.id, itemId: skippedItem.id, title: skippedItem.title, owner: "cli" })
+  repos.updateRun(skippedRun.id, {
+    status: "failed",
+    current_stage: "execution",
+    recovery_status: "failed",
+    recovery_scope: "run",
+    recovery_scope_ref: null,
+    recovery_summary: "CLI worker heartbeat is stale — no live worker; resume or abandon.",
   })
-  repos.createPendingPrompt({ runId: skippedRun.id, prompt: "Need approval?" })
+  claimWorkerLease(repos, {
+    runId: skippedRun.id,
+    workerInstanceId: "cli-fresh",
+    workerOwnerKind: "cli",
+    now: freshLeaseNow,
+  })
   const failedRun = seedStaleRunningRun(repos, {
     workspaceId: ws.id,
     itemId: failedItem.id,
@@ -1872,7 +1878,7 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
   try {
     await waitForHealth(base)
     for (const [runId, expected] of [
-      [skippedRun.id, { outcome: "skipped", reason: "open_prompt" }],
+      [skippedRun.id, { outcome: "skipped", reason: "worker_lease_not_orphaned" }],
       [failedRun.id, { outcome: "failed", reason: "auto_resume_failed" }],
     ] as const) {
       const res = await fetch(`${base}/runs/${runId}/messages?level=2`)
@@ -1885,6 +1891,88 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
       assert.equal(recoveryEntries[0]?.runId, runId)
       assert.equal(recoveryEntries[0]?.payload.outcome, expected.outcome)
       assert.equal(recoveryEntries[0]?.payload.reason, expected.reason)
+    }
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("startup-recovered runs keep the original prompt and accept answers through POST /runs/:id/answer", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Recovered waiting run", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+  repos.updateRun(run.id, { current_stage: "execution" })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "cli-stale",
+    workerOwnerKind: "cli",
+    now: 1_700_000_000_000,
+  })
+  const prompt = repos.createPendingPrompt({ id: "p-recovered", runId: run.id, prompt: "Need approval?" })
+  repos.appendLog({
+    runId: run.id,
+    eventType: "prompt_requested",
+    message: prompt.prompt,
+    data: { promptId: prompt.id },
+  })
+
+  await recoverLostWorkerRuns(repos, {
+    apiWorkerInstanceId: "api-current",
+    now: 1_700_000_130_001,
+    autoResume: {
+      enabled: true,
+      resumeRun: async staleRun => {
+        repos.clearRunRecovery(staleRun.id)
+        repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+      },
+    },
+  })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "cli-fresh",
+    workerOwnerKind: "cli",
+    now: Date.now(),
+  })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const runRes = await fetch(`${base}/runs/${run.id}`)
+    assert.equal(runRes.status, 200)
+    const runBody = await runRes.json() as {
+      id: string
+      status: string
+      openPrompt: null | { promptId: string; text: string }
+    }
+    assert.equal(runBody.status, "running")
+    assert.equal(runBody.openPrompt?.promptId, prompt.id)
+    assert.equal(runBody.openPrompt?.text, prompt.prompt)
+
+    const answerRes = await fetch(`${base}/runs/${run.id}/answer`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ promptId: prompt.id, answer: "Ship it" }),
+    })
+    assert.equal(answerRes.status, 200)
+    const answerBody = await answerRes.json() as {
+      openPrompt: null | { promptId: string }
+      entries: Array<{ kind: string; text: string; answerTo?: string }>
+    }
+    assert.equal(answerBody.openPrompt, null)
+    assert.ok(answerBody.entries.some(entry => entry.kind === "answer" && entry.answerTo === prompt.id && entry.text === "Ship it"))
+
+    const dbAfter = initDatabase(dbPath)
+    const reposAfter = new Repos(dbAfter)
+    try {
+      assert.equal(reposAfter.getPendingPrompt(prompt.id)?.answer, "Ship it")
+      assert.ok(reposAfter.getPendingPrompt(prompt.id)?.answered_at)
+    } finally {
+      dbAfter.close()
     }
   } finally {
     await stopServer(proc)

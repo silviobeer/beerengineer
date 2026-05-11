@@ -256,7 +256,7 @@ test("startup recovery skips stale manual-recovery runs whose worker lease is no
   }
 })
 
-test("startup recovery keeps stale runs with open prompts on manual recovery and records why", async () => {
+test("startup recovery auto-resumes stale runs with open prompts and preserves the unresolved prompt", async () => {
   const { db, repos, ws, item } = fixture()
   try {
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
@@ -267,30 +267,77 @@ test("startup recovery keeps stale runs with open prompts on manual recovery and
       workerOwnerKind: "cli",
       now: 1_700_000_000_000,
     })
-    repos.createPendingPrompt({ runId: run.id, prompt: "Need approval?" })
+    const prompt = repos.createPendingPrompt({ id: "p-open", runId: run.id, prompt: "Need approval?" })
 
-    let resumeCalls = 0
+    let resumedRunId: string | null = null
     const result = await recoverLostWorkerRuns(repos, {
       apiWorkerInstanceId: "api-current",
       now: 1_700_000_130_001,
       autoResume: {
         enabled: true,
-        resumeRun: async () => {
-          resumeCalls += 1
+        resumeRun: async staleRun => {
+          resumedRunId = staleRun.id
+          repos.clearRunRecovery(staleRun.id)
+          repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
         },
       },
     })
 
-    assert.equal(resumeCalls, 0)
-    assert.equal(result.outcomes[0]?.outcome, "skipped")
-    assert.equal(result.outcomes[0]?.reason, "open_prompt")
-    assert.equal(repos.getRun(run.id)?.status, "failed")
-    assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
-    assert.ok(repos.getOpenPrompt(run.id), "startup recovery must preserve the open prompt")
+    assert.equal(resumedRunId, run.id)
+    assert.equal(result.outcomes[0]?.outcome, "auto_resumed")
+    assert.equal(result.outcomes[0]?.reason, null)
+    assert.equal(repos.getRun(run.id)?.status, "running")
+    assert.equal(repos.getRun(run.id)?.recovery_status, null)
+    assert.equal(repos.getOpenPrompt(run.id)?.id, prompt.id, "startup recovery must preserve the open prompt")
     const message = latestProjectedMessage(repos, run.id)
     assert.equal(message?.type, "startup_recovery")
-    assert.equal(message?.payload.outcome, "skipped")
-    assert.equal(message?.payload.reason, "open_prompt")
+    assert.equal(message?.payload.outcome, "auto_resumed")
+    assert.equal(message?.payload.reason, null)
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery preserves a single unresolved prompt across repeated auto-resume cycles", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+    const prompt = repos.createPendingPrompt({ id: "p-repeat", runId: run.id, prompt: "Need approval?" })
+
+    for (const now of [1_700_000_130_001, 1_700_000_260_002]) {
+      const result = await recoverLostWorkerRuns(repos, {
+        apiWorkerInstanceId: "api-current",
+        now,
+        autoResume: {
+          enabled: true,
+          resumeRun: async staleRun => {
+            repos.clearRunRecovery(staleRun.id)
+            repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+          },
+        },
+      })
+      assert.equal(result.outcomes[0]?.outcome, "auto_resumed")
+      assert.equal(repos.getRun(run.id)?.status, "running")
+      assert.equal(repos.getOpenPrompt(run.id)?.id, prompt.id)
+      claimWorkerLease(repos, {
+        runId: run.id,
+        workerInstanceId: "cli-stale",
+        workerOwnerKind: "cli",
+        now: now - 130_001,
+      })
+    }
+
+    const pendingCount = db
+      .prepare("SELECT COUNT(*) as count FROM pending_prompts WHERE run_id = ? AND answered_at IS NULL")
+      .get(run.id) as { count: number }
+    assert.equal(pendingCount.count, 1)
   } finally {
     db.close()
   }
@@ -490,7 +537,7 @@ test("startup recovery handles mixed stale runs independently during one startup
           if (staleRun.id === failingRun.id) {
             throw new Error("resume exploded")
           }
-          if (staleRun.id === resumableRun.id) {
+          if (staleRun.id === waitingRun.id || staleRun.id === resumableRun.id) {
             repos.clearRunRecovery(staleRun.id)
             repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
             return
@@ -501,11 +548,11 @@ test("startup recovery handles mixed stale runs independently during one startup
     })
 
     assert.equal(result.recovered, 0)
-    assert.deepEqual(new Set(resumeAttempts), new Set([failingRun.id, resumableRun.id]))
-    assert.equal(resumeAttempts.length, 2)
+    assert.deepEqual(new Set(resumeAttempts), new Set([waitingRun.id, failingRun.id, resumableRun.id]))
+    assert.equal(resumeAttempts.length, 3)
     assert.equal(repos.getRun(nonOrphanedRun.id)?.status, "failed")
     assert.ok(repos.getOpenPrompt(waitingRun.id), "waiting-for-operator runs must keep their prompt open")
-    assert.equal(repos.getRun(waitingRun.id)?.status, "failed")
+    assert.equal(repos.getRun(waitingRun.id)?.status, "running")
     assert.equal(repos.getRun(failingRun.id)?.status, "failed")
     assert.equal(repos.getRun(resumableRun.id)?.status, "running")
     assert.equal(repos.getRun(resumableRun.id)?.recovery_status, null)
@@ -517,8 +564,8 @@ test("startup recovery handles mixed stale runs independently during one startup
     })
     assert.deepEqual(outcomes.get(waitingRun.id), {
       runId: waitingRun.id,
-      outcome: "skipped",
-      reason: "open_prompt",
+      outcome: "auto_resumed",
+      reason: null,
     })
     assert.deepEqual(outcomes.get(failingRun.id), {
       runId: failingRun.id,
