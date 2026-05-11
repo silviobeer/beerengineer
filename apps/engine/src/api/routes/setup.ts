@@ -334,6 +334,14 @@ export async function handleSupabaseRecreate(repos: Repos, req: IncomingMessage,
   const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : ""
   const confirmedName = typeof body.confirmedName === "string" ? body.confirmedName : ""
   const workspace = workspaceId ? repos.getWorkspace(workspaceId) : undefined
+  if (workspace?.supabase_db_mode === "direct") {
+    json(res, 409, {
+      ok: false,
+      error: "branching_unavailable",
+      message: "Persistent test branches are unavailable in direct mode. Reconnect the workspace to use branching mode.",
+    })
+    return
+  }
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
   if (!workspace?.supabase_project_ref || !workspace.supabase_persistent_test_branch_ref || !workspace.root_path || !token) {
     json(res, 400, { ok: false, error: "recreate_context_required", message: "workspace, persistent branch, token, and root path are required" })

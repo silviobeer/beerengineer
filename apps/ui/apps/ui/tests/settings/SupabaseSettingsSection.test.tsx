@@ -52,4 +52,21 @@ describe("SupabaseSettingsSection", () => {
     expect(screen.getByRole("button", { name: /Refresh preflight/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/Production migration protection/i)).toBeInTheDocument();
   });
+
+  it("labels direct mode explicitly and hides branch-only settings controls", () => {
+    render(<SupabaseSettingsSection supabase={{
+      ...configView().supabase,
+      dbMode: "direct",
+      persistentTestBranchName: undefined,
+      persistentTestBranchRef: undefined,
+      persistentTestBranchStatus: undefined,
+    }} />);
+    expect(screen.getByText(/Direct mode is active/i)).toBeInTheDocument();
+    expect(screen.getByText("direct")).toBeInTheDocument();
+    expect(screen.queryByText(/Cleanup policy/i)).toBeNull();
+    expect(screen.queryByLabelText(/Production migration protection/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Recreate persistent test branch/i })).toBeNull();
+    expect(screen.queryByText(/^Persistent test branch$/i)).toBeNull();
+    expect(screen.queryByText(/^Branch status$/i)).toBeNull();
+  });
 });

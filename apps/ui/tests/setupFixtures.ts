@@ -155,6 +155,7 @@ export function configView(): AppConfigView {
       workspaceId: "ws-1",
       projectRef: "proj_1",
       region: "eu",
+      dbMode: "branching",
       persistentTestBranchName: "beerengineer-demo-persistent-test",
       persistentTestBranchRef: "br_test",
       persistentTestBranchStatus: "ACTIVE_HEALTHY",

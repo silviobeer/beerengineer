@@ -85,6 +85,67 @@ test("workspace items lists not-done items first with stage/status context", asy
   }
 })
 
+test("status prints the workspace Supabase db mode", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-status-"))
+  const previousDataDir = process.env.BEERENGINEER_DATA_DIR
+  const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
+  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const originalWrite = process.stdout.write.bind(process.stdout)
+  const originalExit = process.exit
+
+  try {
+    process.env.BEERENGINEER_DATA_DIR = dir
+    process.env.BEERENGINEER_CONFIG_PATH = join(dir, "config.json")
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    const direct = repos.upsertWorkspace({ key: "direct", name: "Direct", rootPath: "/tmp/direct" })
+    repos.connectWorkspaceSupabase(direct.id, { projectRef: "proj_direct", region: "eu", dbMode: "direct" })
+    const branching = repos.upsertWorkspace({ key: "branching", name: "Branching", rootPath: "/tmp/branching" })
+    repos.connectWorkspaceSupabase(branching.id, { projectRef: "proj_branching", region: "eu", dbMode: "branching" })
+
+    let stdout = ""
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
+    }) as typeof process.stdout.write
+    process.exit = ((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`)
+    }) as typeof process.exit
+
+    try {
+      await main(["status", "--workspace", "direct"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    }
+    assert.match(stdout, /db mode: direct/)
+
+    stdout = ""
+    try {
+      await main(["status", "--workspace", "branching"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    }
+    assert.match(stdout, /db mode: branching/)
+  } finally {
+    process.stdout.write = originalWrite
+    process.exit = originalExit
+    db.close()
+    if (previousDataDir === undefined) delete process.env.BEERENGINEER_DATA_DIR
+    else process.env.BEERENGINEER_DATA_DIR = previousDataDir
+    if (previousConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
+    else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
+    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
+    removeTempDir(dir)
+  }
+})
+
 test("chat list shows open prompts across workspaces with resolved question text", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const previousDataDir = process.env.BEERENGINEER_DATA_DIR
