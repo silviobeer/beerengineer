@@ -10,10 +10,14 @@ export type CodexSandboxResolution = {
 }
 
 type CapabilityProbe = () => Promise<CodexSandboxCapability>
-type CodexSandboxCapabilityStore = {
+export type CodexSandboxCapabilityStore = {
   load: () => string | null | undefined
-  persist: (capability: Exclude<CodexSandboxCapability, "unknown">) => void
+  persist: (capability: CodexSandboxCapability) => void
 }
+export type CodexSandboxCapabilitySnapshot =
+  | { state: "known"; capability: CodexSandboxCapability }
+  | { state: "missing" }
+  | { state: "invalid" }
 
 const TRUE_VALUES = new Set(["1", "true", "yes"])
 const FALSE_VALUES = new Set(["0", "false", "no"])
@@ -44,12 +48,33 @@ const BWRAP_PROBE_ARGS = [
 ]
 
 let cachedCapability: CodexSandboxCapability = "unknown"
+let hasCachedCapability = false
 let inFlightProbe: Promise<CodexSandboxCapability> | null = null
 let capabilityProbe: CapabilityProbe = () => runDefaultCapabilityProbe()
 let capabilityStore: CodexSandboxCapabilityStore | null = null
 
 function normalizeCapability(value: string | null | undefined): CodexSandboxCapability {
-  return value === "supported" || value === "unsupported" ? value : "unknown"
+  return value === "supported" || value === "unsupported" || value === "unknown" ? value : "unknown"
+}
+
+function isValidCapability(value: string | null | undefined): value is CodexSandboxCapability {
+  return value === "supported" || value === "unsupported" || value === "unknown"
+}
+
+function loadCapabilitySnapshot(store: CodexSandboxCapabilityStore | null): CodexSandboxCapabilitySnapshot {
+  if (store === null) return { state: "missing" }
+  try {
+    const persisted = store.load()
+    if (persisted === null || persisted === undefined) {
+      return { state: "missing" }
+    }
+    if (!isValidCapability(persisted)) {
+      return { state: "invalid" }
+    }
+    return { state: "known", capability: normalizeCapability(persisted) }
+  } catch {
+    return { state: "invalid" }
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -81,8 +106,8 @@ function rememberCapability(
   options: { persist?: boolean } = {},
 ): void {
   const normalized = normalizeCapability(capability)
-  if (normalized === "unknown") return
   cachedCapability = normalized
+  hasCachedCapability = true
   if (options.persist === false || capabilityStore === null) return
   try {
     capabilityStore.persist(normalized)
@@ -92,25 +117,12 @@ function rememberCapability(
 }
 
 function hydrateCapabilityFromStore(): "known" | "missing" | "invalid" {
-  if (cachedCapability !== "unknown") return "known"
-  if (capabilityStore === null) return "missing"
-  try {
-    const persisted = capabilityStore.load()
-    if (persisted === null || persisted === undefined || persisted === "unknown") {
-      return "missing"
-    }
-
-    const normalized = normalizeCapability(persisted)
-    if (normalized === "unknown") {
-      return "invalid"
-    }
-
-    rememberCapability(normalized, { persist: false })
-    return "known"
-  } catch {
-    // Invalid or unreadable persisted state behaves as unknown.
-    return "invalid"
+  if (hasCachedCapability) return "known"
+  const snapshot = loadCapabilitySnapshot(capabilityStore)
+  if (snapshot.state === "known") {
+    rememberCapability(snapshot.capability, { persist: false })
   }
+  return snapshot.state
 }
 
 export function isKnownCodexSandboxCapabilityFailure(text: string): boolean {
@@ -196,13 +208,16 @@ function runDefaultCapabilityProbe(): Promise<CodexSandboxCapability> {
 
 function startCapabilityProbe(): Promise<CodexSandboxCapability> {
   hydrateCapabilityFromStore()
-  if (cachedCapability !== "unknown") return Promise.resolve(cachedCapability)
+  if (hasCachedCapability) return Promise.resolve(cachedCapability)
   inFlightProbe ??= capabilityProbe()
     .then(capability => {
       rememberCapability(capability)
       return normalizeCapability(capability)
     })
-    .catch(() => "unknown" as const)
+    .catch(() => {
+      rememberCapability("unknown")
+      return "unknown" as const
+    })
     .finally(() => {
       inFlightProbe = null
     })
@@ -213,7 +228,7 @@ export async function getCodexSandboxCapability(
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
 ): Promise<CodexSandboxCapability> {
   hydrateCapabilityFromStore()
-  if (cachedCapability !== "unknown") return cachedCapability
+  if (hasCachedCapability) return cachedCapability
   if (timeoutMs <= 0) {
     void startCapabilityProbe()
     return "unknown"
@@ -258,6 +273,35 @@ export function markCodexSandboxCapabilitySupported(): void {
 
 export function markCodexSandboxCapabilityUnsupported(): void {
   rememberCapability("unsupported")
+}
+
+export function markCodexSandboxCapabilityUnknown(): void {
+  rememberCapability("unknown")
+}
+
+export function readCodexSandboxCapabilitySnapshot(
+  store: CodexSandboxCapabilityStore | null = capabilityStore,
+): CodexSandboxCapabilitySnapshot {
+  if (store === capabilityStore && hasCachedCapability) {
+    return { state: "known", capability: cachedCapability }
+  }
+  return loadCapabilitySnapshot(store)
+}
+
+export async function recheckCodexSandboxCapability(
+  store: CodexSandboxCapabilityStore | null = capabilityStore,
+): Promise<CodexSandboxCapability> {
+  const capability = await capabilityProbe().catch(() => "unknown" as const)
+  if (store === capabilityStore) {
+    rememberCapability(capability)
+    return capability
+  }
+  try {
+    store?.persist(capability)
+  } catch {
+    // Explicit rechecks still return the observed capability even if persistence fails.
+  }
+  return capability
 }
 
 export function isKnownCodexBwrapNetworkingFailure(text: string): boolean {
@@ -312,6 +356,7 @@ export function buildCodexBypassRetryFailure(
 
 export function resetCodexSandboxPolicyForTests(): void {
   cachedCapability = "unknown"
+  hasCachedCapability = false
   inFlightProbe = null
   capabilityProbe = () => runDefaultCapabilityProbe()
   capabilityStore = null
@@ -321,6 +366,7 @@ export function setCodexSandboxCapabilityProbeForTests(
   probe: CapabilityProbe,
 ): void {
   cachedCapability = "unknown"
+  hasCachedCapability = false
   inFlightProbe = null
   capabilityProbe = probe
 }
