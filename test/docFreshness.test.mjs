@@ -251,6 +251,24 @@ test("TC-7 dependency scan ignores out-of-scope docs", () => {
   }
 })
 
+test("TC-7b dependency scan ignores nested docs below the approved ADR scope", () => {
+  const root = createFixture()
+  try {
+    writeFile(
+      root,
+      "docs/adr/archive/old-decision.md",
+      "# Archived\n\nCurrent dependency: next@^99.0.0\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
 test("TC-8 in-scope dependency mismatch reports doc and manifest", () => {
   const root = createFixture()
   try {
@@ -270,6 +288,202 @@ test("TC-8 in-scope dependency mismatch reports doc and manifest", () => {
     assert.match(report, /Dependency claim drift/)
     assert.match(report, /docs\/TECHNICAL\.md/)
     assert.match(report, /apps\/ui\/package\.json/)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8b dependency scan uses only root and apps manifests as truth sources", () => {
+  const root = createFixture()
+  try {
+    writeJson(root, "package.json", {
+      name: "doc-freshness-fixture",
+      private: true,
+      type: "module",
+      workspaces: ["apps/*"],
+      dependencies: {
+        vite: "^6.1.0",
+      },
+      scripts: {
+        test: "npm run test:docs-freshness",
+        "test:docs-freshness": "node scripts/check-doc-freshness.mjs",
+      },
+    })
+    writeJson(root, "tools/package.json", {
+      name: "@fixture/tools",
+      private: true,
+      dependencies: {
+        vite: "^9.9.9",
+      },
+    })
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: vite@^6.1.0\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8c pinned claim for dependency missing from approved manifests is reported", () => {
+  const root = createFixture()
+  try {
+    writeJson(root, "tools/package.json", {
+      name: "@fixture/tools",
+      private: true,
+      dependencies: {
+        hono: "^4.7.0",
+      },
+    })
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: hono@^4.7.0\n")
+
+    const result = checkDocFreshness(root)
+    const report = formatDocFreshnessReport(result)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "hono")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^4.7.0")
+    assert.equal(result.findings.dependencyClaims[0].actualVersion, null)
+    assert.equal(result.findings.dependencyClaims[0].manifestPath, null)
+    assert.match(report, /hono@\^4\.7\.0/)
+    assert.match(report, /has no approved manifest entry/)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8d matching approved manifest version produces no dependency finding", () => {
+  const root = createFixture()
+  try {
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: next@^15.0.0\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8d2 direct apps manifests are included in approved dependency truth", () => {
+  const root = createFixture()
+  try {
+    writeJson(root, "apps/docs/package.json", {
+      name: "@fixture/docs",
+      private: true,
+      dependencies: {
+        marked: "^15.0.7",
+      },
+    })
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: marked@^15.0.7\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8d3 current-guidance headings apply to the following pinned dependency bullet", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependencies:",
+        "- next@^99.0.0",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8e current stale claim is reported while historical and example references are ignored", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependency: next@^99.0.0",
+        "Historical note: next@^13.0.0 was removed during migration.",
+        "Example snippet:",
+        "```bash",
+        "npm install next@^12.0.0",
+        "```",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8e2 non-current headings suppress following pinned dependency bullets", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical dependencies:",
+        "- next@^99.0.0",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8f unversioned mentions do not create extra dependency findings", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependency: next@^99.0.0",
+        "Next remains the framework for the UI workspace.",
+        "The next upgrade needs coordination with React.",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
   } finally {
     cleanup(root)
   }
