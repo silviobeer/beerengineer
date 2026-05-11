@@ -10,13 +10,56 @@ import {
 
 const INLINE_CODE_PATTERN = /`([^`\n]+)`/g
 const MARKDOWN_LINK_PATTERN = /\[[^\]]*]\(([^)\s]+)\)/g
-const ACTIVE_PATH_CONTEXT_PATTERN =
-  /\b(active|canonical|current|directory|directories|docs|entry|home|lives|live|located|look|open|path|paths|read|reference|references|route|routes|source|sources|start at|stored|structure|under|use|uses)\b/i
-const HISTORICAL_CONTEXT_PATTERN =
-  /\b(archive|archived|former|formerly|historical|moved|no longer active|no longer current|no longer exists|previous|removed|retired|used to|was a historical mistake|wrong location)\b/i
+const ACTIVE_PATH_CONTEXT_KEYWORDS = [
+  "active",
+  "canonical",
+  "current",
+  "directory",
+  "directories",
+  "docs",
+  "entry",
+  "home",
+  "lives",
+  "live",
+  "located",
+  "look",
+  "open",
+  "path",
+  "paths",
+  "read",
+  "reference",
+  "references",
+  "route",
+  "routes",
+  "source",
+  "sources",
+  "start at",
+  "stored",
+  "structure",
+  "under",
+  "use",
+  "uses",
+] as const
+const HISTORICAL_CONTEXT_KEYWORDS = [
+  "archive",
+  "archived",
+  "former",
+  "formerly",
+  "historical",
+  "moved",
+  "no longer active",
+  "no longer current",
+  "no longer exists",
+  "previous",
+  "removed",
+  "retired",
+  "used to",
+  "was a historical mistake",
+  "wrong location",
+] as const
 
 function isHistoricalContext(line: string): boolean {
-  return HISTORICAL_CONTEXT_PATTERN.test(line)
+  return containsKeyword(line, HISTORICAL_CONTEXT_KEYWORDS)
 }
 
 function collectPathCandidates(line: string): string[] {
@@ -32,7 +75,7 @@ function collectPathCandidates(line: string): string[] {
 }
 
 function isCurrentPathContext(line: string): boolean {
-  if (ACTIVE_PATH_CONTEXT_PATTERN.test(line)) return true
+  if (containsKeyword(line, ACTIVE_PATH_CONTEXT_KEYWORDS)) return true
   return readLeadingPathCandidate(line) !== null
 }
 
@@ -88,6 +131,35 @@ function collectLineFindings(
   }
 
   return findings
+}
+
+function containsKeyword(line: string, keywords: readonly string[]): boolean {
+  return keywords.some((keyword) => matchesKeyword(line, keyword))
+}
+
+function matchesKeyword(line: string, keyword: string): boolean {
+  const normalizedLine = line.toLowerCase()
+  const normalizedKeyword = keyword.toLowerCase()
+
+  if (normalizedKeyword.includes(" ")) {
+    return normalizedLine.includes(normalizedKeyword)
+  }
+
+  let startIndex = normalizedLine.indexOf(normalizedKeyword)
+  while (startIndex !== -1) {
+    const endIndex = startIndex + normalizedKeyword.length
+    if (isBoundary(normalizedLine, startIndex - 1) && isBoundary(normalizedLine, endIndex)) {
+      return true
+    }
+    startIndex = normalizedLine.indexOf(normalizedKeyword, startIndex + 1)
+  }
+
+  return false
+}
+
+function isBoundary(line: string, index: number): boolean {
+  if (index < 0 || index >= line.length) return true
+  return !/[a-z0-9_]/i.test(line[index] ?? "")
 }
 
 export const deletedDirectoryReferenceRule = defineFreshnessRule({

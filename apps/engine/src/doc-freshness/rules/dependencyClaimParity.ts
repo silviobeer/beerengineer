@@ -7,11 +7,39 @@ import {
 
 const FENCED_CODE_DELIMITER_PATTERN = /^\s*```/
 const CLAIM_TOKEN_PATTERN = /[^\s`]+/g
-const CURRENT_DEPENDENCY_CONTEXT_PATTERN =
-  /\b(active|canonical|current|depends on|dependencies|dependency|installed|package|packages|pinned|requires|ships with|tooling|use|uses)\b/i
-const NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN =
-  /\b(example|examples|for example|historical|migration|migrated|previous|removed|sample|samples|snippet|snippets|used to)\b/i
 const VERSION_PATTERN = /^[~^]?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/
+const CURRENT_DEPENDENCY_CONTEXT_KEYWORDS = [
+  "active",
+  "canonical",
+  "current",
+  "depends on",
+  "dependencies",
+  "dependency",
+  "installed",
+  "package",
+  "packages",
+  "pinned",
+  "requires",
+  "ships with",
+  "tooling",
+  "use",
+  "uses",
+] as const
+const NON_CURRENT_DEPENDENCY_CONTEXT_KEYWORDS = [
+  "example",
+  "examples",
+  "for example",
+  "historical",
+  "migration",
+  "migrated",
+  "previous",
+  "removed",
+  "sample",
+  "samples",
+  "snippet",
+  "snippets",
+  "used to",
+] as const
 
 type ManifestClaim = {
   manifestPath: string
@@ -24,11 +52,11 @@ type DependencyClaim = {
 }
 
 function isCurrentDependencyClaim(line: string, previousContextLine = ""): boolean {
-  if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return false
-  if (CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return true
+  if (containsKeyword(line, NON_CURRENT_DEPENDENCY_CONTEXT_KEYWORDS)) return false
+  if (containsKeyword(line, CURRENT_DEPENDENCY_CONTEXT_KEYWORDS)) return true
   if (!previousContextLine) return false
-  if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(previousContextLine)) return false
-  return CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(previousContextLine)
+  if (containsKeyword(previousContextLine, NON_CURRENT_DEPENDENCY_CONTEXT_KEYWORDS)) return false
+  return containsKeyword(previousContextLine, CURRENT_DEPENDENCY_CONTEXT_KEYWORDS)
 }
 
 function buildManifestEntries(scope: DocFreshnessScope): Map<string, ManifestClaim[]> {
@@ -151,6 +179,38 @@ function collectDocFindings(
 
 function updateContextLine(previousContextLine: string, line: string): string {
   return line.trim().length > 0 ? line : previousContextLine
+}
+
+function containsKeyword(
+  line: string,
+  keywords: readonly string[],
+): boolean {
+  return keywords.some((keyword) => matchesKeyword(line, keyword))
+}
+
+function matchesKeyword(line: string, keyword: string): boolean {
+  const normalizedLine = line.toLowerCase()
+  const normalizedKeyword = keyword.toLowerCase()
+
+  if (normalizedKeyword.includes(" ")) {
+    return normalizedLine.includes(normalizedKeyword)
+  }
+
+  let startIndex = normalizedLine.indexOf(normalizedKeyword)
+  while (startIndex !== -1) {
+    const endIndex = startIndex + normalizedKeyword.length
+    if (isBoundary(normalizedLine, startIndex - 1) && isBoundary(normalizedLine, endIndex)) {
+      return true
+    }
+    startIndex = normalizedLine.indexOf(normalizedKeyword, startIndex + 1)
+  }
+
+  return false
+}
+
+function isBoundary(line: string, index: number): boolean {
+  if (index < 0 || index >= line.length) return true
+  return !/[a-z0-9_]/i.test(line[index] ?? "")
 }
 
 export const dependencyClaimParityRule = defineFreshnessRule({

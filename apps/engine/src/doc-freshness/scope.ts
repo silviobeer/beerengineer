@@ -23,6 +23,7 @@ export const ROOT_DIRECTORY_REFERENCE_PREFIXES = [
 ] as const
 
 const COMPLETED_PROJECT_DIR_PATTERN = /^PROJ-\d+-/
+const PROJ_ID_PATTERN = /^(PROJ-\d+)/
 const DOCS_ADR_DIR = "docs/adr"
 
 type DependencyMap = Record<string, string>
@@ -246,7 +247,7 @@ function resolveCompletedProjects(
       .map((absolutePath) => toRepoPath(rootPath, absolutePath))
     if (evidencePaths.length === 0) continue
 
-    const projId = entry.name.match(/^(PROJ-\d+)/)?.[1]
+    const projId = PROJ_ID_PATTERN.exec(entry.name)?.[1]
     if (!projId) continue
 
     completedProjects.push({
