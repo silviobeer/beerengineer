@@ -114,6 +114,7 @@ async function writeWorkspaceConfig(root: string): Promise<void> {
     schemaVersion: 2,
     key: "t",
     name: "T",
+    autoPromoteOnGreenQa: true,
     rootPath: root,
     harnessProfile: { mode: "fast" },
     runtimePolicy: { mode: "safe-workspace-write" },

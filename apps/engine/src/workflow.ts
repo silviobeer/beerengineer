@@ -24,11 +24,15 @@ import { BlockedRunError } from "./core/blockedError.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
+import { getWorkflowIO } from "./core/io.js"
 import { assignPort, isWorktreePortPoolExhaustedError } from "./core/portAllocator.js"
+import { attachOneShotPromptAnswer } from "./core/promptAutoAnswer.js"
+import { readWorkspaceConfigSync } from "./core/workspaces.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
 import { mergeGate } from "./stages/mergeGate/index.js"
+import type { QaArtifact } from "./stages/qa/types.js"
 import {
   PROJECT_STAGE_REGISTRY,
   shouldRunProjectStage,
@@ -270,6 +274,25 @@ async function loadDesignPrepFreeze(context: WorkflowContext): Promise<DesignPre
   }
 }
 
+function workspaceAutoPromoteOnGreenQaEnabled(workspaceRoot?: string): boolean {
+  if (!workspaceRoot) return true
+  return readWorkspaceConfigSync(workspaceRoot)?.autoPromoteOnGreenQa ?? true
+}
+
+function qaVerdictAllowsAutoPromotion(status: QaArtifact["verdicts"][number]["status"]): boolean {
+  return status === "passed" || status === "not_applicable"
+}
+
+async function shouldAutoPromoteOnGreenQa(context: WorkflowContext): Promise<boolean> {
+  if (!workspaceAutoPromoteOnGreenQaEnabled(context.workspaceRoot)) return false
+  try {
+    const artifact = await loadStageArtifact<QaArtifact>(context, "qa", "qa-report.json")
+    return artifact.findings.length === 0 && artifact.verdicts.every(verdict => qaVerdictAllowsAutoPromotion(verdict.status))
+  } catch {
+    return false
+  }
+}
+
 function normalizedProjectIds(projects: Project[]): string[] {
   return [...projects.map(project => project.id)].sort((left, right) => left.localeCompare(right))
 }
@@ -390,7 +413,14 @@ export async function runWorkflow(item: Item, options?: {
       })
     }
 
-    await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+    const detachAutoPromote = await shouldAutoPromoteOnGreenQa(context)
+      ? attachOneShotPromptAnswer(getWorkflowIO(), "promote")
+      : () => {}
+    try {
+      await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+    } finally {
+      detachAutoPromote()
+    }
     assertWorkflowNotCancelled()
 
     stagePresent.header("DONE")
