@@ -16,6 +16,9 @@ export type SupabaseConnectResult =
 
 function classifySupabaseConnectFailure(err: unknown): { message: string; action: SupabaseReadinessSetupAction } {
   const message = err instanceof Error ? err.message : "Supabase validation failed"
+  if (err instanceof SupabaseManagementError && err.status === 402) {
+    return { message: "Supabase branching is unavailable for this project", action: "Connect Supabase project" }
+  }
   if (err instanceof SupabaseManagementError && err.status === 403) {
     return { message, action: "Re-authorize project access" }
   }

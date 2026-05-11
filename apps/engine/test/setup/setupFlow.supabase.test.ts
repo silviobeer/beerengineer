@@ -231,3 +231,60 @@ test("PROJ-6 PRD-2 US-4/5: interactive CLI setup connects, checks branch, and pr
     rmSync(ctx.dir, { recursive: true, force: true })
   }
 })
+
+test("REQ-2 AC-2.2 AC-2.5: interactive setup completes direct mode without creating a persistent branch", async () => {
+  const ctx = fixture()
+  const configPath = join(ctx.dir, "config", "config.json")
+  writeConfig(configPath, ctx.dir)
+  const answers = ["proj_direct", "sbp_token"]
+  const previousSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  let createCalls = 0
+  try {
+    process.env.BEERENGINEER_SECRET_STORE_PATH = ctx.storePath
+    const deps: SetupFlowDeps = {
+      repos: ctx.repos,
+      isInteractive: () => true,
+      launchSetup: async () => ({
+        engine: { status: "running", url: "http://127.0.0.1:4100" },
+        ui: { status: "running", url: "http://127.0.0.1:3000" },
+        setupUrl: "http://127.0.0.1:3000/setup",
+        browser: { status: "printed" },
+      }),
+      createQuestioner: () => ({
+        question: async () => answers.shift() ?? "",
+        close: () => {},
+      }),
+      createSupabaseClient: () => ({
+        listProjects: async () => [{ id: "1", ref: "proj_direct", region: "us", branchingEnabled: false }],
+        listBranches: async () => [],
+        createBranch: async (_projectRef, input) => {
+          createCalls += 1
+          return { id: "br_1", ref: "br_1", name: input.name, status: "ACTIVE_HEALTHY" }
+        },
+        getBranch: async () => ({ id: "br_1", ref: "br_1", name: "branch", status: "ACTIVE_HEALTHY" }),
+      }),
+    }
+
+    const result = await withCapturedConsole(() => runSetupFlow({
+      group: "supabase",
+      workspaceKey: "demo",
+      overrides: { configPath, dataDir: ctx.dir },
+      deps,
+    }))
+
+    assert.equal(result.exitCode, 0, result.output)
+    assert.match(result.output, /Connected Supabase project proj_direct/)
+    assert.match(result.output, /direct mode/i)
+    assert.match(result.output, /Supabase readiness is complete/)
+    assert.doesNotMatch(result.output, /persistent test branch now/i)
+    assert.doesNotMatch(result.output, /sbp_token/)
+    assert.equal(createCalls, 0)
+    assert.equal(ctx.repos.getWorkspace(ctx.workspace.id)?.supabase_db_mode, "direct")
+    assert.equal(ctx.repos.getWorkspace(ctx.workspace.id)?.supabase_persistent_test_branch_ref, null)
+  } finally {
+    if (previousSecretStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStorePath
+    ctx.db.close()
+    rmSync(ctx.dir, { recursive: true, force: true })
+  }
+})

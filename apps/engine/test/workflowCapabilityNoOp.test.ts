@@ -20,6 +20,8 @@ import { prepareRun, busToWorkflowIO, type SupabaseAdapterFactory } from "../src
 import type { GitAdapter } from "../src/core/gitAdapter.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { defaultAppConfig } from "../src/setup/config.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../src/setup/secretMetadata.js"
+import { storeSecret } from "../src/setup/secretStore.js"
 import { mergeGate } from "../src/stages/mergeGate/index.js"
 import { removeTempDir } from "./helpers/fs.js"
 
@@ -240,6 +242,97 @@ test("PROJ-8-PRD-3-US-1 item-action starts resolve an explicit null capability b
     assert.equal(capturedFactory, null)
     assert.equal(factoryCounter.count, 0)
   } finally {
+    db.close()
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-2 AC-2.3: direct-mode item-action starts are admitted without a persistent test branch", () => {
+  const { dir, db, repos } = tempRepos("be2-capability-direct-")
+  const repoRoot = join(dir, "repo")
+  const storePath = join(dir, "secrets.json")
+  const previousSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  seedGitRepo(repoRoot)
+  try {
+    process.env.BEERENGINEER_SECRET_STORE_PATH = storePath
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp_direct_secret", { storePath })
+    const workspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(workspace.id, { projectRef: "proj_alpha", region: "eu-central-1", dbMode: "direct" })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Direct item", description: "direct mode" })
+    const io = makeIo()
+    const scheduler = fakeScheduler()
+    const providedFactory: SupabaseAdapterFactory = () => null
+    let capturedFactory: SupabaseAdapterFactory | null | undefined
+
+    const prepared = prepareForegroundItemRun(repos, io, {
+      itemId: item.id,
+      action: "start_brainstorm",
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: scheduler,
+      supabaseAdapterFactory: providedFactory,
+      prepareRunImpl: (workflowItem, workflowRepos, workflowIo, opts) => {
+        capturedFactory = opts.supabaseAdapterFactory
+        return prepareRun(workflowItem, workflowRepos, workflowIo, opts)
+      },
+    })
+
+    assert.equal(prepared.ok, true)
+    assert.equal(capturedFactory, providedFactory)
+  } finally {
+    if (previousSecretStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStorePath
+    db.close()
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-2 AC-2.4: branching and legacy item-action starts stay blocked when the persistent test branch is missing", () => {
+  const { dir, db, repos } = tempRepos("be2-capability-branching-")
+  const repoRoot = join(dir, "repo")
+  const storePath = join(dir, "secrets.json")
+  const previousSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  seedGitRepo(repoRoot)
+  try {
+    process.env.BEERENGINEER_SECRET_STORE_PATH = storePath
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp_branching_secret", { storePath })
+
+    const branchingWorkspace = repos.upsertWorkspace({ key: "branching", name: "Branching", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(branchingWorkspace.id, { projectRef: "proj_branching", region: "eu-central-1", dbMode: "branching" })
+    const branchingItem = repos.createItem({ workspaceId: branchingWorkspace.id, title: "Branching item", description: "needs branch" })
+    const branchingResult = prepareForegroundItemRun(repos, makeIo(), {
+      itemId: branchingItem.id,
+      action: "start_brainstorm",
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: fakeScheduler(),
+    })
+
+    const legacyWorkspace = repos.upsertWorkspace({ key: "legacy", name: "Legacy", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(legacyWorkspace.id, { projectRef: "proj_legacy", region: "eu-central-1" })
+    const legacyItem = repos.createItem({ workspaceId: legacyWorkspace.id, title: "Legacy item", description: "legacy branch requirement" })
+    const legacyResult = prepareForegroundItemRun(repos, makeIo(), {
+      itemId: legacyItem.id,
+      action: "start_brainstorm",
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: fakeScheduler(),
+    })
+
+    assert.equal(branchingResult.ok, false)
+    if (!branchingResult.ok) {
+      assert.equal(branchingResult.reason, "incomplete_config")
+      assert.match(branchingResult.message, /persistent test branch/)
+    }
+
+    assert.equal(legacyResult.ok, false)
+    if (!legacyResult.ok) {
+      assert.equal(legacyResult.reason, "incomplete_config")
+      assert.match(legacyResult.message, /persistent test branch/)
+    }
+  } finally {
+    if (previousSecretStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStorePath
     db.close()
     removeTempDir(dir)
   }
