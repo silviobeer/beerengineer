@@ -3,6 +3,7 @@ import type { PromptAction } from "../../core/io.js"
 import type { Db } from "../connection.js"
 import type {
   ArtifactFileRow,
+  CodexSandboxCapabilityStateRow,
   ExternalRemediationRow,
   ItemRow,
   NotificationDeliveryRow,
@@ -61,6 +62,32 @@ export class Repos {
        ON CONFLICT(id) DO UPDATE SET checked_at = excluded.checked_at`,
       timestamp,
     )
+  }
+
+  getCodexSandboxCapabilitySnapshot():
+    | {
+        capability: string
+        updatedAt: number
+      }
+    | null {
+    const row = this.getOne<CodexSandboxCapabilityStateRow>(
+      "SELECT * FROM codex_sandbox_capability_state WHERE singleton = 1",
+    )
+    if (!row) return null
+    return {
+      capability: row.capability,
+      updatedAt: row.updated_at,
+    }
+  }
+
+  setCodexSandboxCapabilitySnapshot(capability: string, updatedAt = now()): void {
+    this.db.prepare(
+      `INSERT INTO codex_sandbox_capability_state (singleton, capability, updated_at)
+       VALUES (1, ?, ?)
+       ON CONFLICT(singleton) DO UPDATE SET
+         capability = excluded.capability,
+         updated_at = excluded.updated_at`,
+    ).run(capability, updatedAt)
   }
 
   private clampLimit(limit: number | undefined, fallback = 20): number {

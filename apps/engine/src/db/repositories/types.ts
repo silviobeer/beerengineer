@@ -208,3 +208,9 @@ export type UpdateAttemptRow = {
   updated_at: number
   completed_at: number | null
 }
+
+export type CodexSandboxCapabilityStateRow = {
+  singleton: number
+  capability: string
+  updated_at: number
+}

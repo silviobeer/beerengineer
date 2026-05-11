@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import type { RuntimePolicy } from "../../runtimePolicy.js"
 
 export type CodexSandboxCapability = "supported" | "unsupported" | "unknown"
@@ -8,15 +9,39 @@ export type CodexSandboxResolution = {
 }
 
 type CapabilityProbe = () => Promise<CodexSandboxCapability>
+type CodexSandboxCapabilityStore = {
+  load: () => string | null | undefined
+  persist: (capability: Exclude<CodexSandboxCapability, "unknown">) => void
+}
 
 const TRUE_VALUES = new Set(["1", "true", "yes"])
 const FALSE_VALUES = new Set(["0", "false", "no"])
+const DEFAULT_PROBE_TIMEOUT_MS = 2000
+const BWRAP_PROBE_ARGS = [
+  "--die-with-parent",
+  "--unshare-user",
+  "--unshare-pid",
+  "--unshare-net",
+  "--proc",
+  "/proc",
+  "--dev",
+  "/dev",
+  "--ro-bind",
+  "/",
+  "/",
+  "--chdir",
+  "/",
+  "/bin/sh",
+  "-lc",
+  "true",
+]
 
 let cachedCapability: CodexSandboxCapability = "unknown"
 let inFlightProbe: Promise<CodexSandboxCapability> | null = null
-let capabilityProbe: CapabilityProbe = async () => "unknown"
+let capabilityProbe: CapabilityProbe = () => runDefaultCapabilityProbe()
+let capabilityStore: CodexSandboxCapabilityStore | null = null
 
-function normalizeCapability(value: CodexSandboxCapability): CodexSandboxCapability {
+function normalizeCapability(value: string | null | undefined): CodexSandboxCapability {
   return value === "supported" || value === "unsupported" ? value : "unknown"
 }
 
@@ -44,12 +69,108 @@ export function codexSandboxBypassEnabled(
   return parseCodexSandboxBypassOverride(env) === true
 }
 
-function rememberCapability(capability: CodexSandboxCapability): void {
+function rememberCapability(
+  capability: CodexSandboxCapability,
+  options: { persist?: boolean } = {},
+): void {
   const normalized = normalizeCapability(capability)
-  if (normalized !== "unknown") cachedCapability = normalized
+  if (normalized === "unknown") return
+  cachedCapability = normalized
+  if (options.persist === false || capabilityStore === null) return
+  try {
+    capabilityStore.persist(normalized)
+  } catch {
+    // Persistence failures degrade to in-memory caching only.
+  }
+}
+
+function hydrateCapabilityFromStore(): "known" | "missing" | "invalid" {
+  if (cachedCapability !== "unknown") return "known"
+  if (capabilityStore === null) return "missing"
+  try {
+    const persisted = capabilityStore.load()
+    if (persisted === null || persisted === undefined || persisted === "unknown") {
+      return "missing"
+    }
+
+    const normalized = normalizeCapability(persisted)
+    if (normalized === "unknown") {
+      return "invalid"
+    }
+
+    rememberCapability(normalized, { persist: false })
+    return "known"
+  } catch {
+    // Invalid or unreadable persisted state behaves as unknown.
+    return "invalid"
+  }
+}
+
+export function isKnownCodexSandboxCapabilityFailure(text: string): boolean {
+  return (
+    isKnownCodexBwrapNetworkingFailure(text)
+    || /\bCAP_NET_ADMIN\b/i.test(text)
+    || /\bcap_net_admin\b/i.test(text)
+    || /\bbwrap:\s*command not found\b/i.test(text)
+    || /\bspawn bwrap\b.*\bENOENT\b/i.test(text)
+    || /\bbwrap:.*No such file or directory\b/i.test(text)
+    || /\bbwrap:.*Operation not permitted\b/i.test(text)
+  )
+}
+
+function classifyProbeFailure(text: string): CodexSandboxCapability {
+  if (
+    isKnownCodexSandboxCapabilityFailure(text)
+    || /\boperation not permitted\b/i.test(text)
+  ) {
+    return "unsupported"
+  }
+  return "unknown"
+}
+
+function runDefaultCapabilityProbe(): Promise<CodexSandboxCapability> {
+  return new Promise(resolve => {
+    let settled = false
+    let stderr = ""
+    const child = spawn("bwrap", BWRAP_PROBE_ARGS, {
+      stdio: ["ignore", "ignore", "pipe"],
+    })
+
+    const finish = (capability: CodexSandboxCapability): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(capability)
+    }
+
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL")
+      finish("unknown")
+    }, DEFAULT_PROBE_TIMEOUT_MS)
+
+    child.on("error", error => {
+      const errno = error as NodeJS.ErrnoException
+      if (errno.code === "ENOENT") {
+        finish("unsupported")
+        return
+      }
+      finish("unknown")
+    })
+    child.stderr?.on("data", chunk => {
+      stderr += chunk.toString()
+    })
+    child.on("close", code => {
+      if (code === 0) {
+        finish("supported")
+        return
+      }
+      finish(classifyProbeFailure(stderr))
+    })
+  })
 }
 
 function startCapabilityProbe(): Promise<CodexSandboxCapability> {
+  hydrateCapabilityFromStore()
   if (cachedCapability !== "unknown") return Promise.resolve(cachedCapability)
   inFlightProbe ??= capabilityProbe()
     .then(capability => {
@@ -64,8 +185,9 @@ function startCapabilityProbe(): Promise<CodexSandboxCapability> {
 }
 
 export async function getCodexSandboxCapability(
-  timeoutMs = 1000,
+  timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
 ): Promise<CodexSandboxCapability> {
+  hydrateCapabilityFromStore()
   if (cachedCapability !== "unknown") return cachedCapability
   if (timeoutMs <= 0) {
     void startCapabilityProbe()
@@ -78,7 +200,7 @@ export async function getCodexSandboxCapability(
 }
 
 export async function primeCodexSandboxCapabilityDetection(
-  timeoutMs = 1000,
+  timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
 ): Promise<void> {
   await getCodexSandboxCapability(timeoutMs)
 }
@@ -86,7 +208,7 @@ export async function primeCodexSandboxCapabilityDetection(
 export async function resolveCodexSandboxBypass(
   mode: RuntimePolicy["mode"],
   env: NodeJS.ProcessEnv = process.env,
-  probeTimeoutMs = 1000,
+  probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
 ): Promise<CodexSandboxResolution> {
   if (mode === "no-tools") return { bypass: false, source: "policy" }
   if (mode === "unsafe-autonomous-write") return { bypass: true, source: "policy" }
@@ -94,10 +216,15 @@ export async function resolveCodexSandboxBypass(
   const explicit = parseCodexSandboxBypassOverride(env)
   if (explicit !== null) return { bypass: explicit, source: "explicit" }
 
+  if (hydrateCapabilityFromStore() === "invalid") {
+    void startCapabilityProbe()
+    return { bypass: true, source: "default" }
+  }
+
   const capability = await getCodexSandboxCapability(probeTimeoutMs)
   if (capability === "unsupported") return { bypass: true, source: "capability" }
   if (capability === "supported") return { bypass: false, source: "capability" }
-  return { bypass: false, source: "default" }
+  return { bypass: true, source: "default" }
 }
 
 export function markCodexSandboxCapabilitySupported(): void {
@@ -125,7 +252,7 @@ export function shouldRetryCodexWithSandboxBypass(input: {
   if (input.mode === "no-tools" || input.mode === "unsafe-autonomous-write") return false
   if (input.alreadyBypassing) return false
   if (parseCodexSandboxBypassOverride(input.env) !== null) return false
-  return isKnownCodexBwrapNetworkingFailure(errorText(input.error))
+  return isKnownCodexSandboxCapabilityFailure(errorText(input.error))
 }
 
 export function buildCodexWorkerStartFailure(error: unknown): Error {
@@ -161,7 +288,8 @@ export function buildCodexBypassRetryFailure(
 export function resetCodexSandboxPolicyForTests(): void {
   cachedCapability = "unknown"
   inFlightProbe = null
-  capabilityProbe = async () => "unknown"
+  capabilityProbe = () => runDefaultCapabilityProbe()
+  capabilityStore = null
 }
 
 export function setCodexSandboxCapabilityProbeForTests(
@@ -170,4 +298,11 @@ export function setCodexSandboxCapabilityProbeForTests(
   cachedCapability = "unknown"
   inFlightProbe = null
   capabilityProbe = probe
+}
+
+export function setCodexSandboxCapabilityStore(
+  store: CodexSandboxCapabilityStore | null,
+): void {
+  capabilityStore = store
+  hydrateCapabilityFromStore()
 }
