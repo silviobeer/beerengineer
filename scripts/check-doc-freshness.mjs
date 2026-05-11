@@ -8,13 +8,11 @@ const IN_SCOPE_DOCS = [
   "docs/AGENTS.md",
   "docs/PROJECT.md",
   "docs/TECHNICAL.md",
+  "apps/ui/README.md",
+  "apps/engine/docs/AGENTS.md",
+  "apps/ui/docs/AGENTS.md",
 ]
 
-const MANIFEST_PATHS = [
-  "package.json",
-  "apps/engine/package.json",
-  "apps/ui/package.json",
-]
 const ROOT_PATH_PREFIXES = [
   "apps/",
   "docs/",
@@ -28,14 +26,19 @@ const ROOT_PATH_PREFIXES = [
 const DEPENDENCY_CLAIM_PATTERN =
   /(?<![A-Za-z0-9_./-])(?<package>@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?)@(?<version>[\^~]?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)*)/gi
 
+const FENCED_CODE_DELIMITER_PATTERN = /^\s*```/
 const INLINE_CODE_PATTERN = /`([^`\n]+)`/g
 const MARKDOWN_LINK_PATTERN = /\[[^\]]*]\(([^)\s]+)\)/g
 const LEADING_PATH_PATTERN =
   /^\s*(?<path>[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._*-]+)+(?:\/)?(?:[A-Za-z0-9._-]+)?)/
+const CURRENT_DEPENDENCY_CONTEXT_PATTERN =
+  /\b(active|canonical|current|depends on|dependencies|dependency|installed|package|packages|pinned|requires|ships with|tooling|use|uses)\b/i
+const NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN =
+  /\b(example|examples|for example|historical|migration|migrated|previous|removed|sample|samples|snippet|snippets|used to)\b/i
 const ACTIVE_PATH_CONTEXT_PATTERN =
   /\b(active|canonical|current|directory|directories|docs|entry|home|lives|live|located|look|open|path|paths|read|reference|references|route|routes|source|sources|start at|stored|structure|under|use|uses)\b/i
 const HISTORICAL_CONTEXT_PATTERN =
-  /\b(former|formerly|historical|moved|no longer active|no longer exists|previous|removed|retired|used to|was a historical mistake|wrong location)\b/i
+  /\b(archive|archived|former|formerly|historical|moved|no longer active|no longer current|no longer exists|previous|removed|retired|used to|was a historical mistake|wrong location)\b/i
 
 function toRepoPath(rootPath, absolutePath) {
   return relative(rootPath, absolutePath).split(sep).join("/")
@@ -75,12 +78,19 @@ function getInScopeDocs(rootPath) {
     })
   }
 
-  for (const absolutePath of walkFiles(join(rootPath, "docs", "adr"))) {
-    docs.push({
-      docPath: toRepoPath(rootPath, absolutePath),
-      absolutePath,
-      content: readFileSync(absolutePath, "utf8"),
-    })
+  const adrDir = join(rootPath, "docs", "adr")
+  if (existsSync(adrDir)) {
+    for (const entry of readdirSync(adrDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      if (!entry.name.endsWith(".md")) continue
+
+      const absolutePath = join(adrDir, entry.name)
+      docs.push({
+        docPath: toRepoPath(rootPath, absolutePath),
+        absolutePath,
+        content: readFileSync(absolutePath, "utf8"),
+      })
+    }
   }
 
   docs.sort((left, right) => left.docPath.localeCompare(right.docPath))
@@ -100,7 +110,7 @@ function getCompletedProjects(rootPath) {
     if (!existsSync(progressDir)) continue
     if (!statSync(progressDir).isDirectory()) continue
 
-    const logs = walkFiles(progressDir)
+    const logs = walkFiles(progressDir).filter((filePath) => filePath.endsWith(".md"))
     if (logs.length === 0) continue
 
     const projId = entry.name.match(/^(PROJ-\d+)/)?.[1]
@@ -118,10 +128,31 @@ function getCompletedProjects(rootPath) {
   return completed
 }
 
+function listManifestPaths(rootPath) {
+  const manifestPaths = []
+  const rootManifestPath = join(rootPath, "package.json")
+  if (existsSync(rootManifestPath)) manifestPaths.push("package.json")
+
+  const appsDir = join(rootPath, "apps")
+  if (!existsSync(appsDir)) return manifestPaths
+
+  const appManifests = []
+  for (const entry of readdirSync(appsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = join("apps", entry.name, "package.json")
+    if (!existsSync(join(rootPath, manifestPath))) continue
+    appManifests.push(manifestPath)
+  }
+
+  appManifests.sort((left, right) => left.localeCompare(right))
+  manifestPaths.push(...appManifests)
+  return manifestPaths
+}
+
 function buildManifestEntries(rootPath) {
   const entries = new Map()
 
-  for (const manifestPath of MANIFEST_PATHS) {
+  for (const manifestPath of listManifestPaths(rootPath)) {
     const absolutePath = join(rootPath, manifestPath)
     if (!existsSync(absolutePath)) continue
 
@@ -163,20 +194,52 @@ function findMissingProjects(rootPath, docsProjectContent) {
   return findings
 }
 
+function isCurrentDependencyClaim(line, previousContextLine = "") {
+  if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return false
+  if (CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return true
+  if (!previousContextLine) return false
+  if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(previousContextLine)) return false
+  return CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(previousContextLine)
+}
+
 function findDependencyClaimDrift(rootPath, docs) {
   const manifestEntries = buildManifestEntries(rootPath)
   const findings = []
 
   for (const doc of docs) {
     const lines = doc.content.split(/\r?\n/)
+    let insideFencedCodeBlock = false
+    let previousContextLine = ""
     for (const [index, line] of lines.entries()) {
+      if (FENCED_CODE_DELIMITER_PATTERN.test(line)) {
+        insideFencedCodeBlock = !insideFencedCodeBlock
+        continue
+      }
+
+      if (insideFencedCodeBlock) continue
+      if (!isCurrentDependencyClaim(line, previousContextLine)) {
+        if (line.trim().length > 0) previousContextLine = line
+        continue
+      }
+
       for (const match of line.matchAll(DEPENDENCY_CLAIM_PATTERN)) {
         const packageName = match.groups?.package
         const claimedVersion = match.groups?.version
         if (!packageName || !claimedVersion) continue
 
         const manifestClaims = manifestEntries.get(packageName)
-        if (!manifestClaims || manifestClaims.length === 0) continue
+        if (!manifestClaims || manifestClaims.length === 0) {
+          findings.push({
+            docPath: doc.docPath,
+            lineNumber: index + 1,
+            packageName,
+            claimedVersion,
+            manifestPath: null,
+            actualVersion: null,
+            claim: `${packageName}@${claimedVersion}`,
+          })
+          continue
+        }
         if (manifestClaims.some((entry) => entry.version === claimedVersion)) continue
 
         const conflictingManifest = manifestClaims[0]
@@ -190,6 +253,8 @@ function findDependencyClaimDrift(rootPath, docs) {
           claim: `${packageName}@${claimedVersion}`,
         })
       }
+
+      if (line.trim().length > 0) previousContextLine = line
     }
   }
 
@@ -223,7 +288,7 @@ function normalizeCandidate(candidate) {
   const trimmed = withoutAnchor.replace(/[),.;:]+$/, "")
   if (trimmed.length === 0) return null
 
-  if (["README.md", "AGENTS.md", "package.json"].includes(trimmed)) return trimmed
+  if (!trimmed.endsWith("/")) return null
   if (ROOT_PATH_PREFIXES.some((prefix) => trimmed.startsWith(prefix))) return trimmed
   if (trimmed.startsWith("./") || trimmed.startsWith("../")) return trimmed
   if (/^[A-Za-z0-9._-]+\/$/.test(trimmed)) return trimmed
@@ -252,18 +317,23 @@ function collectPathCandidates(line) {
 
 function resolveDocCandidate(rootPath, docPath, candidate) {
   const docDir = dirname(join(rootPath, docPath))
-  const docDirectoryIsRoot = dirname(docPath) === "."
   let absolutePath = null
 
   if (candidate.startsWith("./") || candidate.startsWith("../")) {
     absolutePath = resolve(docDir, candidate)
-  } else if (
-    ["README.md", "AGENTS.md", "package.json"].includes(candidate) ||
-    ROOT_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))
-  ) {
+  } else if (ROOT_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))) {
     absolutePath = resolve(rootPath, candidate)
-  } else if (!docDirectoryIsRoot && /^[A-Za-z0-9._-]+\/$/.test(candidate)) {
-    absolutePath = resolve(docDir, candidate)
+  } else if (/^[A-Za-z0-9._-]+\/$/.test(candidate)) {
+    const docRelativePath = resolve(docDir, candidate)
+    const rootRelativePath = resolve(rootPath, candidate)
+
+    if (existsSync(docRelativePath)) {
+      absolutePath = docRelativePath
+    } else if (existsSync(rootRelativePath)) {
+      absolutePath = rootRelativePath
+    } else {
+      absolutePath = rootRelativePath
+    }
   }
 
   if (!absolutePath) return null
@@ -330,42 +400,48 @@ export function checkDocFreshness(rootPath = process.cwd()) {
 
 export function formatDocFreshnessReport(result) {
   if (result.ok) {
-    return "Documentation freshness check passed."
+    return "Documentation freshness check passed: no freshness issues were detected."
   }
 
   const lines = ["Documentation freshness check failed.", ""]
 
-  if (result.findings.missingProjects.length > 0) {
-    lines.push("Missing completed PROJs:")
-    for (const finding of result.findings.missingProjects) {
-      lines.push(
-        `- ${finding.docPath}: ${finding.projId} is missing even though ${finding.progressPath} contains ${finding.logCount} progress log(s).`,
-      )
-    }
-    lines.push("")
+  for (const finding of [
+    ...result.findings.missingProjects.map((finding) => ({
+      docPath: finding.docPath,
+      ruleId: "completed-proj-parity",
+      sortKey: [finding.docPath, "completed-proj-parity", finding.projId],
+      message:
+        `${finding.projId} is missing even though ${finding.progressPath} contains ${finding.logCount} progress markdown file(s).`,
+    })),
+    ...result.findings.dependencyClaims.map((finding) => ({
+      docPath: finding.docPath,
+      ruleId: "dependency-claim-parity",
+      sortKey: [
+        finding.docPath,
+        "dependency-claim-parity",
+        `${String(finding.lineNumber).padStart(6, "0")}:${finding.packageName}`,
+      ],
+      message: finding.manifestPath && finding.actualVersion
+        ? `claims ${finding.claim}, but ${finding.manifestPath} declares ${finding.packageName}@${finding.actualVersion}.`
+        : `claims ${finding.claim}, but ${finding.packageName} has no approved manifest entry in package.json or apps/*/package.json.`,
+    })),
+    ...result.findings.stalePaths.map((finding) => ({
+      docPath: finding.docPath,
+      ruleId: "deleted-directory-reference",
+      sortKey: [
+        finding.docPath,
+        "deleted-directory-reference",
+        `${String(finding.lineNumber).padStart(6, "0")}:${finding.referencedPath}`,
+      ],
+      message: `references ${finding.referencedPath}, but that directory does not exist in the repo.`,
+    })),
+  ].sort((left, right) =>
+    left.sortKey.join("\u0000").localeCompare(right.sortKey.join("\u0000")),
+  )) {
+    lines.push(`- ${finding.docPath} [${finding.ruleId}] ${finding.message}`)
   }
 
-  if (result.findings.dependencyClaims.length > 0) {
-    lines.push("Dependency claim drift:")
-    for (const finding of result.findings.dependencyClaims) {
-      lines.push(
-        `- ${finding.docPath}:${finding.lineNumber} claims ${finding.claim}, but ${finding.manifestPath} declares ${finding.packageName}@${finding.actualVersion}.`,
-      )
-    }
-    lines.push("")
-  }
-
-  if (result.findings.stalePaths.length > 0) {
-    lines.push("Stale active path references:")
-    for (const finding of result.findings.stalePaths) {
-      lines.push(
-        `- ${finding.docPath}:${finding.lineNumber} references ${finding.referencedPath}, but that path does not exist in the repo.`,
-      )
-    }
-    lines.push("")
-  }
-
-  return lines.join("\n").trimEnd()
+  return lines.join("\n")
 }
 
 function runCli() {
