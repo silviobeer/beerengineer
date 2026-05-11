@@ -39,8 +39,8 @@ export interface DependencyClaimParityFinding extends FreshnessFindingBase {
   ruleId: typeof FRESHNESS_RULE_IDS.dependencyClaimParity
   packageName: string
   claimedVersion: string
-  manifestPath: string
-  actualVersion: string
+  manifestPath: string | null
+  actualVersion: string | null
 }
 
 export interface DeletedDirectoryReferenceFinding extends FreshnessFindingBase {

@@ -71,6 +71,7 @@ export const DOC_FRESHNESS_FIXTURE_DOCS: Readonly<Record<string, string>> = {
     "# Project Index",
     "",
     "Completed work includes PROJ-10 in the shipped catalog.",
+    "Completed work includes PROJ-12 in the shipped catalog.",
     "Historical note: `../legacy/ui/` was removed after the rewrite.",
     "",
   ].join("\n"),
@@ -79,6 +80,24 @@ export const DOC_FRESHNESS_FIXTURE_DOCS: Readonly<Record<string, string>> = {
     "",
     "Operational scripts currently live under `../scripts/`.",
     "Older experiments in `../old-runtime/` were removed.",
+    "",
+  ].join("\n"),
+  "apps/ui/README.md": [
+    "# UI Workspace",
+    "",
+    "Current UI routes live under `app/`.",
+    "",
+  ].join("\n"),
+  "apps/engine/docs/AGENTS.md": [
+    "# Engine Docs Guide",
+    "",
+    "Start at `../../../docs/` for cross-cutting docs.",
+    "",
+  ].join("\n"),
+  "apps/ui/docs/AGENTS.md": [
+    "# UI Docs Guide",
+    "",
+    "Open `../../../apps/ui/` for the active UI workspace.",
     "",
   ].join("\n"),
   "docs/adr/ADR-12-1.md": [
@@ -123,12 +142,26 @@ export const DOC_FRESHNESS_FIXTURE_MANIFESTS: Readonly<Record<string, string>> =
     null,
     2,
   ),
+  "apps/worker/package.json": JSON.stringify(
+    {
+      name: "@fixture/worker",
+      private: true,
+      dependencies: {
+        hono: "^4.7.0",
+      },
+    },
+    null,
+    2,
+  ),
 } as const
 
 export function writeDocFreshnessFixtureRepo(rootPath: string): void {
   const directories = [
     "apps/engine/src",
     "apps/ui/app",
+    "apps/worker/src",
+    "apps/engine/docs",
+    "apps/ui/docs",
     "docs/adr",
     "scripts",
     "skills",

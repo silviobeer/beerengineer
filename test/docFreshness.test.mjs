@@ -18,17 +18,13 @@ import {
 
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), "be2-doc-freshness-"))
-  const repoPackage = JSON.parse(
-    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-  )
 
   writeJson(root, "package.json", {
     name: "doc-freshness-fixture",
     private: true,
     type: "module",
-    workspaces: repoPackage.workspaces,
     scripts: {
-      test: repoPackage.scripts.test,
+      test: "npm run test:docs-freshness",
       "test:docs-freshness": "node scripts/check-doc-freshness.mjs",
     },
   })
@@ -51,6 +47,7 @@ function createFixture() {
     },
   })
   writeJson(root, "apps/engine/src/placeholder.json", {})
+  writeJson(root, "apps/ui/app/placeholder.json", {})
   writeFile(root, "README.md", [
     "# Fixture Repo",
     "",
@@ -75,6 +72,21 @@ function createFixture() {
     "# Technical",
     "",
     "Active engine sources live in `apps/engine/`.",
+  ].join("\n"))
+  writeFile(root, "apps/ui/README.md", [
+    "# UI",
+    "",
+    "Current UI routes live in `app/`.",
+  ].join("\n"))
+  writeFile(root, "apps/engine/docs/AGENTS.md", [
+    "# Engine Docs",
+    "",
+    "Open `../../../docs/` for cross-cutting docs.",
+  ].join("\n"))
+  writeFile(root, "apps/ui/docs/AGENTS.md", [
+    "# UI Docs",
+    "",
+    "Open `../../../apps/ui/` for the active UI workspace.",
   ].join("\n"))
   writeFile(root, "docs/adr/README.md", [
     "# ADRs",
@@ -162,9 +174,8 @@ test("TC-2 missing completed PROJ is reported", () => {
     assert.equal(result.ok, false)
     assert.equal(result.findings.missingProjects.length, 1)
     assert.equal(result.findings.missingProjects[0].projId, "PROJ-9")
-    assert.match(report, /Missing completed PROJs/)
+    assert.match(report, /docs\/PROJECT\.md \[completed-proj-parity]/)
     assert.match(report, /PROJ-9/)
-    assert.match(report, /docs\/PROJECT\.md/)
   } finally {
     cleanup(root)
   }
@@ -235,7 +246,7 @@ test("TC-6 multiple markdown progress logs still yield one missing-PROJ finding"
     assert.equal(result.findings.missingProjects[0].projId, "PROJ-9")
     assert.equal(result.findings.missingProjects[0].logCount, 3)
     assert.match(report, /PROJ-9/)
-    assert.equal(report.match(/docs\/PROJECT\.md:/g)?.length, 1)
+    assert.equal(report.match(/docs\/PROJECT\.md \[completed-proj-parity]/g)?.length, 1)
   } finally {
     cleanup(root)
   }
@@ -289,8 +300,7 @@ test("TC-8 in-scope dependency mismatch reports doc and manifest", () => {
       result.findings.dependencyClaims[0].manifestPath,
       "apps/ui/package.json",
     )
-    assert.match(report, /Dependency claim drift/)
-    assert.match(report, /docs\/TECHNICAL\.md/)
+    assert.match(report, /docs\/TECHNICAL\.md \[dependency-claim-parity]/)
     assert.match(report, /apps\/ui\/package\.json/)
   } finally {
     cleanup(root)
@@ -537,7 +547,7 @@ test("TC-10 active deleted directory in approved docs is reported", () => {
     assert.equal(result.findings.stalePaths.length, 1)
     assert.equal(result.findings.stalePaths[0].referencedPath, "legacy/")
     assert.equal(result.findings.stalePaths[0].docPath, "docs/AGENTS.md")
-    assert.match(report, /Stale active path references/)
+    assert.match(report, /\[deleted-directory-reference]/)
     assert.match(report, /legacy\//)
     assert.match(report, /docs\/AGENTS\.md/)
   } finally {
@@ -684,9 +694,9 @@ test("TC-12 root test path fails non-zero with grouped drift report", () => {
     const output = `${result.stdout}\n${result.stderr}`
 
     assert.notEqual(result.status, 0)
-    assert.match(output, /Missing completed PROJs/)
-    assert.match(output, /Dependency claim drift/)
-    assert.match(output, /Stale active path references/)
+    assert.match(output, /\[completed-proj-parity]/)
+    assert.match(output, /\[dependency-claim-parity]/)
+    assert.match(output, /\[deleted-directory-reference]/)
     assert.match(output, /docs\/TECHNICAL\.md/)
     assert.match(output, /docs\/AGENTS\.md/)
   } finally {
@@ -705,6 +715,7 @@ test("TC-13 clean repo passes despite out-of-scope doc issues", () => {
     const result = runFixtureNpmTest(root)
 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    assert.match(result.stdout, /no freshness issues were detected/i)
   } finally {
     cleanup(root)
   }

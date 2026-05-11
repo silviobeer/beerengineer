@@ -12,7 +12,7 @@
     "start:api": "npm run start:api --workspace=@beerengineer/engine",
     "start:engine": "bash scripts/run-engine.sh",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test:docs-freshness && npm run test --workspaces --if-present",
+    "test": "node --test test/docFreshness.test.mjs && npm run test --workspaces --if-present",
     "test:docs-freshness": "node scripts/check-doc-freshness.mjs",
     "test:all": "npm run test:all --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present",
