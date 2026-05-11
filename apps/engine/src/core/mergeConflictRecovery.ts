@@ -20,6 +20,13 @@ export type MergeConflictResolutionValidationResult =
       message: string
     }
 
+export class MergeConflictResolutionInspectionError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "MergeConflictResolutionInspectionError"
+  }
+}
+
 export function isStructuredMergeConflictRecoveryRun(
   run: Pick<RunRow, "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary"> | null | undefined,
 ): boolean {
@@ -64,7 +71,7 @@ export function validateMergeConflictResolution(
 ): MergeConflictResolutionValidationResult {
   const unmergedResult = runGit(workspaceRoot, ["diff", "--name-only", "--diff-filter=U"])
   if (!unmergedResult.ok) {
-    throw new Error(`git: failed to inspect unmerged paths: ${unmergedResult.stderr || unmergedResult.stdout}`)
+    throw new MergeConflictResolutionInspectionError(`git: failed to inspect unmerged paths: ${unmergedResult.stderr || unmergedResult.stdout}`)
   }
   const unresolved = new Set(
     unmergedResult.stdout
@@ -83,7 +90,7 @@ export function validateMergeConflictResolution(
 
   const headResult = runGit(workspaceRoot, ["rev-parse", "HEAD"])
   if (!headResult.ok || !headResult.stdout) {
-    throw new Error(`git: failed to inspect HEAD: ${headResult.stderr || headResult.stdout}`)
+    throw new MergeConflictResolutionInspectionError(`git: failed to inspect HEAD: ${headResult.stderr || headResult.stdout}`)
   }
   const headSha = headResult.stdout.trim()
   if (headSha === artifact.recordedHeadSha) {

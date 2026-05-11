@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events"
 import type { ExternalRemediationRow, ItemRow, Repos, RunRow } from "../db/repositories.js"
 import { recordAnswer } from "./conversation.js"
 import {
+  MergeConflictResolutionInspectionError,
   isStructuredMergeConflictRecoveryRun,
   readMergeConflictRecoveryArtifact,
   validateMergeConflictResolution,
@@ -291,6 +292,18 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     return repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
   }
 
+  const notResumableResult = (
+    item: ItemRow,
+    action: ItemAction,
+    reason: "resume_in_progress" | "not_resumable",
+  ): Extract<ItemActionResult, { ok: false; status: 409 }> => ({
+    ok: false,
+    status: 409,
+    error: reason,
+    current: { column: item.current_column, phaseStatus: item.phase_status },
+    action,
+  })
+
   const invalidTransition = (
     item: ItemRow,
     action: ItemAction,
@@ -465,28 +478,29 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
 
     const readiness = await loadResumeReadiness(repos, recoverable.id)
     if (readiness.kind === "not_resumable") {
-      return {
-        ok: false,
-        status: 409,
-        error: readiness.reason === "resume_in_progress" ? "resume_in_progress" : "not_resumable",
-        current: { column: item.current_column, phaseStatus: item.phase_status },
-        action,
-      }
+      return notResumableResult(item, action, readiness.reason === "resume_in_progress" ? "resume_in_progress" : "not_resumable")
     }
     if (readiness.kind !== "ready") return invalidTransition(item, action)
 
     const ctx = resolveWorkflowContextForRun(repos, recoverable)
-    if (!ctx) return invalidTransition(item, action)
+    if (!ctx?.workspaceRoot) return invalidTransition(item, action)
 
     const artifact = await readMergeConflictRecoveryArtifact(ctx)
     if (!artifact) return invalidTransition(item, action)
 
-    const validation = validateMergeConflictResolution(ctx.workspaceRoot!, artifact)
-    if (!validation.ok) {
-      return invalidTransition(item, action, {
-        error: validation.error,
-        message: validation.message,
-      })
+    try {
+      const validation = validateMergeConflictResolution(ctx.workspaceRoot, artifact)
+      if (!validation.ok) {
+        return invalidTransition(item, action, {
+          error: validation.error,
+          message: validation.message,
+        })
+      }
+    } catch (error) {
+      if (error instanceof MergeConflictResolutionInspectionError) {
+        return invalidTransition(item, action, { message: error.message })
+      }
+      throw error
     }
 
     return {

@@ -584,7 +584,8 @@ async function runDefaultItemAction(
         console.error(`  Not resumable: ${result.error}`)
         return 2
       } else {
-        console.error(`  ${result.message ?? `Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`}`)
+        const message = result.message ?? `Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`
+        console.error(`  ${message}`)
       }
       return 1
     }
