@@ -127,7 +127,7 @@ test("GET /ready OpenAPI and prose contract document workflow readiness", () => 
 
   assert.ok(openapi.paths["/ready"])
   const readySchema = openapi.components.schemas.ReadyResponse
-  for (const field of ["ok", "service", "uptimeMs", "db", "startupRecovery", "shutdown", "leaseWrite"]) {
+  for (const field of ["ok", "service", "uptimeMs", "db", "startupRecovery", "shutdown", "leaseWrite", "effectiveWorkerCap"]) {
     assert.ok(readySchema.properties?.[field], `ReadyResponse must document ${field}`)
   }
   assert.match(contract, /GET \/ready/)
@@ -314,11 +314,14 @@ test("GET /ready returns workflow readiness without growing workflow history", a
       startupRecovery: string
       shutdown: string
       leaseWrite: string
+      effectiveWorkerCap: number
     }
     assert.equal(body.ok, true)
     assert.equal(body.startupRecovery, "complete")
     assert.equal(body.shutdown, "idle")
     assert.equal(body.leaseWrite, "ok")
+    assert.equal(typeof body.effectiveWorkerCap, "number")
+    assert.ok(body.effectiveWorkerCap >= 1)
   } finally {
     await stopServer(proc)
   }

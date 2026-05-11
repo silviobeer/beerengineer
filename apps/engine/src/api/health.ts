@@ -1,5 +1,6 @@
 import type { Db } from "../db/connection.js"
 import type { Repos } from "../db/repositories.js"
+import { getWorkerAdmissionController } from "../core/workerAdmission.js"
 
 export const ENGINE_SERVICE_NAME = "beerengineer-engine"
 
@@ -17,6 +18,7 @@ export type ReadyResponseBody = HealthResponseBody & {
   startupRecovery: "complete" | "pending"
   shutdown: "idle" | "in_progress"
   leaseWrite: ReadyLeaseWriteStatus
+  effectiveWorkerCap: number
 }
 
 export function probeDb(db: Db): HealthDbStatus {
@@ -50,6 +52,7 @@ export function buildReadyResponse(
   const dbStatus = probeDb(db)
   const startupRecovery = input.startupRecoveryComplete ? "complete" : "pending"
   const shutdown = input.shutdownInFlight ? "in_progress" : "idle"
+  const effectiveWorkerCap = getWorkerAdmissionController(repos).resolution.effectiveWorkerCap
   let leaseWrite: ReadyLeaseWriteStatus = "skipped"
 
   if (dbStatus === "ok" && startupRecovery === "complete" && shutdown === "idle") {
@@ -76,6 +79,7 @@ export function buildReadyResponse(
       startupRecovery,
       shutdown,
       leaseWrite,
+      effectiveWorkerCap,
     },
   }
 }
