@@ -5,6 +5,7 @@ import {
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnknown,
   markCodexSandboxCapabilityUnsupported,
+  parseCodexSandboxBypassOverride,
   readCodexSandboxCapabilitySnapshot,
   recheckCodexSandboxCapability,
 } from "../../llm/hosted/providers/codexSandboxPolicy.js"
@@ -131,14 +132,14 @@ async function runCodexSandboxCheck(
     else if (capability === "unsupported") markCodexSandboxCapabilityUnsupported()
     else if (capability === "unknown") markCodexSandboxCapabilityUnknown()
 
-    const override = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS?.trim()
-    if (override) {
+    const override = parseCodexSandboxBypassOverride(process.env)
+    if (override !== null) {
       const stored = snapshot.state === "known" ? snapshot.capability : snapshot.state
       return createCheck(
         "llm.openai.sandbox",
         "OpenAI / Codex sandbox",
         "ok",
-        `Bypass override active via BEERENGINEER_CODEX_SANDBOX_BYPASS; stored capability is ${stored}.`,
+        `${override ? "Bypass forced on" : "Bypass forced off"} via BEERENGINEER_CODEX_SANDBOX_BYPASS; stored capability is ${stored}.`,
       )
     }
 
