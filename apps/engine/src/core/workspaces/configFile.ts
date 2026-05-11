@@ -214,7 +214,7 @@ type WorkspaceConfigParseResult =
   | { ok: true; config: WorkspaceConfigFile }
   | { ok: false; error: string }
 
-function parseWorkspaceConfigFile(raw: {
+type RawWorkspaceConfigFile = {
   schemaVersion?: number
   key?: unknown
   name?: unknown
@@ -227,39 +227,70 @@ function parseWorkspaceConfigFile(raw: {
   reviewPolicy?: unknown
   preflight?: unknown
   createdAt?: unknown
-}): WorkspaceConfigParseResult {
+}
+
+type ParsedWorkspaceConfigIdentity = {
+  key: string
+  name: string
+}
+
+function parseWorkspaceConfigIdentity(raw: RawWorkspaceConfigFile): ParsedWorkspaceConfigIdentity | null {
   if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
+    return null
+  }
+  return {
+    key: raw.key,
+    name: raw.name,
+  }
+}
+
+function normalizeWorkspaceConfigSonar(raw: RawWorkspaceConfigFile, key: string): SonarConfig {
+  return normalizeSonarConfig(
+    raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,
+    key,
+  )
+}
+
+function normalizeWorkspaceConfigReviewPolicy(raw: RawWorkspaceConfigFile): WorkspaceReviewPolicy | undefined {
+  return raw.reviewPolicy && typeof raw.reviewPolicy === "object"
+    ? raw.reviewPolicy as WorkspaceReviewPolicy
+    : undefined
+}
+
+function buildParsedWorkspaceConfig(
+  raw: RawWorkspaceConfigFile,
+  identity: ParsedWorkspaceConfigIdentity,
+  harnessProfile: HarnessProfile,
+  git: WorkspaceGitConfig | undefined,
+): WorkspaceConfigFile {
+  const runtimePolicy =
+    normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicyForHarnessProfile(harnessProfile)
+  const sonar = normalizeWorkspaceConfigSonar(raw, identity.key)
+  return {
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    key: identity.key,
+    name: identity.name,
+    harnessProfile,
+    runtimePolicy,
+    git,
+    preview: normalizePreviewConfig(raw.preview),
+    sonar,
+    telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
+    reviewPolicy: normalizeReviewPolicy(normalizeWorkspaceConfigReviewPolicy(raw), sonar, identity.key),
+    preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+  }
+}
+
+function parseWorkspaceConfigFile(raw: RawWorkspaceConfigFile): WorkspaceConfigParseResult {
+  const identity = parseWorkspaceConfigIdentity(raw)
+  if (!identity) {
     return { ok: false, error: "workspace config schemaVersion, key, or name is invalid" }
   }
   if (!isValidHarnessProfile(raw.harnessProfile)) return { ok: false, error: "workspace config harnessProfile is invalid" }
-  const runtimePolicy =
-    normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicyForHarnessProfile(raw.harnessProfile)
-  const preview = normalizePreviewConfig(raw.preview)
-  const sonar = normalizeSonarConfig(
-    raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,
-    raw.key,
-  )
-  const reviewPolicy =
-    raw.reviewPolicy && typeof raw.reviewPolicy === "object" ? (raw.reviewPolicy as WorkspaceReviewPolicy) : undefined
   const git = parseWorkspaceGitConfig(raw.git)
   if (!git.ok) return git
-  return {
-    ok: true,
-    config: {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
-      key: raw.key,
-      name: raw.name,
-      harnessProfile: raw.harnessProfile,
-      runtimePolicy,
-      git: git.value,
-      preview,
-      sonar,
-      telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
-      reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
-      preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-    },
-  }
+  return { ok: true, config: buildParsedWorkspaceConfig(raw, identity, raw.harnessProfile, git.value) }
 }
 
 export async function readWorkspaceConfigDetailed(root: string): Promise<{ config: WorkspaceConfigFile | null; error?: string }> {
