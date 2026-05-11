@@ -1,5 +1,6 @@
 import { cpSync, existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
+import { join } from "node:path"
 import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { attachOneShotPromptAnswer } from "./promptAutoAnswer.js"
@@ -12,7 +13,7 @@ import { getRegisteredWorkspace } from "./workspaces.js"
 import { deriveProjectStartStages, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { defaultImportContextGenerator, writeImportContextArtifact, type ImportContextGenerator } from "./importContext.js"
 import { layout } from "./workspaceLayout.js"
-import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
+import { requireWorkflowContextForRun, resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import { isExecutionOwnershipHandoffRun, queueExecutionOwnershipHandoffResume } from "./executionOwnershipHandoff.js"
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow, WorkspaceRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
@@ -26,7 +27,7 @@ import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
-import { inspectWorkerLease, STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
+import { inspectWorkerLease } from "./workerLease.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -109,7 +110,19 @@ export type ResumeRunResult =
 
 export type ReplanRunResult =
   | { ok: true; runId: string }
-  | { ok: false; status: 404 | 409 | 422 | 500; error: string }
+  | { ok: false; status: 404; error: "run_not_found"; message: string }
+  | { ok: false; status: 409; error: "replan_plan_missing"; message: string }
+  | {
+      ok: false
+      status: 409
+      error: "replan_run_active"
+      message: string
+      currentStatus: RunRow["status"]
+      workerHeartbeatAt: string | null
+      hint: "Use POST /runs/:runId/block-now to pause, then replan."
+    }
+  | { ok: false; status: 422; error: "reason_required"; message: string }
+  | { ok: false; status: 500; error: string; message: string }
 
 export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
@@ -1090,17 +1103,27 @@ export async function resumeRunFromExistingRemediationInProcess(
   return { ok: true, runId: remediation.run_id, remediationId: remediation.id }
 }
 
+const REPLAN_ACTIVE_HEARTBEAT_WINDOW_MS = 60_000
+const REPLAN_ACTIVE_HINT = "Use POST /runs/:runId/block-now to pause, then replan." as const
+
 function runAppearsActiveForReplan(
   repos: Repos,
   runId: string,
   now: number,
-): boolean {
+): { active: true; workerHeartbeatAt: string | null } | { active: false } {
   const run = repos.getRun(runId)
-  if (!run) return false
-  if (run.status === "running") return true
+  if (!run) return { active: false }
+  if (run.status !== "running") return { active: false }
   const lease = inspectWorkerLease(repos, runId)
-  if (!lease) return false
-  return now - lease.heartbeatAt < STALE_WORKER_HEARTBEAT_MS
+  const heartbeatAt = lease?.heartbeatAt ?? null
+  if (heartbeatAt == null) return { active: false }
+  if (now - heartbeatAt >= REPLAN_ACTIVE_HEARTBEAT_WINDOW_MS) return { active: false }
+  return { active: true, workerHeartbeatAt: new Date(heartbeatAt).toISOString() }
+}
+
+function persistedPlanExistsForRun(repos: Repos, run: RunRow): boolean {
+  const ctx = requireWorkflowContextForRun(repos, run)
+  return existsSync(join(layout.stageArtifactsDir(ctx, "planning"), "implementation-plan.json"))
 }
 
 export async function replanRunInProcess(
@@ -1114,17 +1137,33 @@ export async function replanRunInProcess(
   },
 ): Promise<ReplanRunResult> {
   const reason = input.reason.trim()
-  if (!reason) return { ok: false, status: 422, error: "reason_required" }
+  if (!reason) {
+    return { ok: false, status: 422, error: "reason_required", message: "Replan reason is required." }
+  }
   const run = repos.getRun(input.runId)
-  if (!run) return { ok: false, status: 404, error: "run_not_found" }
-  if (runAppearsActiveForReplan(repos, input.runId, input.now?.() ?? Date.now())) {
-    return { ok: false, status: 409, error: "run_active" }
+  if (!run) {
+    return { ok: false, status: 404, error: "run_not_found", message: `Run not found: ${input.runId}` }
+  }
+  if (!persistedPlanExistsForRun(repos, run)) {
+    return { ok: false, status: 409, error: "replan_plan_missing", message: "Run has no persisted plan to replan yet." }
+  }
+  const active = runAppearsActiveForReplan(repos, input.runId, input.now?.() ?? Date.now())
+  if (active.active) {
+    return {
+      ok: false,
+      status: 409,
+      error: "replan_run_active",
+      message: "Run is still actively executing and cannot be replanned.",
+      currentStatus: run.status,
+      workerHeartbeatAt: active.workerHeartbeatAt,
+      hint: REPLAN_ACTIVE_HINT,
+    }
   }
 
   const io = buildApiIo(repos)
   if (!io.bus) {
     io.close?.()
-    return { ok: false, status: 500, error: "replan_io_unavailable" }
+    return { ok: false, status: 500, error: "replan_io_unavailable", message: "Replan IO is unavailable." }
   }
 
   const detach = attachRunSubscribers(io.bus, repos, { runId: run.id, itemId: run.item_id })
@@ -1145,12 +1184,14 @@ export async function replanRunInProcess(
     })
     return { ok: true, runId: input.runId }
   } catch (error) {
+    if (typeof error === "object" && error && "message" in error && String((error as Error).message).startsWith("run_not_found:")) {
+      return { ok: false, status: 404, error: "run_not_found", message: `Run not found: ${input.runId}` }
+    }
     return {
       ok: false,
-      status: typeof error === "object" && error && "message" in error && String((error as Error).message).startsWith("run_not_found:")
-        ? 404
-        : 500,
+      status: 500,
       error: error instanceof Error ? error.message : "replan_failed",
+      message: error instanceof Error ? error.message : "replan_failed",
     }
   } finally {
     detach()

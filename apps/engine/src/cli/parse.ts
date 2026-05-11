@@ -1,6 +1,6 @@
 import { KNOWN_GROUP_IDS } from "../setup/config.js"
 import { messagingLevelFromQuery, type MessagingLevel } from "../core/messagingLevel.js"
-import type { Command, ResumeFlags } from "./types.js"
+import type { Command, ReplanFlags, ResumeFlags } from "./types.js"
 
 function readFlag(argv: string[], name: string): string | undefined {
   const idx = argv.indexOf(name)
@@ -41,6 +41,12 @@ function parseRunSubcommand(context: ParseArgsContext): Command | null {
     return Object.keys(resume).length === 0
       ? { kind: "run-resume", runId: argv[2] }
       : { kind: "run-resume", runId: argv[2], resume }
+  }
+  if (second === "replan") {
+    const replan = resolveReplanFlags(argv)
+    return Object.keys(replan).length === 0
+      ? { kind: "run-replan", runId: argv[2] }
+      : { kind: "run-replan", runId: argv[2], replan }
   }
   if (second === "open") return { kind: "run-open", runId: argv[2] }
   if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
@@ -173,6 +179,13 @@ function resolveResumeFlags(argv: string[]): ResumeFlags {
   if (notes) resume.notes = notes
   if (argv.includes("--yes")) resume.yes = true
   return resume
+}
+
+function resolveReplanFlags(argv: string[]): ReplanFlags {
+  const replan: ReplanFlags = {}
+  const reason = readFlag(argv, "--reason")
+  if (reason) replan.reason = reason
+  return replan
 }
 
 function parseItemActionSubcommand(argv: string[]): Command {
@@ -363,6 +376,8 @@ export function printHelp(): void {
     "    beerengineer run get <run-id> [--json]               Show one run",
     "    beerengineer run resume <run-id>                     Resume one blocked run",
     "                                                         Flags: --remediation-summary <text> [--branch <name>] [--commit <sha>] [--notes <text>] [--yes]",
+    "    beerengineer run replan <run-id>                     Regenerate the active plan on the same run",
+    "                                                         Flags: --reason <text>",
     "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
     "                                                         Flags: [--since <id>] [--limit N] [--json]",
     "    beerengineer runs tail <run-id> [--level L1]        Tail canonical message stream",
@@ -388,6 +403,9 @@ export function printHelp(): void {
     "    --commit <sha>                 Optional. Fix commit SHA.",
     "    --notes <text>                 Optional. Extra review notes.",
     "    --yes                          Skip the interactive prompt when on a TTY.",
+    "",
+    "  Replan flags:",
+    "    --reason <text>                Required. Why the existing plan must be regenerated.",
     "",
     "  Message levels:",
     "    L2  milestones only",
