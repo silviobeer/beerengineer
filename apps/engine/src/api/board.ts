@@ -9,6 +9,7 @@ import {
   MESSAGES_ENTRY_FACT_FRESHNESS,
   runEntryFactsForItem,
 } from "../core/itemRunEntryFacts.js"
+import { buildRunArtifactReadModels, summarizeRunImportContext } from "./artifactReadModel.js"
 import { createDefaultBoardProjectionCoordinator } from "./boardProjectionCoordinator.js"
 import { orderedBoardColumns, type BoardCardDTO, type BoardDTO, type BoardItemRow, type BoardLatestRun, type BoardOpenPrompt, type BoardWorkspace } from "./boardProjectionTypes.js"
 
@@ -143,5 +144,10 @@ export function getRunTree(repos: Repos, runId: string) {
   if (!run) return null
   const stageRuns = repos.listStageRunsForRun(runId)
   const artifacts = repos.listArtifactsForRun(runId)
-  return { run, stageRuns, artifacts }
+  return {
+    run,
+    stageRuns,
+    artifacts: buildRunArtifactReadModels(artifacts),
+    importContext: summarizeRunImportContext(artifacts),
+  }
 }

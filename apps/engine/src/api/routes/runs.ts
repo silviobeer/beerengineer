@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises"
 import { extname, resolve as resolvePath, sep } from "node:path"
 import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
+import { buildRunArtifactReadModels, summarizeRunImportContext } from "../artifactReadModel.js"
 import { getBoard, getRunTree } from "../board.js"
 import { buildMergeStatus } from "../mergeStatus.js"
 import { isResumeInFlight } from "../../core/resume.js"
@@ -39,7 +40,13 @@ export function handleGetRun(repos: Repos, res: ServerResponse, runId: string): 
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
   const conv = buildConversation(repos, runId)
-  json(res, 200, { ...run, recovery_user_message: recoveryUserMessageForRun(run), openPrompt: conv?.openPrompt ?? null })
+  const artifacts = repos.listArtifactsForRun(runId)
+  json(res, 200, {
+    ...run,
+    importContext: summarizeRunImportContext(artifacts),
+    recovery_user_message: recoveryUserMessageForRun(run),
+    openPrompt: conv?.openPrompt ?? null,
+  })
 }
 
 export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: string): void {
@@ -63,7 +70,7 @@ export function handleGetMergeStatus(repos: Repos, res: ServerResponse, runId: s
 export function handleGetArtifacts(repos: Repos, res: ServerResponse, runId: string): void {
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
-  json(res, 200, { runId, artifacts: repos.listArtifactsForRun(runId) })
+  json(res, 200, { runId, artifacts: buildRunArtifactReadModels(repos.listArtifactsForRun(runId)) })
 }
 
 export async function handleGetArtifactFile(
