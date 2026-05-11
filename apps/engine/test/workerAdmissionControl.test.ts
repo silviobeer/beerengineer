@@ -575,7 +575,9 @@ test("REQ-2 AC-2.4 AC-2.6 manual resume of one held-back run queues only that ru
       "expected the active run to occupy the only worker slot",
     )
     const activeWorkerInstanceId = repos.getRun(active.runId)?.worker_instance_id
-    assert.ok(activeWorkerInstanceId, "expected the active run to own a worker lease")
+    if (!activeWorkerInstanceId) {
+      assert.fail("expected the active run to own a worker lease")
+    }
 
     const heldBackOne = await seedRecoverableRun(repos, workspace, {
       title: "held back one",

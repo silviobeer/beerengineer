@@ -44,6 +44,11 @@ export type StartupAutoResumeEligibility =
   | { eligible: true }
   | { eligible: false; reason: Extract<StartupRecoveryReason, "open_prompt" | "worker_lease_not_orphaned" | "auto_resume_disabled"> }
 
+type StartupRecoveryCandidate = {
+  run: RunRow
+  eligibility: StartupAutoResumeEligibility
+}
+
 type StartupAutoResumeOptions = {
   enabled: boolean
   recoveryThreshold?: number
@@ -220,13 +225,86 @@ function resumedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
   return { runId, outcome: "auto_resumed", reason: null }
 }
 
-function thresholdHeldBackStartupRecoveryOutcome(runIds: string[]): StartupRecoveryOutcome {
+function thresholdHeldBackStartupRecoveryOutcome(firstRunId: string, runIds: string[]): StartupRecoveryOutcome {
   return {
-    runId: runIds[0]!,
+    runId: firstRunId,
     outcome: "skipped",
     reason: "recovery_threshold_exceeded",
     heldBackRunIds: runIds,
   }
+}
+
+function buildStartupRecoveryCandidates(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string; now: number; autoResumeEnabled: boolean },
+): StartupRecoveryCandidate[] {
+  return listStartupRecoveryCandidates(repos).map(run => {
+    const currentRun = repos.getRun(run.id) ?? run
+    const eligibility = classifyStartupAutoResumeEligibility({
+      hasOrphanedWorkerLease: hasOrphanedWorkerLease(currentRun, { apiWorkerInstanceId: input.apiWorkerInstanceId, now: input.now }),
+      hasOpenPrompt: repos.getOpenPrompt(currentRun.id) != null,
+      autoResumeEnabled: input.autoResumeEnabled,
+    })
+    return { run: currentRun, eligibility }
+  })
+}
+
+async function resolveCandidateOutcomes(
+  repos: Repos,
+  candidates: StartupRecoveryCandidate[],
+  input: { apiWorkerInstanceId: string; now: number },
+  autoResume: StartupAutoResumeOptions,
+): Promise<StartupRecoveryOutcome[]> {
+  const outcomes: StartupRecoveryOutcome[] = []
+  for (const candidate of candidates) {
+    const { outcome, error } = await resolveStartupRecoveryOutcome(
+      repos,
+      repos.getRun(candidate.run.id) ?? candidate.run,
+      input,
+      autoResume,
+    )
+    outcomes.push(outcome)
+    appendStartupRecoveryLog(repos, outcome, error)
+  }
+  return outcomes
+}
+
+function holdBackEligibleCandidates(
+  repos: Repos,
+  candidates: StartupRecoveryCandidate[],
+  eligibleCandidates: Array<StartupRecoveryCandidate & { eligibility: { eligible: true } }>,
+): StartupRecoveryOutcome[] {
+  const heldBackRunIds = eligibleCandidates.map(candidate => candidate.run.id)
+  const holdbackOutcome = thresholdHeldBackStartupRecoveryOutcome(eligibleCandidates[0].run.id, heldBackRunIds)
+  const outcomes: StartupRecoveryOutcome[] = [holdbackOutcome]
+  appendStartupRecoveryLog(repos, holdbackOutcome)
+
+  for (const candidate of candidates) {
+    if (candidate.eligibility.eligible) continue
+    const outcome = skippedStartupRecoveryOutcome(candidate.run.id, candidate.eligibility.reason)
+    outcomes.push(outcome)
+    appendStartupRecoveryLog(repos, outcome)
+  }
+  return outcomes
+}
+
+async function resolveStartupRecoveryPass(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string; now: number },
+  autoResume: StartupAutoResumeOptions,
+): Promise<StartupRecoveryOutcome[]> {
+  const candidates = buildStartupRecoveryCandidates(repos, {
+    apiWorkerInstanceId: input.apiWorkerInstanceId,
+    now: input.now,
+    autoResumeEnabled: autoResume.enabled,
+  })
+  const eligibleCandidates = candidates.filter(
+    (candidate): candidate is StartupRecoveryCandidate & { eligibility: { eligible: true } } => candidate.eligibility.eligible,
+  )
+  if (eligibleCandidates.length > normalizedRecoveryThreshold(autoResume.recoveryThreshold)) {
+    return holdBackEligibleCandidates(repos, candidates, eligibleCandidates)
+  }
+  return resolveCandidateOutcomes(repos, candidates, input, autoResume)
 }
 
 async function resolveStartupRecoveryOutcome(
@@ -266,41 +344,11 @@ export async function recoverLostWorkerRuns(
   }
 
   if (input.autoResume) {
-    const candidates = listStartupRecoveryCandidates(repos).map(run => {
-      const currentRun = repos.getRun(run.id) ?? run
-      const eligibility = classifyStartupAutoResumeEligibility({
-        hasOrphanedWorkerLease: hasOrphanedWorkerLease(currentRun, { apiWorkerInstanceId: input.apiWorkerInstanceId, now }),
-        hasOpenPrompt: repos.getOpenPrompt(currentRun.id) != null,
-        autoResumeEnabled: input.autoResume!.enabled,
-      })
-      return { run: currentRun, eligibility }
-    })
-
-    const eligibleCandidates = candidates.filter(candidate => candidate.eligibility.eligible)
-    const threshold = normalizedRecoveryThreshold(input.autoResume.recoveryThreshold)
-    if (eligibleCandidates.length > threshold) {
-      const heldBackRunIds = eligibleCandidates.map(candidate => candidate.run.id)
-      const holdbackOutcome = thresholdHeldBackStartupRecoveryOutcome(heldBackRunIds)
-      outcomes.push(holdbackOutcome)
-      appendStartupRecoveryLog(repos, holdbackOutcome)
-      for (const candidate of candidates) {
-        if (candidate.eligibility.eligible) continue
-        const outcome = skippedStartupRecoveryOutcome(candidate.run.id, candidate.eligibility.reason)
-        outcomes.push(outcome)
-        appendStartupRecoveryLog(repos, outcome)
-      }
-    } else {
-      for (const run of candidates.map(candidate => candidate.run)) {
-        const { outcome, error } = await resolveStartupRecoveryOutcome(
-          repos,
-          repos.getRun(run.id) ?? run,
-          { apiWorkerInstanceId: input.apiWorkerInstanceId, now },
-          input.autoResume,
-        )
-        outcomes.push(outcome)
-        appendStartupRecoveryLog(repos, outcome, error)
-      }
-    }
+    outcomes.push(...await resolveStartupRecoveryPass(
+      repos,
+      { apiWorkerInstanceId: input.apiWorkerInstanceId, now },
+      input.autoResume,
+    ))
   }
 
   if (recoveredRunIds.length > 0) {
