@@ -1,15 +1,20 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { spawnSync } from "node:child_process"
 
 import { mergeGate } from "../src/stages/mergeGate/index.js"
 import { runWithWorkflowIO } from "../src/core/io.js"
-import { runWithActiveRun } from "../src/core/runContext.js"
-import type { GitAdapter } from "../src/core/gitAdapter.js"
+import { emitEvent, runWithActiveRun } from "../src/core/runContext.js"
+import { busToWorkflowIO, createBus } from "../src/core/bus.js"
+import { attachDbSync } from "../src/core/dbSync.js"
+import { createGitAdapterFromMode, type GitAdapter } from "../src/core/gitAdapter.js"
+import { detectGitMode } from "../src/core/git.js"
+import { writeRecoveryRecord } from "../src/core/recovery.js"
 import type { SupabaseWorkflowHook } from "../src/core/supabase/workflowHook.js"
-import type { WorkflowContext } from "../src/core/workspaceLayout.js"
+import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 
@@ -76,6 +81,40 @@ function makeContext(overrides?: Partial<WorkflowContext>): WorkflowContext {
   }
 }
 
+function git(cwd: string, args: string[]): string {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" })
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`)
+  }
+  return (result.stdout ?? "").trim()
+}
+
+function seedRepo(root: string): void {
+  git(root, ["init", "--initial-branch=master"])
+  git(root, ["config", "user.email", "test@example.invalid"])
+  git(root, ["config", "user.name", "test"])
+  writeFileSync(join(root, "README.md"), "seed\n")
+  git(root, ["add", "-A"])
+  git(root, ["commit", "-m", "seed"])
+}
+
+function createRealMergeGateGit(context: WorkflowContext): GitAdapter {
+  return createGitAdapterFromMode(context, detectGitMode(context))
+}
+
+function seedConflictedFiles(root: string): void {
+  writeFileSync(join(root, "conflict.txt"), "shared base line\n")
+  mkdirSync(join(root, "nested"), { recursive: true })
+  writeFileSync(join(root, "nested", "space name.txt"), "shared nested line\n")
+  git(root, ["add", "-A"])
+  git(root, ["commit", "-m", "add conflict fixtures"])
+}
+
+function writeConflictVariant(root: string, label: string): void {
+  writeFileSync(join(root, "conflict.txt"), `${label} root line\n`)
+  writeFileSync(join(root, "nested", "space name.txt"), `${label} nested line\n`)
+}
+
 test("mergeGate blocks instead of merging on unexpected free-text answers", async () => {
   const git = makeGit()
   let merged = false
@@ -130,6 +169,173 @@ test("mergeGate accepts common approval wording as promotion", async () => {
   )
 
   assert.equal(merged, true)
+})
+
+test("REQ-1: real merge conflicts create structured recovery artifacts and block the run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-merge-conflict-"))
+  const dbDir = mkdtempSync(join(tmpdir(), "be2-merge-conflict-db-"))
+  const db = initDatabase(join(dbDir, "db.sqlite"))
+  const repos = new Repos(db)
+  const context = makeContext({
+    workspaceId: "merge-conflict-ws",
+    workspaceRoot: root,
+    runId: "run-structured",
+    itemSlug: "demo-item",
+  })
+
+  try {
+    seedRepo(root)
+    seedConflictedFiles(root)
+
+    const workspace = repos.upsertWorkspace({ key: "merge-conflict", name: "Merge Conflict", rootPath: root })
+    const item = repos.createItem({ workspaceId: workspace.id, code: "ITEM-0099", title: "Merge Conflict Item", description: "Desc" })
+    const run = repos.createRun({ id: context.runId, workspaceId: workspace.id, itemId: item.id, title: item.title })
+
+    const gitAdapter = createRealMergeGateGit(context)
+    gitAdapter.ensureItemBranch()
+
+    writeConflictVariant(gitAdapter.mode.itemWorktreeRoot, "item branch")
+    git(gitAdapter.mode.itemWorktreeRoot, ["add", "-A"])
+    git(gitAdapter.mode.itemWorktreeRoot, ["commit", "-m", "item conflict change"])
+
+    writeConflictVariant(root, "base branch")
+    git(root, ["add", "-A"])
+    git(root, ["commit", "-m", "base conflict change"])
+
+    const bus = createBus()
+    const unsubscribeDbSync = attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    const unsubscribePrompt = bus.subscribe(event => {
+      if (event.type === "prompt_requested") bus.answer(event.promptId, "promote")
+    })
+
+    const start = Date.now()
+    await assert.rejects(
+      runWithWorkflowIO(busToWorkflowIO(bus), () =>
+        runWithActiveRun({ runId: run.id, itemId: item.id, title: item.title }, () =>
+          mergeGate(context, gitAdapter, async (ctx, summary, opts) => {
+            const scope = opts?.scope ?? { type: "run", runId: run.id }
+            await writeRecoveryRecord(ctx, {
+              status: "blocked",
+              cause: opts?.cause ?? "system_error",
+              scope,
+              summary,
+              detail: opts?.detail,
+              evidencePaths: opts?.evidencePaths ?? [layout.runDir(ctx)],
+              branch: opts?.branch,
+            })
+            emitEvent({
+              type: "run_blocked",
+              runId: run.id,
+              itemId: item.id,
+              title: item.title,
+              scope,
+              cause: opts?.cause ?? "system_error",
+              summary,
+              branch: opts?.branch,
+            })
+            throw new Error("blocked")
+          }),
+        ),
+      ),
+      /blocked/,
+    )
+    const end = Date.now()
+    unsubscribePrompt()
+    unsubscribeDbSync()
+    bus.close()
+
+    const updated = repos.getRun(run.id)
+    assert.equal(updated?.status, "blocked")
+    assert.equal(updated?.recovery_status, "blocked")
+    assert.equal(updated?.recovery_scope, "stage")
+    assert.equal(updated?.recovery_scope_ref, "merge-gate")
+    assert.match(updated?.recovery_summary ?? "", /merge conflict blocked promotion/i)
+    assert.match(updated?.recovery_summary ?? "", /merge-conflict-recovery\.md/)
+    assert.match(updated?.recovery_summary ?? "", /confirm_merge_resolved/)
+    assert.doesNotMatch(updated?.recovery_summary ?? "", /^git: merge /i)
+
+    const artifactsDir = layout.stageArtifactsDir(context, "merge-gate")
+    const humanPath = join(artifactsDir, "merge-conflict-recovery.md")
+    const machinePath = join(artifactsDir, "merge-conflict-recovery.json")
+    const human = readFileSync(humanPath, "utf8")
+    const machine = JSON.parse(readFileSync(machinePath, "utf8")) as {
+      itemId: string
+      runId: string
+      recordedAt: string
+      conflictedPaths: string[]
+    }
+
+    assert.match(human, new RegExp(`Item ID: ${item.id}`))
+    assert.match(human, /Run ID: run-structured/)
+    assert.match(human, /conflict\.txt/)
+    assert.match(human, /nested\/space name\.txt/)
+    assert.match(human, /Resolve the conflicted files/i)
+    assert.match(human, /confirm_merge_resolved/)
+
+    assert.equal(machine.itemId, item.id)
+    assert.equal(machine.runId, "run-structured")
+    assert.deepEqual(machine.conflictedPaths.sort(), ["conflict.txt", "nested/space name.txt"])
+    const recordedAt = Date.parse(machine.recordedAt)
+    assert.equal(Number.isNaN(recordedAt), false)
+    assert.ok(recordedAt >= start && recordedAt <= end, `expected recordedAt within test window, got ${machine.recordedAt}`)
+  } finally {
+    db.close()
+    rmSync(dbDir, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("REQ-1: non-conflict merge failures stay on the generic error path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-merge-non-conflict-"))
+  const context = makeContext({
+    workspaceId: "merge-non-conflict-ws",
+    workspaceRoot: root,
+    runId: "run-non-conflict",
+    itemSlug: "demo-item",
+  })
+
+  try {
+    seedRepo(root)
+    writeFileSync(join(root, "guarded.txt"), "base content\n")
+    git(root, ["add", "-A"])
+    git(root, ["commit", "-m", "add guarded file"])
+
+    const gitAdapter = createRealMergeGateGit(context)
+    gitAdapter.ensureItemBranch()
+
+    writeFileSync(join(gitAdapter.mode.itemWorktreeRoot, "guarded.txt"), "item branch committed change\n")
+    git(gitAdapter.mode.itemWorktreeRoot, ["add", "-A"])
+    git(gitAdapter.mode.itemWorktreeRoot, ["commit", "-m", "item guarded change"])
+
+    writeFileSync(join(root, "guarded.txt"), "local uncommitted change on base\n")
+
+    let blocked: { summary: string; cause?: string } | null = null
+    await assert.rejects(
+      runWithWorkflowIO(
+        {
+          ask: async () => "promote",
+          emit: () => {},
+        },
+        () =>
+          runWithActiveRun({ runId: "run-non-conflict", itemId: "ITEM-404", stageRunId: "stage-1" }, () =>
+            mergeGate(context, gitAdapter, async (_ctx, summary, opts) => {
+              blocked = { summary, cause: opts?.cause }
+              throw new Error("blocked")
+            }),
+          ),
+      ),
+      /blocked/,
+    )
+
+    assert.equal(blocked?.cause, "merge_gate_failed")
+    assert.match(blocked?.summary ?? "", /Merge into master failed/i)
+    assert.match(blocked?.summary ?? "", /local changes/i)
+    assert.doesNotMatch(blocked?.summary ?? "", /confirm_merge_resolved/)
+    assert.doesNotMatch(blocked?.summary ?? "", /merge-conflict-recovery\.md/)
+    assert.equal(git(root, ["status", "--short"]).includes("UU"), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test("REQ-3 AC-3.4: direct-mode merge gate skips automatic production migration", async () => {
