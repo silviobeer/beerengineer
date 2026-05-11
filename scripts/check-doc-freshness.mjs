@@ -10,11 +10,6 @@ const IN_SCOPE_DOCS = [
   "docs/TECHNICAL.md",
 ]
 
-const MANIFEST_PATHS = [
-  "package.json",
-  "apps/engine/package.json",
-  "apps/ui/package.json",
-]
 const ROOT_PATH_PREFIXES = [
   "apps/",
   "docs/",
@@ -28,10 +23,15 @@ const ROOT_PATH_PREFIXES = [
 const DEPENDENCY_CLAIM_PATTERN =
   /(?<![A-Za-z0-9_./-])(?<package>@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?)@(?<version>[\^~]?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)*)/gi
 
+const FENCED_CODE_DELIMITER_PATTERN = /^\s*```/
 const INLINE_CODE_PATTERN = /`([^`\n]+)`/g
 const MARKDOWN_LINK_PATTERN = /\[[^\]]*]\(([^)\s]+)\)/g
 const LEADING_PATH_PATTERN =
   /^\s*(?<path>[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._*-]+)+(?:\/)?(?:[A-Za-z0-9._-]+)?)/
+const CURRENT_DEPENDENCY_CONTEXT_PATTERN =
+  /\b(active|canonical|current|depends on|dependencies|dependency|installed|package|packages|pinned|requires|ships with|tooling|use|uses)\b/i
+const NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN =
+  /\b(example|examples|for example|historical|migration|migrated|previous|removed|sample|samples|snippet|snippets|used to)\b/i
 const ACTIVE_PATH_CONTEXT_PATTERN =
   /\b(active|canonical|current|directory|directories|docs|entry|home|lives|live|located|look|open|path|paths|read|reference|references|route|routes|source|sources|start at|stored|structure|under|use|uses)\b/i
 const HISTORICAL_CONTEXT_PATTERN =
@@ -76,6 +76,7 @@ function getInScopeDocs(rootPath) {
   }
 
   for (const absolutePath of walkFiles(join(rootPath, "docs", "adr"))) {
+    if (!absolutePath.endsWith(".md")) continue
     docs.push({
       docPath: toRepoPath(rootPath, absolutePath),
       absolutePath,
@@ -118,10 +119,31 @@ function getCompletedProjects(rootPath) {
   return completed
 }
 
+function listManifestPaths(rootPath) {
+  const manifestPaths = []
+  const rootManifestPath = join(rootPath, "package.json")
+  if (existsSync(rootManifestPath)) manifestPaths.push("package.json")
+
+  const appsDir = join(rootPath, "apps")
+  if (!existsSync(appsDir)) return manifestPaths
+
+  const appManifests = []
+  for (const entry of readdirSync(appsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = join("apps", entry.name, "package.json")
+    if (!existsSync(join(rootPath, manifestPath))) continue
+    appManifests.push(manifestPath)
+  }
+
+  appManifests.sort((left, right) => left.localeCompare(right))
+  manifestPaths.push(...appManifests)
+  return manifestPaths
+}
+
 function buildManifestEntries(rootPath) {
   const entries = new Map()
 
-  for (const manifestPath of MANIFEST_PATHS) {
+  for (const manifestPath of listManifestPaths(rootPath)) {
     const absolutePath = join(rootPath, manifestPath)
     if (!existsSync(absolutePath)) continue
 
@@ -163,20 +185,45 @@ function findMissingProjects(rootPath, docsProjectContent) {
   return findings
 }
 
+function isCurrentDependencyClaim(line) {
+  if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return false
+  return CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)
+}
+
 function findDependencyClaimDrift(rootPath, docs) {
   const manifestEntries = buildManifestEntries(rootPath)
   const findings = []
 
   for (const doc of docs) {
     const lines = doc.content.split(/\r?\n/)
+    let insideFencedCodeBlock = false
     for (const [index, line] of lines.entries()) {
+      if (FENCED_CODE_DELIMITER_PATTERN.test(line)) {
+        insideFencedCodeBlock = !insideFencedCodeBlock
+        continue
+      }
+
+      if (insideFencedCodeBlock) continue
+      if (!isCurrentDependencyClaim(line)) continue
+
       for (const match of line.matchAll(DEPENDENCY_CLAIM_PATTERN)) {
         const packageName = match.groups?.package
         const claimedVersion = match.groups?.version
         if (!packageName || !claimedVersion) continue
 
         const manifestClaims = manifestEntries.get(packageName)
-        if (!manifestClaims || manifestClaims.length === 0) continue
+        if (!manifestClaims || manifestClaims.length === 0) {
+          findings.push({
+            docPath: doc.docPath,
+            lineNumber: index + 1,
+            packageName,
+            claimedVersion,
+            manifestPath: null,
+            actualVersion: null,
+            claim: `${packageName}@${claimedVersion}`,
+          })
+          continue
+        }
         if (manifestClaims.some((entry) => entry.version === claimedVersion)) continue
 
         const conflictingManifest = manifestClaims[0]
@@ -348,8 +395,15 @@ export function formatDocFreshnessReport(result) {
   if (result.findings.dependencyClaims.length > 0) {
     lines.push("Dependency claim drift:")
     for (const finding of result.findings.dependencyClaims) {
+      if (finding.manifestPath && finding.actualVersion) {
+        lines.push(
+          `- ${finding.docPath}:${finding.lineNumber} claims ${finding.claim}, but ${finding.manifestPath} declares ${finding.packageName}@${finding.actualVersion}.`,
+        )
+        continue
+      }
+
       lines.push(
-        `- ${finding.docPath}:${finding.lineNumber} claims ${finding.claim}, but ${finding.manifestPath} declares ${finding.packageName}@${finding.actualVersion}.`,
+        `- ${finding.docPath}:${finding.lineNumber} claims ${finding.claim}, but ${finding.packageName} has no approved manifest entry in package.json or apps/*/package.json.`,
       )
     }
     lines.push("")
