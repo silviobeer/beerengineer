@@ -5,7 +5,8 @@ import { appendItemDecision } from "./itemDecisions.js"
 import { attachOneShotPromptAnswer } from "./promptAutoAnswer.js"
 import { withPromptPersistence } from "./promptPersistence.js"
 import { buildSupabaseWorkflowHook, prepareRun, type SupabaseAdapterFactory } from "./runOrchestrator.js"
-import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
+import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
+import { generateReplacementPlanFromArtifacts, performExplicitReplan } from "./replan.js"
 import { loadResumeReadiness, performResume, type PerformResumeInput } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
 import { deriveProjectStartStages, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
@@ -25,6 +26,7 @@ import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
+import { inspectWorkerLease, STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -104,6 +106,10 @@ export type ResumeRunResult =
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type ReplanRunResult =
+  | { ok: true; runId: string }
+  | { ok: false; status: 404 | 409 | 422 | 500; error: string }
 
 export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
@@ -1082,6 +1088,74 @@ export async function resumeRunFromExistingRemediationInProcess(
     })
   })
   return { ok: true, runId: remediation.run_id, remediationId: remediation.id }
+}
+
+function runAppearsActiveForReplan(
+  repos: Repos,
+  runId: string,
+  now: number,
+): boolean {
+  const run = repos.getRun(runId)
+  if (!run) return false
+  if (run.status === "running") return true
+  const lease = inspectWorkerLease(repos, runId)
+  if (!lease) return false
+  return now - lease.heartbeatAt < STALE_WORKER_HEARTBEAT_MS
+}
+
+export async function replanRunInProcess(
+  repos: Repos,
+  input: {
+    runId: string
+    reason: string
+    now?: () => number
+    generatePlan?: Parameters<typeof performExplicitReplan>[0]["generatePlan"]
+    hooks?: Parameters<typeof performExplicitReplan>[0]["hooks"]
+  },
+): Promise<ReplanRunResult> {
+  const reason = input.reason.trim()
+  if (!reason) return { ok: false, status: 422, error: "reason_required" }
+  const run = repos.getRun(input.runId)
+  if (!run) return { ok: false, status: 404, error: "run_not_found" }
+  if (runAppearsActiveForReplan(repos, input.runId, input.now?.() ?? Date.now())) {
+    return { ok: false, status: 409, error: "run_active" }
+  }
+
+  const io = buildApiIo(repos)
+  if (!io.bus) {
+    io.close?.()
+    return { ok: false, status: 500, error: "replan_io_unavailable" }
+  }
+
+  const detach = attachRunSubscribers(io.bus, repos, { runId: run.id, itemId: run.item_id })
+  try {
+    const workspace = repos.getWorkspace(run.workspace_id)
+    const llm = await resolveWorkflowLlmOptions(workspace)
+    await performExplicitReplan({
+      repos,
+      io,
+      runId: input.runId,
+      reason,
+      generatePlan: input.generatePlan ?? (async () => await generateReplacementPlanFromArtifacts({
+        repos,
+        runId: input.runId,
+        llm: llm?.stage,
+      })),
+      hooks: input.hooks,
+    })
+    return { ok: true, runId: input.runId }
+  } catch (error) {
+    return {
+      ok: false,
+      status: typeof error === "object" && error && "message" in error && String((error as Error).message).startsWith("run_not_found:")
+        ? 404
+        : 500,
+      error: error instanceof Error ? error.message : "replan_failed",
+    }
+  } finally {
+    detach()
+    io.close?.()
+  }
 }
 
 export async function autoResumeRunOnStartup(

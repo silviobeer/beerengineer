@@ -286,6 +286,19 @@ export function attachDbSync(
       data: { remediationId: event.remediationId, scope: event.scope, branch: event.branch },
     })),
     run_resumed: createEventHandler<"run_resumed">(event => persistRunResumedEvent(repos, track, event)),
+    plan_regenerated: logOnly<"plan_regenerated">(event => ({
+      runId: event.runId,
+      eventType: "plan_regenerated",
+      message: event.reason,
+      data: {
+        operationId: event.operationId,
+        reason: event.reason,
+        before: event.before,
+        after: event.after,
+        archivedArtifacts: event.archivedArtifacts,
+        recoveryTransition: event.recoveryTransition,
+      },
+    })),
     merge_gate_open: logOnly<"merge_gate_open">(event => ({
       runId: event.runId,
       eventType: "merge_gate_open",

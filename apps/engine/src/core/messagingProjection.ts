@@ -249,6 +249,37 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     remediationId: typeof data.remediationId === "string" ? data.remediationId : "",
     scope: parseRecoveryScope(data.scope, row.run_id),
   }),
+  plan_regenerated: (row, data) => ({
+    type: "plan_regenerated",
+    runId: row.run_id,
+    operationId: typeof data.operationId === "string" ? data.operationId : "",
+    reason: typeof data.reason === "string" ? data.reason : row.message,
+    before: typeof data.before === "object" && data.before ? data.before as Extract<WorkflowEvent, { type: "plan_regenerated" }>["before"] : {
+      planId: "",
+      version: 0,
+      generatedAt: "",
+      summary: "",
+      waveCount: 0,
+      waves: [],
+    },
+    after: typeof data.after === "object" && data.after ? data.after as Extract<WorkflowEvent, { type: "plan_regenerated" }>["after"] : {
+      planId: "",
+      version: 0,
+      generatedAt: "",
+      summary: "",
+      waveCount: 0,
+      waves: [],
+    },
+    archivedArtifacts: Array.isArray(data.archivedArtifacts)
+      ? data.archivedArtifacts as Extract<WorkflowEvent, { type: "plan_regenerated" }>["archivedArtifacts"]
+      : [],
+    recoveryTransition: typeof data.recoveryTransition === "object" && data.recoveryTransition
+      ? data.recoveryTransition as Extract<WorkflowEvent, { type: "plan_regenerated" }>["recoveryTransition"]
+      : {
+          before: { status: null, scope: null, scopeRef: null, payloadJson: null },
+          after: { status: null, scope: null, scopeRef: null, payloadJson: null },
+        },
+  }),
   merge_gate_open: (row, data) => ({
     type: "merge_gate_open",
     runId: row.run_id,

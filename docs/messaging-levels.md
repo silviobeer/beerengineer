@@ -64,6 +64,7 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `run_failed` | L2 (force) | Always delivered. |
 | `startup_recovery` | L2 (force on failed) | Startup recovery outcome for a stale run: auto-resumed, skipped, or auto-resume failed and fell back to manual recovery. |
 | `run_resumed` | L2 | |
+| `plan_regenerated` | L2 | Explicit operator-triggered replan succeeded; payload carries before/after wave metadata plus archive actions. |
 | `external_remediation_recorded` | L2 | |
 | `stage_started` | L1 | Phase boundaries exist at L2 via `stage_completed`; `stage_started` is operational. |
 | `stage_completed` — status completed | L2 | |
@@ -224,6 +225,7 @@ To insulate clients from incidental renames in `WorkflowEvent`, messages expose 
 | `run_failed` | `run_failed` |
 | `run_blocked` | `run_blocked` |
 | `run_resumed` | `run_resumed` |
+| `plan_regenerated` | `plan_regenerated` |
 | `phase_started` | `stage_started` |
 | `phase_completed` | `stage_completed` (status=completed) |
 | `phase_failed` | `stage_completed` (status=failed) |
