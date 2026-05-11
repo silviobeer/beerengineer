@@ -186,6 +186,10 @@ test("runtime sandbox failure classification only accepts recognized bwrap capab
     true,
   )
   assert.equal(
+    isKnownCodexSandboxCapabilityFailure("spawn /usr/bin/bwrap ENOENT"),
+    true,
+  )
+  assert.equal(
     isKnownCodexSandboxCapabilityFailure(
       "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted",
     ),

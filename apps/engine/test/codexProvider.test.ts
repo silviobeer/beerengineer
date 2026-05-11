@@ -187,6 +187,75 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
   }
 })
 
+test("invokeCodex retries once with bypass after a missing-bwrap runtime failure for a non-default provider id", async () => {
+  resetCodexSandboxPolicyForTests()
+  markCodexSandboxCapabilitySupported()
+  const dir = mkdtempSync(join(tmpdir(), "be2-codex-provider-"))
+  const binDir = join(dir, "bin")
+  const attemptsPath = join(dir, "attempts.log")
+  const previousPath = process.env.PATH
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+
+  try {
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+count=0
+if [ -f "${attemptsPath}" ]; then
+  count="$(wc -l < "${attemptsPath}")"
+fi
+count="$((count + 1))"
+printf '%s\n' "$*" >> "${attemptsPath}"
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' 'bwrap: command not found' >&2
+  exit 1
+fi
+response=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then
+    response="$arg"
+    break
+  fi
+  prev="$arg"
+done
+printf '{"summary":"done"}' > "$response"
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-bwrap-missing"}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    const result = await invokeCodex({
+      prompt: "hello",
+      runtime: {
+        harness: "codex",
+        runtime: "cli",
+        provider: "openai-secondary",
+        workspaceRoot: dir,
+        policy: { mode: "safe-workspace-write" },
+      } as HostedProviderInvokeInput["runtime"],
+      session: null,
+    })
+
+    const attempts = readFileSync(attemptsPath, "utf8").trim().split(/\r?\n/)
+    assert.equal(attempts.length, 2)
+    assert.match(attempts[0] ?? "", /--sandbox workspace-write/)
+    assert.doesNotMatch(attempts[0] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+    assert.match(attempts[1] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+    assert.equal(result.outputText, "{\"summary\":\"done\"}")
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})
+
 test("invokeCodex keeps supported safe-readonly launches on the existing read-only sandbox mode", async () => {
   resetCodexSandboxPolicyForTests()
   markCodexSandboxCapabilitySupported()
