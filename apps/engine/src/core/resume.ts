@@ -59,12 +59,21 @@ async function inferWorkspaceDir(repos: Repos, run: RunRow): Promise<WorkflowCon
   return (await runFileMatchesRun(ctx, run.id)) ? ctx : null
 }
 
-function resumeCurrentStage(run: RunRow, record: RecoveryRecord): string | null {
+function hasPersistedPlan(ctx: WorkflowContext): boolean {
+  return existsSync(join(layout.stageArtifactsDir(ctx, "planning"), "implementation-plan.json"))
+}
+
+function resumeCurrentStage(run: RunRow, record: RecoveryRecord, ctx: WorkflowContext): string | null {
   if (record.scope.type === "stage") return record.scope.stageId
   if (record.scope.type === "story") {
     return `execution/waves/${record.scope.waveNumber}/stories/${record.scope.storyId}`
   }
-  return run.current_stage
+  const currentStage = run.current_stage?.trim() || null
+  const topStage = currentStage?.split("/")[0] ?? null
+  if ((topStage === null || topStage === "planning") && hasPersistedPlan(ctx)) {
+    return "execution"
+  }
+  return currentStage
 }
 
 function isPreparedImportRun(ctx: WorkflowContext): boolean {
@@ -78,7 +87,7 @@ export function buildWorkflowResumeInput(
 ): WorkflowResumeInput {
   return {
     scope: record.scope,
-    currentStage: resumeCurrentStage(run, record),
+    currentStage: resumeCurrentStage(run, record, ctx),
     skipDesignPrep: isPreparedImportRun(ctx),
   }
 }
