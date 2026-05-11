@@ -137,7 +137,7 @@ for (const owner of ["cli", "api"] as const) {
         owner,
       })
 
-      if (!prepared.ok) {
+      if (prepared.ok !== true) {
         assert.fail("expected prepareForegroundIdeaRun to succeed")
       }
 
@@ -190,15 +190,18 @@ test("execution launch failure after planning leaves a recoverable failed run wi
           workflowRunner: async (_item, options) => {
             const runId = options.executionOwnership?.runId
             assert.ok(runId, "workflow runner must receive execution ownership context")
-            workflowRepos.updateRun(runId!, { status: "running", current_stage: "planning" })
-            workflowRepos.updateRun(runId!, { status: "running", current_stage: "execution" })
-            markRunFailedRecoverable(workflowRepos, runId!, "worker start failed: generic launch failure")
+            if (runId == null) {
+              throw new Error("workflow runner must receive execution ownership context")
+            }
+            workflowRepos.updateRun(runId, { status: "running", current_stage: "planning" })
+            workflowRepos.updateRun(runId, { status: "running", current_stage: "execution" })
+            markRunFailedRecoverable(workflowRepos, runId, "worker start failed: generic launch failure")
             throw new Error("worker start failed: generic launch failure")
           },
         }),
     })
 
-    if (!prepared.ok) {
+    if (prepared.ok !== true) {
       assert.fail("expected prepareForegroundIdeaRun to succeed")
     }
 
@@ -206,10 +209,13 @@ test("execution launch failure after planning leaves a recoverable failed run wi
 
     const run = repos.getRun(prepared.runId)
     assert.ok(run, "expected persisted run after execution launch failure")
+    if (run == null) {
+      assert.fail("expected persisted run after execution launch failure")
+    }
     assert.equal(run?.status, "failed")
     assert.equal(run?.recovery_status, "failed")
     assert.equal(run?.current_stage, "execution")
-    assert.equal(recoveryUserMessageForRun(run!), LOST_WORKER_USER_MESSAGE)
+    assert.equal(recoveryUserMessageForRun(run), LOST_WORKER_USER_MESSAGE)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
@@ -232,7 +238,7 @@ test("execution handoff claimant ignores runs that already auto-progressed throu
       workspaceKey: "test",
       owner: "cli",
     })
-    if (!prepared.ok) {
+    if (prepared.ok !== true) {
       assert.fail("expected prepareForegroundIdeaRun to succeed")
     }
     await prepared.start()
