@@ -72,6 +72,121 @@ function messageFrom(body: unknown, fallback: string): string {
   return typeof candidate.message === "string" ? candidate.message : typeof candidate.error === "string" ? candidate.error : fallback;
 }
 
+function ConnectedSupabaseSettings({
+  state,
+  isDirectMode,
+  showsBranchControls,
+  confirmProtection,
+  refreshing,
+  rotateOpen,
+  recreateOpen,
+  token,
+  onCleanupPolicyChange,
+  onProtectionToggle,
+  onProtectionConfirm,
+  onProtectionCancel,
+  onRotateToggle,
+  onTokenChange,
+  onRotate,
+  onRefreshPreflight,
+  onRecreateOpen,
+  onRecreateCancel,
+  onRecreateConfirm,
+}: Readonly<{
+  state: SupabaseView;
+  isDirectMode: boolean;
+  showsBranchControls: boolean;
+  confirmProtection: boolean;
+  refreshing: boolean;
+  rotateOpen: boolean;
+  recreateOpen: boolean;
+  token: string;
+  onCleanupPolicyChange: (next: {
+    cleanupPolicy: SupabaseView["cleanupPolicy"];
+    cleanupTtlHours?: number;
+    valid: boolean;
+  }) => void;
+  onProtectionToggle: (checked: boolean) => void;
+  onProtectionConfirm: () => void;
+  onProtectionCancel: () => void;
+  onRotateToggle: () => void;
+  onTokenChange: (value: string) => void;
+  onRotate: () => void;
+  onRefreshPreflight: () => void;
+  onRecreateOpen: () => void;
+  onRecreateCancel: () => void;
+  onRecreateConfirm: () => void;
+}>) {
+  return (
+    <>
+      {showsBranchControls ? <RetainedBranchBanner count={state.costRisk?.retainedBranchCount ?? 0} deepLinkHref="#supabase-diagnosis" /> : null}
+      {showsBranchControls ? <PlanLimitBanner ratio={state.costRisk?.planLimitRatio ?? 0} /> : null}
+      {isDirectMode ? (
+        <div className="border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4 text-sm text-[var(--color-zinc-300)]">
+          Direct mode is active. Persistent test branches stay unavailable, and automatic production migrations remain skipped.
+        </div>
+      ) : null}
+      <SupabaseConnectionFacts supabase={state} showsBranchControls={showsBranchControls} />
+      {showsBranchControls ? (
+        <CleanupPolicySelector
+          policy={state.cleanupPolicy}
+          ttlHours={state.cleanupTtlHours}
+          onChange={onCleanupPolicyChange}
+        />
+      ) : null}
+      {showsBranchControls ? (
+        <ProductionMigrationProtectionPanel
+          enabled={state.productionMigrationProtection === "on"}
+          confirmOpen={confirmProtection}
+          onToggle={onProtectionToggle}
+          onConfirm={onProtectionConfirm}
+          onCancel={onProtectionCancel}
+        />
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={onRotateToggle} className="border border-[var(--color-zinc-700)] px-2 py-1 text-xs text-[var(--color-zinc-200)]">Rotate Management API token</button>
+        <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={onRefreshPreflight} className="border border-[var(--color-zinc-700)] px-2 py-1 text-xs text-[var(--color-zinc-200)] disabled:opacity-45">
+          {refreshing ? "Refreshing" : "Refresh preflight"}
+        </button>
+        {!isDirectMode && state.persistentTestBranchName ? (
+          <button type="button" onClick={onRecreateOpen} className="border border-[var(--color-coral)] px-2 py-1 text-xs text-[var(--color-coral)]">Recreate persistent test branch</button>
+        ) : null}
+      </div>
+      {rotateOpen ? (
+        <div className="space-y-2 border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4">
+          <label className="block space-y-1 text-sm">
+            <span className="text-[var(--color-zinc-300)]">supabase.management_token</span>
+            <input type="password" value={token} onChange={(event) => onTokenChange(event.target.value)} className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2" />
+          </label>
+          <button type="button" disabled={!token.trim()} onClick={onRotate} className="border border-[var(--color-amber-500)] px-2 py-1 text-xs text-[var(--color-amber-300)] disabled:opacity-45">Save rotated token</button>
+        </div>
+      ) : null}
+      {recreateOpen && state.persistentTestBranchName ? (
+        <DestroyConfirmDialog
+          expectedName={state.persistentTestBranchName}
+          actionLabel="Recreate persistent test branch"
+          onCancel={onRecreateCancel}
+          onConfirm={onRecreateConfirm}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function DisconnectedSupabaseSettings() {
+  return (
+    <div className="space-y-3">
+      <p className="border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4 text-sm text-[var(--color-zinc-300)]">Supabase is not connected for this workspace.</p>
+      <a
+        href="/setup#supabase"
+        className="inline-block border border-[var(--color-amber-500)] px-3 py-1.5 text-xs text-[var(--color-amber-300)] hover:bg-[var(--color-zinc-900)]"
+      >
+        Connect Supabase
+      </a>
+    </div>
+  );
+}
+
 export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: SupabaseView }>) {
   const [state, setState] = useState(supabase);
   const [rotateOpen, setRotateOpen] = useState(false);
@@ -174,73 +289,34 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
         </p>
       </div>
       {state.projectRef ? (
-        <>
-          {showsBranchControls ? <RetainedBranchBanner count={state.costRisk?.retainedBranchCount ?? 0} deepLinkHref="#supabase-diagnosis" /> : null}
-          {showsBranchControls ? <PlanLimitBanner ratio={state.costRisk?.planLimitRatio ?? 0} /> : null}
-          {isDirectMode ? (
-            <div className="border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4 text-sm text-[var(--color-zinc-300)]">
-              Direct mode is active. Persistent test branches stay unavailable, and automatic production migrations remain skipped.
-            </div>
-          ) : null}
-          <SupabaseConnectionFacts supabase={state} showsBranchControls={showsBranchControls} />
-          {showsBranchControls ? (
-            <CleanupPolicySelector
-              policy={state.cleanupPolicy}
-              ttlHours={state.cleanupTtlHours}
-              onChange={(next) => {
-                if (next.valid) void saveSettings(next);
-              }}
-            />
-          ) : null}
-          {showsBranchControls ? (
-            <ProductionMigrationProtectionPanel
-              enabled={state.productionMigrationProtection === "on"}
-              confirmOpen={confirmProtection}
-              onToggle={(checked) => {
-                if (checked) setConfirmProtection(true);
-                else void saveSettings({ productionMigrationProtection: "off" });
-              }}
-              onConfirm={() => void saveSettings({ productionMigrationProtection: "on", confirmed: true })}
-              onCancel={() => setConfirmProtection(false)}
-            />
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setRotateOpen((open) => !open)} className="border border-[var(--color-zinc-700)] px-2 py-1 text-xs text-[var(--color-zinc-200)]">Rotate Management API token</button>
-            <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={() => void refreshPreflight()} className="border border-[var(--color-zinc-700)] px-2 py-1 text-xs text-[var(--color-zinc-200)] disabled:opacity-45">
-              {refreshing ? "Refreshing" : "Refresh preflight"}
-            </button>
-            {!isDirectMode && state.persistentTestBranchName ? (
-              <button type="button" onClick={() => setRecreateOpen(true)} className="border border-[var(--color-coral)] px-2 py-1 text-xs text-[var(--color-coral)]">Recreate persistent test branch</button>
-            ) : null}
-          </div>
-          {rotateOpen ? (
-            <div className="space-y-2 border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4">
-              <label className="block space-y-1 text-sm">
-                <span className="text-[var(--color-zinc-300)]">supabase.management_token</span>
-                <input type="password" value={token} onChange={(event) => setToken(event.target.value)} className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2" />
-              </label>
-              <button type="button" disabled={!token.trim()} onClick={() => void rotate()} className="border border-[var(--color-amber-500)] px-2 py-1 text-xs text-[var(--color-amber-300)] disabled:opacity-45">Save rotated token</button>
-            </div>
-          ) : null}
-          {recreateOpen && state.persistentTestBranchName ? (
-            <DestroyConfirmDialog
-              expectedName={state.persistentTestBranchName}
-              actionLabel="Recreate persistent test branch"
-              onCancel={() => setRecreateOpen(false)}
-              onConfirm={() => void recreatePersistentBranch()}
-            />
-          ) : null}
-        </>
+        <ConnectedSupabaseSettings
+          state={state}
+          isDirectMode={isDirectMode}
+          showsBranchControls={showsBranchControls}
+          confirmProtection={confirmProtection}
+          refreshing={refreshing}
+          rotateOpen={rotateOpen}
+          recreateOpen={recreateOpen}
+          token={token}
+          onCleanupPolicyChange={(next) => {
+            if (next.valid) void saveSettings(next);
+          }}
+          onProtectionToggle={(checked) => {
+            if (checked) setConfirmProtection(true);
+            else void saveSettings({ productionMigrationProtection: "off" });
+          }}
+          onProtectionConfirm={() => void saveSettings({ productionMigrationProtection: "on", confirmed: true })}
+          onProtectionCancel={() => setConfirmProtection(false)}
+          onRotateToggle={() => setRotateOpen((open) => !open)}
+          onTokenChange={setToken}
+          onRotate={() => void rotate()}
+          onRefreshPreflight={() => void refreshPreflight()}
+          onRecreateOpen={() => setRecreateOpen(true)}
+          onRecreateCancel={() => setRecreateOpen(false)}
+          onRecreateConfirm={() => void recreatePersistentBranch()}
+        />
       ) : (
-        <div className="space-y-3">
-          <p className="border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4 text-sm text-[var(--color-zinc-300)]">Supabase is not connected for this workspace.</p>
-          <a
-            href="/setup#supabase"
-            className="inline-block border border-[var(--color-amber-500)] px-3 py-1.5 text-xs text-[var(--color-amber-300)] hover:bg-[var(--color-zinc-900)]"
-          >
-            Connect Supabase
-          </a>
-        </div>
+        <DisconnectedSupabaseSettings />
       )}
       {message ? <output className="block text-sm text-[var(--color-emerald-300)]">{message}</output> : null}
       {error ? <p role="alert" className="text-sm text-[var(--color-amber-300)]">{error}</p> : null}
