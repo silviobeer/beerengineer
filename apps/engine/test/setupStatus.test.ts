@@ -4,6 +4,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
+import { initDatabase } from "../src/db/connection.js"
+import { Repos } from "../src/db/repositories.js"
+import {
+  resetCodexSandboxPolicyForTests,
+  resolveCodexSandboxBypass,
+} from "../src/llm/hosted/providers/codexSandboxPolicy.js"
+import { defaultAppConfig, resolveConfiguredDbPath, writeConfigFile } from "../src/setup/config.js"
 import { generateSetupReport } from "../src/setup/doctor.js"
 import { storeSecret } from "../src/setup/secretStore.js"
 
@@ -160,5 +167,48 @@ test("review setup checks do not treat env-only SONAR_TOKEN as configured", asyn
     if (originalSonarToken === undefined) delete process.env.SONAR_TOKEN
     else process.env.SONAR_TOKEN = originalSonarToken
     rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("OpenAI setup status hydrates the Codex sandbox cache from persisted capability", async () => {
+  resetCodexSandboxPolicyForTests()
+  const paths = tempSetupPaths()
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+  const config = {
+    ...defaultAppConfig(),
+    dataDir: paths.dataDir,
+    llm: {
+      ...defaultAppConfig().llm,
+      provider: "openai" as const,
+      model: "gpt-5.4",
+      apiKeyRef: "OPENAI_API_KEY",
+    },
+  }
+  writeConfigFile(paths.configPath, config)
+  const db = initDatabase(resolveConfiguredDbPath(config))
+  const repos = new Repos(db)
+
+  try {
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    repos.setCodexSandboxCapabilitySnapshot("unsupported")
+
+    const report = await generateSetupReport({
+      group: "llm.openai",
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir, llmProvider: "openai" },
+    })
+    const sandboxCheck = report.groups.flatMap(group => group.checks).find(check => check.id === "llm.openai.sandbox")
+
+    assert.equal(sandboxCheck?.status, "missing")
+    assert.match(sandboxCheck?.detail ?? "", /unsupported/i)
+    assert.deepEqual(await resolveCodexSandboxBypass("safe-workspace-write", {}), {
+      bypass: true,
+      source: "capability",
+    })
+  } finally {
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    db.close()
+    rmSync(paths.dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
   }
 })
