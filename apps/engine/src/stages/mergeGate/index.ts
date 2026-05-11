@@ -4,6 +4,7 @@ import { branchNameItem } from "../../core/branchNames.js"
 import { hasEventBus } from "../../core/bus.js"
 import type { GitAdapter } from "../../core/gitAdapter.js"
 import { GitMergeConflictError } from "../../core/git/merge.js"
+import { runGit } from "../../core/git/shared.js"
 import { getWorkflowIO } from "../../core/io.js"
 import type { RecoveryCause, RecoveryScope } from "../../core/recovery.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
@@ -39,6 +40,14 @@ type MergeConflictArtifacts = {
   humanPath: string
   machinePath: string
   recordedAt: string
+}
+
+function currentHeadSha(workspaceRoot: string): string {
+  const result = runGit(workspaceRoot, ["rev-parse", "HEAD"])
+  if (!result.ok || !result.stdout) {
+    throw new Error(`git: failed to inspect HEAD before recording merge conflict: ${result.stderr || result.stdout}`)
+  }
+  return result.stdout.trim()
 }
 
 function normalizeMergeGateAnswer(answer: string): string {
@@ -208,6 +217,7 @@ async function mergeOrBlock(input: {
         activeRun: input.activeRun,
         baseBranch: input.git.mode.baseBranch,
         itemBranch: input.itemBranch,
+        recordedHeadSha: currentHeadSha(input.git.mode.workspaceRoot),
         conflictedPaths: error.conflictedPaths,
       })
       await input.blockRun(
@@ -260,6 +270,7 @@ async function writeMergeConflictArtifacts(input: {
   activeRun: ActiveMergeRun
   baseBranch: string
   itemBranch: string
+  recordedHeadSha: string
   conflictedPaths: string[]
 }): Promise<MergeConflictArtifacts> {
   const recordedAt = new Date().toISOString()
@@ -274,6 +285,7 @@ async function writeMergeConflictArtifacts(input: {
     baseBranch: input.baseBranch,
     itemBranch: input.itemBranch,
     recordedAt,
+    recordedHeadSha: input.recordedHeadSha,
     conflictedPaths,
   }))
   await writeFile(machinePath, `${JSON.stringify({
@@ -281,6 +293,7 @@ async function writeMergeConflictArtifacts(input: {
     itemId: input.activeRun.itemId,
     runId: input.activeRun.runId,
     recordedAt,
+    recordedHeadSha: input.recordedHeadSha,
     conflictedPaths,
   }, null, 2)}\n`)
   return { humanPath, machinePath, recordedAt }
@@ -292,6 +305,7 @@ function renderMergeConflictArtifact(input: {
   baseBranch: string
   itemBranch: string
   recordedAt: string
+  recordedHeadSha: string
   conflictedPaths: string[]
 }): string {
   const conflictedPaths = input.conflictedPaths.map(path => `- ${path}`).join("\n")
@@ -301,6 +315,7 @@ function renderMergeConflictArtifact(input: {
     `Item ID: ${input.itemId}`,
     `Run ID: ${input.runId}`,
     `Recorded At: ${input.recordedAt}`,
+    `Recorded HEAD: ${input.recordedHeadSha}`,
     `Base Branch: ${input.baseBranch}`,
     `Item Branch: ${input.itemBranch}`,
     "",
