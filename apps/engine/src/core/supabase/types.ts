@@ -6,6 +6,7 @@ export type SupabaseWorkspaceContext = {
   itemId?: string
   projectId?: string
   projectRef?: string
+  dbMode?: SupabaseDbMode
   branchRef?: string
   parentBranchRef?: string
   waveId?: string

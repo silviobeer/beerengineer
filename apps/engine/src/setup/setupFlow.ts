@@ -344,6 +344,11 @@ async function maybeConfigureSupabaseInteractive(options: SetupRunOptions): Prom
         return
       }
       console.log(`  Connected Supabase project ${connected.projectRef} (${connected.region}).`)
+      if (connected.dbMode === "direct") {
+        console.log("  Supabase direct mode is active; persistent test branches are unavailable for this project.")
+        printSupabaseSetupCompletion({ workspaceKey: workspace.key, branchReady: true, blockedRunContext: options.blockedRunContext })
+        return
+      }
 
       const branchAnswer = (await questioner.question("  Create or attach persistent test branch now? [Y/n] ")).trim().toLowerCase()
       if (branchAnswer === "n" || branchAnswer === "no") {
