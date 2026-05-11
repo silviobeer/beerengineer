@@ -9,6 +9,7 @@ import type {
 } from "../../types.js"
 import type {
   SupabaseBranch,
+  SupabaseDbMode,
   SupabaseDbRelevanceTrigger,
   SupabasePreExecutionReadiness,
   SupabaseReadinessSetupAction,
@@ -72,6 +73,10 @@ function dedupe(actions: SupabaseReadinessSetupAction[]): SupabaseReadinessSetup
   return [...new Set(actions)]
 }
 
+function requiresPersistentBranch(dbMode: SupabaseDbMode | undefined): boolean {
+  return dbMode !== "direct"
+}
+
 function workspaceFromRow(row: WorkspaceRow | undefined): SupabaseReadinessWorkspace {
   if (!row) return {}
   return {
@@ -98,7 +103,9 @@ function localMissingActions(workspace: SupabaseReadinessWorkspace, secretStore?
   const actions: SupabaseReadinessSetupAction[] = []
   if (!(token.present && token.active)) actions.push("Store management token")
   if (!normalize(workspace.projectRef)) actions.push("Connect Supabase project")
-  if (!normalize(workspace.persistentTestBranchRef)) actions.push("Create persistent test branch")
+  if (requiresPersistentBranch(workspace.dbMode) && !normalize(workspace.persistentTestBranchRef)) {
+    actions.push("Create persistent test branch")
+  }
   return actions
 }
 
@@ -156,7 +163,7 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
 
   const projectRef = normalize(workspace.projectRef)
   const branchRef = normalize(workspace.persistentTestBranchRef)
-  if (!projectRef || !branchRef) {
+  if (!projectRef || (requiresPersistentBranch(workspace.dbMode) && !branchRef)) {
     return blocked({ workspace, runId, actions: localMissingActions(workspace, input.secretStore) })
   }
   if (!input.managementClient) {
@@ -171,23 +178,32 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
     if (!workspace.dbMode && project.branchingEnabled === false) {
       return blocked({ workspace, runId, message: "Supabase branching is not enabled for this project", branch: { ref: branchRef, status: "degraded" } })
     }
+    if (workspace.dbMode === "direct") {
+      return {
+        status: "ready",
+        missingSetupActions: [],
+        retry: { available: false, runId },
+        workspace,
+      }
+    }
   } catch (err) {
     return blocked({ workspace, runId, actions: actionForProviderError(err) ? [actionForProviderError(err)!] : [], message: messageForError(err) })
   }
 
+  const persistentBranchRef = branchRef as string
   try {
     const branch = await pollSupabaseBranch({
       clock: input.clock,
       timeoutMs: input.branchPollBudgetMs ?? getSupabaseReadinessBranchPollBudgetMs(input.env),
       poll: async () => {
         try {
-          return await input.managementClient!.getBranch(projectRef, branchRef)
+          return await input.managementClient!.getBranch(projectRef, persistentBranchRef)
         } catch (err) {
           const listed = err instanceof SupabaseManagementError && err.status === 404
             ? await findReadyBranchFromList({
               client: input.managementClient!,
               projectRef,
-              branchRef,
+              branchRef: persistentBranchRef,
               branchName: workspace.persistentTestBranchName,
             })
             : null
@@ -211,7 +227,7 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
         missingSetupActions: [],
         retry: { available: true, runId },
         workspace,
-        branch: { ref: branchRef, status: "timeout" },
+        branch: { ref: persistentBranchRef, status: "timeout" },
         message: err.message,
       }
     }
@@ -222,7 +238,7 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
       actions: action ? [action] : [],
       message: messageForError(err),
       branch: {
-        ref: branchRef,
+        ref: persistentBranchRef,
         status: action === "Create persistent test branch"
           ? "missing"
           : action === "Rotate management token" || action === "Re-authorize project access"
