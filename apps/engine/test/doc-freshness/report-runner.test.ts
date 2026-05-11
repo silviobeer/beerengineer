@@ -1,93 +1,146 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { resolve } from "node:path"
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 import { test } from "node:test"
 
-import {
-  runDocFreshnessReport,
-} from "../../src/doc-freshness/index.js"
-import type {
-  DocFreshnessFinding,
-} from "../../src/doc-freshness/reporter.js"
+import { collectDocFreshnessFindings } from "../../src/doc-freshness/index.js"
+import { writeDocFreshnessFixtureRepo } from "./fixtures.js"
 
-function createBufferWriter() {
-  const chunks: string[] = []
-
-  return {
-    writer: {
-      write(chunk: string) {
-        chunks.push(chunk)
-      },
-    },
-    read() {
-      return chunks.join("")
-    },
-  }
+function createFixtureRepo(): string {
+  const rootPath = mkdtempSync(join(tmpdir(), "be2-doc-freshness-runner-"))
+  writeDocFreshnessFixtureRepo(rootPath)
+  return rootPath
 }
 
-test("SETUP-1 report runner emits the deterministic empty-result path", async () => {
-  const stdout = createBufferWriter()
-  const stderr = createBufferWriter()
+function cleanup(rootPath: string): void {
+  rmSync(rootPath, { recursive: true, force: true })
+}
 
-  const exitCode = await runDocFreshnessReport({
-    stdout: stdout.writer,
-    stderr: stderr.writer,
-  })
+function appendFile(rootPath: string, relativePath: string, content: string): void {
+  const absolutePath = join(rootPath, relativePath)
+  mkdirSync(dirname(absolutePath), { recursive: true })
+  writeFileSync(absolutePath, content, { encoding: "utf8", flag: "a" })
+}
 
-  assert.equal(exitCode, 0)
-  assert.equal(stdout.read(), "Documentation freshness check passed.\n")
-  assert.equal(stderr.read(), "")
-})
+function runWorkspaceReport(rootPath: string) {
+  const repoRoot = resolve(import.meta.dirname, "..", "..", "..")
 
-test("SETUP-1 report runner emits deterministically sorted findings", async () => {
-  const stdout = createBufferWriter()
-  const stderr = createBufferWriter()
-  const findings: DocFreshnessFinding[] = [
+  return spawnSync(
+    "npm",
+    ["run", "--silent", "report:doc-freshness", "--workspace=@beerengineer/engine", "--", rootPath],
     {
-      docPath: "docs/PROJECT.md",
-      ruleId: "completed-proj-parity",
-      message: "PROJ-12 is missing from the project index.",
-      sortKey: ["docs/PROJECT.md", "completed-proj-parity", "PROJ-12"],
-      evidence: { projId: "PROJ-12" },
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
     },
-    {
-      docPath: "README.md",
-      ruleId: "deleted-directory-reference",
-      message: "apps/legacy/ no longer exists.",
-      sortKey: ["README.md", "deleted-directory-reference", "apps/legacy/"],
-      evidence: { referencedPath: "apps/legacy/" },
-    },
-  ]
-
-  const exitCode = await runDocFreshnessReport({
-    collectFindings: () => [findings[0], findings[1]],
-    stdout: stdout.writer,
-    stderr: stderr.writer,
-  })
-
-  assert.equal(exitCode, 1)
-  assert.equal(stdout.read(), "")
-  assert.equal(
-    stderr.read(),
-    [
-      "Documentation freshness check failed.",
-      "",
-      "- README.md [deleted-directory-reference] apps/legacy/ no longer exists.",
-      "- docs/PROJECT.md [completed-proj-parity] PROJ-12 is missing from the project index.",
-      "",
-    ].join("\n"),
   )
+}
+
+test("REQ-1 clean in-scope repo succeeds with the explicit no-issues message", () => {
+  const rootPath = createFixtureRepo()
+
+  try {
+    const result = runWorkspaceReport(rootPath)
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    assert.equal(
+      result.stdout.trim(),
+      "Documentation freshness check passed: no freshness issues were detected.",
+    )
+    assert.equal(result.stderr.trim(), "")
+  } finally {
+    cleanup(rootPath)
+  }
 })
 
-test("SETUP-1 exposes a workspace script entrypoint for the report", () => {
-  const root = resolve(import.meta.dirname, "..", "..", "..")
-  const result = spawnSync("npm", ["run", "--silent", "report:doc-freshness", "--workspace=@beerengineer/engine"], {
-    cwd: root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  })
+test("REQ-1 findings from all approved rules fail the report and list doc path plus rule id", () => {
+  const rootPath = createFixtureRepo()
 
-  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-  assert.equal(result.stdout.trim(), "Documentation freshness check passed.")
-  assert.equal(result.stderr.trim(), "")
+  try {
+    writeFileSync(
+      join(rootPath, "docs/PROJECT.md"),
+      "# Project Index\n\nCompleted work includes PROJ-10 in the shipped catalog.\n",
+      "utf8",
+    )
+    appendFile(rootPath, "docs/TECHNICAL.md", "\nCurrent dependency: next@99.9.9\n")
+    appendFile(rootPath, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
+
+    const result = runWorkspaceReport(rootPath)
+    const output = result.stderr.trim()
+
+    assert.notEqual(result.status, 0)
+    assert.match(output, /^Documentation freshness check failed\./)
+    assert.match(output, /docs\/PROJECT\.md \[completed-proj-parity]/)
+    assert.match(output, /docs\/TECHNICAL\.md \[dependency-claim-parity]/)
+    assert.match(output, /docs\/AGENTS\.md \[deleted-directory-reference]/)
+    assert.doesNotMatch(output, /no freshness issues were detected/i)
+  } finally {
+    cleanup(rootPath)
+  }
+})
+
+test("REQ-1 scope stays limited to canonical docs and short ADR markdown files", () => {
+  const rootPath = createFixtureRepo()
+
+  try {
+    appendFile(rootPath, "notes/out-of-scope.md", "\nCurrent dependency: next@99.9.9\n")
+    appendFile(rootPath, "apps/ui/README.md", "\nCurrent dependency: next@99.9.9\n")
+    writeFileSync(
+      join(rootPath, "docs/adr/ADR-12-9.md"),
+      "# ADR-12-9\n\nCurrent dependency: hono@9.9.9\n",
+      "utf8",
+    )
+    writeFileSync(
+      join(rootPath, "docs/adr/archive.md"),
+      "# Archive\n\nCurrent active code lives in `legacy/`.\n",
+      "utf8",
+    )
+    mkdirSync(join(rootPath, "docs/adr/archive"), { recursive: true })
+    writeFileSync(
+      join(rootPath, "docs/adr/archive", "ignored.md"),
+      "# Nested\n\nCurrent dependency: next@1.0.0\n",
+      "utf8",
+    )
+
+    const findings = collectDocFreshnessFindings(rootPath)
+
+    assert.ok(
+      findings.some((finding) => finding.docPath === "apps/ui/README.md"),
+    )
+    assert.ok(
+      findings.some((finding) => finding.docPath === "docs/adr/ADR-12-9.md"),
+    )
+    assert.ok(
+      findings.some((finding) => finding.docPath === "docs/adr/archive.md"),
+    )
+    assert.ok(
+      findings.every((finding) => finding.docPath !== "notes/out-of-scope.md"),
+    )
+    assert.ok(
+      findings.every((finding) => finding.docPath !== "docs/adr/archive/ignored.md"),
+    )
+  } finally {
+    cleanup(rootPath)
+  }
+})
+
+test("REQ-1 repeated runs over the same repo state stay byte-for-byte stable", () => {
+  const rootPath = createFixtureRepo()
+
+  try {
+    appendFile(rootPath, "docs/TECHNICAL.md", "\nCurrent dependency: hono@^4.8.0\n")
+    appendFile(rootPath, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
+    unlinkSync(join(rootPath, "docs", "PROJECT.md"))
+
+    const first = runWorkspaceReport(rootPath)
+    const second = runWorkspaceReport(rootPath)
+
+    assert.equal(first.status, second.status)
+    assert.equal(first.stdout, second.stdout)
+    assert.equal(first.stderr, second.stderr)
+  } finally {
+    cleanup(rootPath)
+  }
 })

@@ -20,12 +20,6 @@ function createFixtureRepo(): string {
 
   mkdirSync(join(rootPath, "docs"), { recursive: true })
   writeFileSync(join(rootPath, "docs", "notes.md"), "# Out of scope\n", "utf8")
-  mkdirSync(join(rootPath, "apps", "worker"), { recursive: true })
-  writeFileSync(
-    join(rootPath, "apps", "worker", "package.json"),
-    '{ "name": "@fixture/worker" }\n',
-    "utf8",
-  )
   mkdirSync(join(rootPath, "specs", "PROJ-99-incomplete", "7_progress"), {
     recursive: true,
   })
@@ -42,6 +36,9 @@ test("resolveDocFreshnessScope only returns the approved docs, manifests, and co
     scope.docs.map((doc) => doc.docPath),
     [
       "AGENTS.md",
+      "apps/engine/docs/AGENTS.md",
+      "apps/ui/docs/AGENTS.md",
+      "apps/ui/README.md",
       "docs/adr/ADR-12-1.md",
       "docs/AGENTS.md",
       "docs/PROJECT.md",
@@ -51,7 +48,12 @@ test("resolveDocFreshnessScope only returns the approved docs, manifests, and co
   )
   assert.deepEqual(
     scope.packageManifests.map((manifest) => manifest.manifestPath),
-    ["package.json", "apps/engine/package.json", "apps/ui/package.json"],
+    [
+      "package.json",
+      "apps/engine/package.json",
+      "apps/ui/package.json",
+      "apps/worker/package.json",
+    ],
   )
   assert.deepEqual(
     scope.completedProjects.map((project) => ({

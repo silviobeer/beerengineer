@@ -25,7 +25,7 @@ export function sortDocFreshnessFindings(findings: readonly DocFreshnessFinding[
 export function renderDocFreshnessReport(findings: readonly DocFreshnessFinding[]): string {
   const sortedFindings = sortDocFreshnessFindings(findings)
   if (sortedFindings.length === 0) {
-    return "Documentation freshness check passed."
+    return "Documentation freshness check passed: no freshness issues were detected."
   }
 
   const lines = ["Documentation freshness check failed.", ""]

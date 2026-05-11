@@ -7,12 +7,9 @@ export const CANONICAL_DOC_PATHS = [
   "docs/AGENTS.md",
   "docs/PROJECT.md",
   "docs/TECHNICAL.md",
-] as const
-
-export const PACKAGE_MANIFEST_PATHS = [
-  "package.json",
-  "apps/engine/package.json",
-  "apps/ui/package.json",
+  "apps/ui/README.md",
+  "apps/engine/docs/AGENTS.md",
+  "apps/ui/docs/AGENTS.md",
 ] as const
 
 export const ROOT_DIRECTORY_REFERENCE_PREFIXES = [
@@ -101,7 +98,7 @@ export function normalizeDirectoryReferenceCandidate(candidate: string): string 
   if (trimmed.startsWith("./") || trimmed.startsWith("../")) {
     return trimmed.endsWith("/") ? trimmed : null
   }
-  if (/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\/$/.test(trimmed)) {
+  if (/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/$/.test(trimmed)) {
     return trimmed
   }
 
@@ -168,12 +165,21 @@ function resolveScopedDocs(rootPath: string): readonly FreshnessDocument[] {
   }
 
   const adrDir = join(rootPath, DOCS_ADR_DIR)
-  for (const absolutePath of walkFiles(adrDir)) {
-    docs.push({
-      docPath: toRepoPath(rootPath, absolutePath),
-      absolutePath,
-      content: readFileSync(absolutePath, "utf8"),
-    })
+  if (existsSync(adrDir)) {
+    const entries = readdirSync(adrDir, { withFileTypes: true }).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (!entry.name.endsWith(".md")) continue
+
+      const absolutePath = join(adrDir, entry.name)
+      docs.push({
+        docPath: toRepoPath(rootPath, absolutePath),
+        absolutePath,
+        content: readFileSync(absolutePath, "utf8"),
+      })
+    }
   }
 
   return docs.sort((left, right) => left.docPath.localeCompare(right.docPath))
@@ -184,14 +190,33 @@ function resolveScopedPackageManifests(
 ): readonly FreshnessPackageManifest[] {
   const manifests: FreshnessPackageManifest[] = []
 
-  for (const manifestPath of PACKAGE_MANIFEST_PATHS) {
-    const absolutePath = join(rootPath, manifestPath)
-    if (!existsSync(absolutePath)) continue
+  const rootManifestPath = join(rootPath, "package.json")
+  if (existsSync(rootManifestPath)) {
     manifests.push({
-      manifestPath,
-      absolutePath,
-      manifest: readJson<PackageJsonManifest>(absolutePath),
+      manifestPath: "package.json",
+      absolutePath: rootManifestPath,
+      manifest: readJson<PackageJsonManifest>(rootManifestPath),
     })
+  }
+
+  const appsDir = join(rootPath, "apps")
+  if (existsSync(appsDir)) {
+    const appEntries = readdirSync(appsDir, { withFileTypes: true }).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )
+    for (const entry of appEntries) {
+      if (!entry.isDirectory()) continue
+
+      const manifestPath = join("apps", entry.name, "package.json")
+      const absolutePath = join(rootPath, manifestPath)
+      if (!existsSync(absolutePath)) continue
+
+      manifests.push({
+        manifestPath,
+        absolutePath,
+        manifest: readJson<PackageJsonManifest>(absolutePath),
+      })
+    }
   }
 
   return manifests
@@ -216,9 +241,9 @@ function resolveCompletedProjects(
     if (!existsSync(progressDir)) continue
     if (!statSync(progressDir).isDirectory()) continue
 
-    const evidencePaths = walkFiles(progressDir).map((absolutePath) =>
-      toRepoPath(rootPath, absolutePath),
-    )
+    const evidencePaths = walkFiles(progressDir)
+      .filter((absolutePath) => absolutePath.endsWith(".md"))
+      .map((absolutePath) => toRepoPath(rootPath, absolutePath))
     if (evidencePaths.length === 0) continue
 
     const projId = entry.name.match(/^(PROJ-\d+)/)?.[1]
