@@ -16,6 +16,16 @@ import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
 import { architecture } from "../src/stages/architecture/index.js"
 
+function fileOutcomes(files: Array<{ path: string; outcome: string }>) {
+  return files.map(file => [file.path, file.outcome])
+}
+
+type DegradedImportContextFixture = {
+  status: "partial" | "unavailable"
+  warnings: string[]
+  files: Array<{ path: string; outcome: string; reason: string }>
+}
+
 function tempRepos(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   const db = initDatabase(join(dir, "test.sqlite"))
@@ -187,7 +197,7 @@ test("import context generation is reusable outside the prepared-import start fl
     assert.equal(generated.bundle.projects[0]?.id, "PROJ-1")
     assert.equal(generated.importContext.status, "partial")
     assert.deepEqual(
-      generated.importContext.files.map(file => [file.path, file.outcome] as const),
+      fileOutcomes(generated.importContext.files),
       [
         ["1_brainstorm/PROJ-1-concept.md", "visible"],
         ["3_PRDs/PROJ-1-PRD-1-overview.md", "visible"],
@@ -355,7 +365,7 @@ test("shared import-context artifact can be persisted into the run workspace", a
 
     assert.equal(artifact.status, "partial")
     assert.deepEqual(
-      artifact.files.map(file => [file.path, file.outcome] as const),
+      fileOutcomes(artifact.files),
       [
         ["1_brainstorm/PROJ-1-concept.md", "visible"],
         ["notes.txt", "omitted"],
@@ -435,8 +445,7 @@ test("prepared import accepts degraded shared import-context results without blo
 
     const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
     const io = makeIo()
-
-    for (const fixture of [
+    const fixtures: DegradedImportContextFixture[] = [
       {
         status: "partial",
         warnings: ["partial import-context fixture"],
@@ -450,7 +459,9 @@ test("prepared import accepts degraded shared import-context results without blo
         warnings: ["import-context generation unavailable: injected failure"],
         files: [],
       },
-    ] as const) {
+    ]
+
+    for (const fixture of fixtures) {
       const prepared = await prepareForegroundPreparedImportRun(repos, io, {
         sourceDir,
         workspaceKey: workspace.key,
