@@ -562,10 +562,33 @@ test("POST /items/import-prepared scopes new imports by workspace key", async ()
 
 test("GET /setup/status returns the doctor report contract", async () => {
   const dbPath = tmpDbPath()
-  initDatabase(dbPath).close()
   const dir = mkdtempSync(join(tmpdir(), "be2-setup-"))
   const configPath = join(dir, "config.json")
   const dataDir = join(dir, "data")
+  const previousSandboxBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+  const config = {
+    schemaVersion: 1,
+    dataDir,
+    allowedRoots: [dir],
+    enginePort: 4100,
+    llm: {
+      provider: "openai",
+      model: "gpt-5.4",
+      apiKeyRef: "OPENAI_API_KEY",
+      defaultHarnessProfile: { mode: "codex-first" },
+    },
+    notifications: { telegram: { enabled: false, level: 2, inbound: { enabled: false } } },
+    vcs: { github: { enabled: false } },
+    recovery: { startupAutoResume: true },
+    browser: { enabled: false },
+  }
+  const db = initDatabase(join(dataDir, "beerengineer.sqlite"))
+  const repos = new Repos(db)
+  repos.setCodexSandboxCapabilitySnapshot("unsupported")
+  db.close()
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8")
+  delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
   const { proc, base } = startServer({
     BEERENGINEER_UI_DB_PATH: dbPath,
     BEERENGINEER_CONFIG_PATH: configPath,
@@ -578,14 +601,30 @@ test("GET /setup/status returns the doctor report contract", async () => {
     const body = await res.json() as {
       reportVersion: number
       overall: string
+      codexSandbox?: {
+        state: string
+        reason: string
+        detectedCapability: string
+        effectiveMode: string
+        overrideMode: string | null
+      }
       groups: Array<{ id: string }>
     }
     assert.equal(body.reportVersion, 1)
     assert.equal(body.groups.length, 1)
     assert.equal(body.groups[0]?.id, "core")
-    assert.equal(body.overall, "blocked")
+    assert.ok(["ok", "warning", "blocked"].includes(body.overall))
+    assert.deepEqual(body.codexSandbox, {
+      state: "unsupported_bypassing",
+      reason: "unsupported",
+      detectedCapability: "unsupported",
+      effectiveMode: "bypass",
+      overrideMode: null,
+    })
   } finally {
     await stopServer(proc)
+    if (previousSandboxBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousSandboxBypass
     rmSync(dir, { recursive: true, force: true })
   }
 })

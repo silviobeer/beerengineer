@@ -3,6 +3,22 @@ import { accessSync, constants as fsConstants } from "node:fs"
 import type { RuntimePolicy } from "../../runtimePolicy.js"
 
 export type CodexSandboxCapability = "supported" | "unsupported" | "unknown"
+export type CodexSandboxDetectedCapability = CodexSandboxCapability | "missing" | "invalid"
+export type CodexSandboxStatusState =
+  | "supported_using_bwrap"
+  | "unsupported_bypassing"
+  | "override_using_bwrap"
+  | "override_bypassing"
+  | "unverified_bypassing"
+export type CodexSandboxStatusReason = "supported" | "unsupported" | "override" | "unverified"
+export type CodexSandboxEffectiveMode = "bwrap" | "bypass"
+export type CodexSandboxStatus = {
+  state: CodexSandboxStatusState
+  reason: CodexSandboxStatusReason
+  effectiveMode: CodexSandboxEffectiveMode
+  detectedCapability: CodexSandboxDetectedCapability
+  overrideMode: CodexSandboxEffectiveMode | null
+}
 
 export type CodexSandboxResolution = {
   bypass: boolean
@@ -77,6 +93,13 @@ function loadCapabilitySnapshot(store: CodexSandboxCapabilityStore | null): Code
   }
 }
 
+function detectedCapabilityFromSnapshot(
+  snapshot: CodexSandboxCapabilitySnapshot,
+): CodexSandboxDetectedCapability {
+  if (snapshot.state === "known") return snapshot.capability
+  return snapshot.state
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -99,6 +122,58 @@ export function codexSandboxBypassEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return parseCodexSandboxBypassOverride(env) === true
+}
+
+export function projectCodexSandboxStatus(
+  snapshot: CodexSandboxCapabilitySnapshot,
+  env: NodeJS.ProcessEnv = process.env,
+): CodexSandboxStatus {
+  const override = parseCodexSandboxBypassOverride(env)
+  if (override === true) {
+    return {
+      state: "override_bypassing",
+      reason: "override",
+      effectiveMode: "bypass",
+      detectedCapability: detectedCapabilityFromSnapshot(snapshot),
+      overrideMode: "bypass",
+    }
+  }
+  if (override === false) {
+    return {
+      state: "override_using_bwrap",
+      reason: "override",
+      effectiveMode: "bwrap",
+      detectedCapability: detectedCapabilityFromSnapshot(snapshot),
+      overrideMode: "bwrap",
+    }
+  }
+  if (snapshot.state === "known") {
+    if (snapshot.capability === "supported") {
+      return {
+        state: "supported_using_bwrap",
+        reason: "supported",
+        effectiveMode: "bwrap",
+        detectedCapability: "supported",
+        overrideMode: null,
+      }
+    }
+    if (snapshot.capability === "unsupported") {
+      return {
+        state: "unsupported_bypassing",
+        reason: "unsupported",
+        effectiveMode: "bypass",
+        detectedCapability: "unsupported",
+        overrideMode: null,
+      }
+    }
+  }
+  return {
+    state: "unverified_bypassing",
+    reason: "unverified",
+    effectiveMode: "bypass",
+    detectedCapability: detectedCapabilityFromSnapshot(snapshot),
+    overrideMode: null,
+  }
 }
 
 function rememberCapability(
