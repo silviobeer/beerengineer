@@ -9,6 +9,7 @@ import { createBus, busToWorkflowIO } from "../src/core/bus.js"
 import { prepareRun } from "../src/core/runOrchestrator.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import {
+  autoResumeRunOnStartup,
   prepareForegroundIdeaRun,
   prepareForegroundResumeRun,
 } from "../src/core/runService.js"
@@ -20,6 +21,8 @@ import { layout } from "../src/core/workspaceLayout.js"
 import { buildReadyResponse } from "../src/api/health.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
+import { recoverLostWorkerRuns } from "../src/core/orphanRecovery.js"
+import { claimWorkerLease } from "../src/core/workerLease.js"
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -83,7 +86,12 @@ function tempRepos(prefix: string) {
 async function seedRecoverableRun(
   repos: Repos,
   workspace: { id: string; root_path: string | null },
-  input: { title: string; workspaceFsId: string },
+  input: {
+    title: string
+    workspaceFsId: string
+    recoveryStatus?: "blocked" | "failed"
+    recoverySummary?: string
+  },
 ) {
   const item = repos.createItem({ workspaceId: workspace.id, title: input.title, description: "resume target" })
   const run = repos.createRun({
@@ -97,18 +105,18 @@ async function seedRecoverableRun(
   mkdirSync(dirname(layout.runFile(ctx)), { recursive: true })
   writeFileSync(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
   await writeRecoveryRecord(ctx, {
-    status: "blocked",
+    status: input.recoveryStatus ?? "blocked",
     cause: "system_error",
     scope: { type: "run", runId: run.id },
-    summary: "Needs resume.",
+    summary: input.recoverySummary ?? "Needs resume.",
     evidencePaths: [],
   })
   repos.updateRun(run.id, {
     status: "failed",
-    recovery_status: "blocked",
+    recovery_status: input.recoveryStatus ?? "blocked",
     recovery_scope: "run",
     recovery_scope_ref: null,
-    recovery_summary: "Needs resume.",
+    recovery_summary: input.recoverySummary ?? "Needs resume.",
   })
   return { item, run }
 }
@@ -413,6 +421,234 @@ test("REQ-1 AC-1.7 exposes the effective worker cap through /ready", () => {
 
     assert.equal(response.status, 200)
     assert.equal(response.body.effectiveWorkerCap, 3)
+  } finally {
+    controller.dispose()
+    close()
+  }
+})
+
+test("REQ-2 AC-2.1 AC-2.5 startup auto-resume re-enters through the same worker cap as fresh work", async () => {
+  const { repos, workspace, close } = tempRepos("be2-admission-startup-recovery-")
+  const scheduled = fakeScheduler()
+  const controller = createWorkerAdmissionController(repos, {
+    effectiveWorkerCap: 1,
+    source: "override",
+    overrideCap: 1,
+    rawDerivedCap: 1,
+    totalMemoryBytes: null,
+    workerMemoryBytes: null,
+  }, {
+    scheduler: scheduled.scheduler,
+    reconciliationIntervalMs: 1_000,
+  })
+  const staleRunBlocker = deferred()
+  const freshRunBlocker = deferred()
+
+  try {
+    const item = repos.createItem({ workspaceId: workspace.id, title: "startup stale", description: "startup stale" })
+    const workspaceFsId = `startup-recovery-${Date.now()}`
+    const staleRun = repos.createRun({
+      workspaceId: workspace.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "cli",
+      workspaceFsId,
+    })
+    repos.updateRun(staleRun.id, { current_stage: "execution" })
+    const ctx = { workspaceId: workspaceFsId, workspaceRoot: workspace.root_path!, runId: staleRun.id }
+    mkdirSync(dirname(layout.runFile(ctx)), { recursive: true })
+    writeFileSync(layout.runFile(ctx), `${JSON.stringify({ id: staleRun.id }, null, 2)}\n`)
+    claimWorkerLease(repos, {
+      runId: staleRun.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    const recovery = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        recoveryThreshold: controller.resolution.effectiveWorkerCap,
+        resumeRun: async run => {
+          const result = await autoResumeRunOnStartup(repos, {
+            runId: run.id,
+            summary: "Startup auto-resumed the stale run after confirming no human input is pending.",
+            resumeRunImpl: async input => {
+              repos.clearRunRecovery(input.runId)
+              repos.updateRun(input.runId, { status: "running", current_stage: "execution" })
+              await staleRunBlocker.promise
+              repos.updateRun(input.runId, { status: "completed" })
+            },
+          })
+          assert.equal(result.ok, true)
+        },
+      },
+    })
+
+    assert.deepEqual(recovery.outcomes.map(outcome => outcome.outcome), ["auto_resumed"])
+    await waitFor(
+      () => repos.getRun(staleRun.id)?.status === "running",
+      "expected the stale run to auto-resume into the only worker slot",
+    )
+
+    const fresh = prepareForegroundIdeaRun(repos, makeIo(), {
+      title: "fresh after restart",
+      description: "fresh after restart",
+      workspaceKey: workspace.key,
+      admissionController: controller,
+      workerLeaseScheduler: scheduled.scheduler,
+      prepareRunImpl: (runItem, workflowRepos, workflowIo, opts) =>
+        prepareRun(runItem, workflowRepos, workflowIo, {
+          ...opts,
+          workflowRunner: async () => {
+            await freshRunBlocker.promise
+          },
+        }),
+    })
+    assert.equal(fresh.ok, true)
+    if (!fresh.ok) return
+    const freshPromise = fresh.start()
+
+    await waitFor(
+      () =>
+        repos.getRun(fresh.runId)?.status === "queued"
+        && repos.getRun(fresh.runId)?.worker_instance_id == null,
+      "expected new work to queue behind the auto-resumed stale run",
+    )
+
+    staleRunBlocker.resolve()
+
+    await waitFor(
+      () => repos.getRun(fresh.runId)?.status === "running",
+      "expected the queued fresh run to start after the recovered run released capacity",
+    )
+
+    freshRunBlocker.resolve()
+    await freshPromise
+    await delay(25)
+  } finally {
+    controller.dispose()
+    close()
+  }
+})
+
+test("REQ-2 AC-2.4 AC-2.6 manual resume of one held-back run queues only that run and leaves siblings untouched", async () => {
+  const { repos, workspace, close } = tempRepos("be2-admission-held-back-resume-")
+  const scheduled = fakeScheduler()
+  const controller = createWorkerAdmissionController(repos, {
+    effectiveWorkerCap: 1,
+    source: "override",
+    overrideCap: 1,
+    rawDerivedCap: 1,
+    totalMemoryBytes: null,
+    workerMemoryBytes: null,
+  }, {
+    scheduler: scheduled.scheduler,
+    reconciliationIntervalMs: 1_000,
+  })
+  const activeBlocker = deferred()
+  const resumedBlocker = deferred()
+
+  try {
+    const active = prepareForegroundIdeaRun(repos, makeIo(), {
+      title: "active slot holder",
+      description: "active slot holder",
+      workspaceKey: workspace.key,
+      admissionController: controller,
+      workerLeaseScheduler: scheduled.scheduler,
+      prepareRunImpl: (item, workflowRepos, workflowIo, opts) =>
+        prepareRun(item, workflowRepos, workflowIo, {
+          ...opts,
+          workflowRunner: async () => {
+            await activeBlocker.promise
+          },
+        }),
+    })
+    assert.equal(active.ok, true)
+    if (!active.ok) return
+    const activePromise = active.start()
+
+    await waitFor(
+      () => repos.listRunningRuns().length === 1,
+      "expected the active run to occupy the only worker slot",
+    )
+    const activeWorkerInstanceId = repos.getRun(active.runId)?.worker_instance_id
+    if (!activeWorkerInstanceId) {
+      assert.fail("expected the active run to own a worker lease")
+    }
+
+    const heldBackOne = await seedRecoverableRun(repos, workspace, {
+      title: "held back one",
+      workspaceFsId: `held-back-one-${Date.now()}`,
+      recoveryStatus: "failed",
+      recoverySummary: "CLI worker heartbeat is stale — no live worker; resume or abandon.",
+    })
+    const heldBackTwo = await seedRecoverableRun(repos, workspace, {
+      title: "held back two",
+      workspaceFsId: `held-back-two-${Date.now()}`,
+      recoveryStatus: "failed",
+      recoverySummary: "CLI worker heartbeat is stale — no live worker; resume or abandon.",
+    })
+
+    let autoResumeCalls = 0
+    const recovery = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: activeWorkerInstanceId,
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        recoveryThreshold: 1,
+        resumeRun: async () => {
+          autoResumeCalls += 1
+        },
+      },
+    })
+
+    assert.equal(autoResumeCalls, 0)
+    assert.deepEqual(recovery.outcomes, [{
+      runId: heldBackOne.run.id,
+      outcome: "skipped",
+      reason: "recovery_threshold_exceeded",
+      heldBackRunIds: [heldBackOne.run.id, heldBackTwo.run.id],
+    }])
+
+    const prepared = await prepareForegroundResumeRun(repos, makeIo(), {
+      runId: heldBackOne.run.id,
+      summary: "Resume only this held-back run.",
+      admissionController: controller,
+      workerLeaseScheduler: scheduled.scheduler,
+      resumeRunImpl: async input => {
+        repos.clearRunRecovery(input.runId)
+        repos.updateRun(input.runId, { status: "running", current_stage: "execution" })
+        await resumedBlocker.promise
+        repos.updateRun(input.runId, { status: "completed" })
+      },
+    })
+    assert.equal(prepared.ok, true)
+    if (!prepared.ok) return
+    const resumedPromise = prepared.start()
+
+    await waitFor(
+      () => repos.getRun(heldBackOne.run.id)?.status === "queued",
+      "expected the manually resumed held-back run to queue behind occupied capacity",
+    )
+    assert.equal(repos.getRun(heldBackTwo.run.id)?.status, "failed")
+    assert.equal(repos.getRun(heldBackTwo.run.id)?.recovery_status, "failed")
+
+    activeBlocker.resolve()
+    await activePromise
+
+    await waitFor(
+      () => repos.getRun(heldBackOne.run.id)?.status === "running",
+      "expected the targeted held-back run to start after capacity freed",
+    )
+    assert.equal(repos.getRun(heldBackTwo.run.id)?.status, "failed")
+    assert.equal(repos.getRun(heldBackTwo.run.id)?.recovery_status, "failed")
+
+    resumedBlocker.resolve()
+    await resumedPromise
+    await delay(25)
   } finally {
     controller.dispose()
     close()
