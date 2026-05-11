@@ -98,7 +98,7 @@ export function normalizeDirectoryReferenceCandidate(candidate: string): string 
   if (trimmed.startsWith("./") || trimmed.startsWith("../")) {
     return trimmed.endsWith("/") ? trimmed : null
   }
-  if (/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/$/.test(trimmed)) {
+  if (isBareDirectoryPath(trimmed)) {
     return trimmed
   }
 
@@ -286,6 +286,15 @@ function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
   return relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && relativePath !== ""
     ? true
     : candidatePath === rootPath
+}
+
+function isBareDirectoryPath(candidate: string): boolean {
+  if (!candidate.endsWith("/")) return false
+
+  const segments = candidate.slice(0, -1).split("/")
+  if (segments.length === 0) return false
+
+  return segments.every((segment) => /^[A-Za-z0-9._-]+$/.test(segment))
 }
 
 function toRepoPath(rootPath: string, absolutePath: string): string {

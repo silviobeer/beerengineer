@@ -11,7 +11,7 @@ export const completedProjParityRule = defineFreshnessRule({
       scope.docs.find((doc) => doc.docPath === "docs/PROJECT.md")?.content ?? ""
 
     return scope.completedProjects.flatMap((project) => {
-      const exactProjPattern = new RegExp(`\\b${escapeRegExp(project.projId)}\\b`)
+      const exactProjPattern = new RegExp(String.raw`\b${escapeRegExp(project.projId)}\b`)
       if (exactProjPattern.test(docsProjectContent)) return []
 
       return [{
