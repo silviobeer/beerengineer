@@ -2,8 +2,10 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  applyDeterministicDbRelevanceFallback,
   applyDbRelevanceEvidenceValidation,
   evaluateStoryDbRelevanceSupport,
+  findUnsupportedDbRelevanceClaims,
 } from "../../../src/stages/planning/index.js"
 import type { ImplementationPlanArtifact, WaveDefinition } from "../../../src/types.js"
 
@@ -217,4 +219,80 @@ test("REQ-1 TC-8: plans with no positive DB-relevance claims remain unchanged at
 
   assert.deepEqual(unsupportedClaims, [])
   assert.deepEqual(artifact, before)
+})
+
+test("REQ-2 TC-6: wave-only orphan DB claim is reported even when all stories are already false", () => {
+  const artifact = plan([
+    featureWave({
+      id: "W1",
+      number: 1,
+      goal: "UI-only polish",
+      stories: [
+        { id: "US-1", title: "Refresh copy", dbRelevant: false },
+      ],
+      dbRelevantWave: true,
+      dbRelevantStoryCount: 0,
+    }),
+  ])
+
+  assert.deepEqual(findUnsupportedDbRelevanceClaims(artifact, { hasSupabaseConfigured: true }), [
+    {
+      level: "wave",
+      waveId: "W1",
+      reason: "Wave marked dbRelevantWave:true but neither the wave nor its supported stories describe concrete database work in the plan output.",
+    },
+  ])
+})
+
+test("REQ-2 TC-9 / TC-10 / TC-11: deterministic fallback clears only unsupported positives and re-evaluates wave support", () => {
+  const artifact = plan([
+    featureWave({
+      id: "W1",
+      number: 1,
+      goal: "Deliver mixed account changes",
+      stories: [
+        { id: "US-1", title: "Add accounts table migration for Postgres", dbRelevant: true },
+        { id: "US-2", title: "Implement backend API handler", dbRelevant: true, sharedFiles: ["apps/engine/src/api/accounts.ts"] },
+      ],
+      dbRelevantWave: true,
+      dbRelevantStoryCount: 2,
+      exitCriteria: ["Preserve exit criteria"],
+    }),
+    featureWave({
+      id: "W2",
+      number: 2,
+      goal: "UI cleanup only",
+      stories: [
+        { id: "US-3", title: "Refresh operator copy", dbRelevant: false },
+      ],
+      dbRelevantWave: true,
+      dbRelevantStoryCount: 0,
+      exitCriteria: ["Preserve unrelated content"],
+    }),
+  ])
+
+  const before = JSON.parse(JSON.stringify(artifact)) as ImplementationPlanArtifact
+  const { unsupportedClaims } = applyDeterministicDbRelevanceFallback(artifact, { hasSupabaseConfigured: true })
+
+  assert.deepEqual(unsupportedClaims, [
+    {
+      level: "story",
+      waveId: "W1",
+      storyId: "US-2",
+      reason: "Story marked dbRelevant:true but does not describe concrete database work in the plan output.",
+    },
+    {
+      level: "wave",
+      waveId: "W2",
+      reason: "Wave marked dbRelevantWave:true but neither the wave nor its supported stories describe concrete database work in the plan output.",
+    },
+  ])
+  assert.equal(artifact.plan.waves[0]?.stories[0]?.dbRelevant, true)
+  assert.equal(artifact.plan.waves[0]?.stories[1]?.dbRelevant, false)
+  assert.equal(artifact.plan.waves[0]?.dbRelevantWave, true)
+  assert.equal(artifact.plan.waves[1]?.dbRelevantWave, false)
+  assert.equal(artifact.plan.waves[1]?.stories[0]?.dbRelevant, before.plan.waves[1]?.stories[0]?.dbRelevant)
+  assert.equal(artifact.plan.summary, before.plan.summary)
+  assert.deepEqual(artifact.plan.dependencies, before.plan.dependencies)
+  assert.deepEqual(artifact.plan.waves[0]?.exitCriteria, before.plan.waves[0]?.exitCriteria)
 })
