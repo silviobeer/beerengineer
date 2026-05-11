@@ -100,7 +100,7 @@ function getCompletedProjects(rootPath) {
     if (!existsSync(progressDir)) continue
     if (!statSync(progressDir).isDirectory()) continue
 
-    const logs = walkFiles(progressDir)
+    const logs = walkFiles(progressDir).filter((filePath) => filePath.endsWith(".md"))
     if (logs.length === 0) continue
 
     const projId = entry.name.match(/^(PROJ-\d+)/)?.[1]
