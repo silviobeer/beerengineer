@@ -29,6 +29,24 @@ export type SupabaseReadinessRecoverySource = {
   message?: string
 }
 
+export type SupabaseProvisioningFailureStep = "provision" | "poll" | "handoff" | "validate"
+
+export type SupabaseProvisioningRecoveryPayload = {
+  type: "supabase_provisioning"
+  runId: string
+  workspaceId?: string
+  workspaceKey?: string
+  projectRef?: string
+  waveId: string
+  waveNumber: number
+  branchRef?: string
+  failedStep: SupabaseProvisioningFailureStep
+  failureCause: string
+  userMessage: string
+}
+
+export type SupabaseProvisioningRecoverySource = Omit<SupabaseProvisioningRecoveryPayload, "type">
+
 const setupActions = new Set<string>(SUPABASE_READINESS_SETUP_ACTIONS)
 
 function stringOrUndefined(value: unknown): string | undefined {
@@ -119,6 +137,22 @@ export function buildSupabaseReadinessRecoveryPayload(source: SupabaseReadinessR
   } satisfies SupabaseReadinessRecoveryPayload)
 }
 
+export function buildSupabaseProvisioningRecoveryPayload(source: SupabaseProvisioningRecoverySource): string {
+  return JSON.stringify({
+    type: "supabase_provisioning",
+    runId: source.runId,
+    workspaceId: source.workspaceId,
+    workspaceKey: source.workspaceKey,
+    projectRef: source.projectRef,
+    waveId: source.waveId,
+    waveNumber: source.waveNumber,
+    branchRef: source.branchRef,
+    failedStep: source.failedStep,
+    failureCause: source.failureCause,
+    userMessage: source.userMessage,
+  } satisfies SupabaseProvisioningRecoveryPayload)
+}
+
 export function parseSupabaseReadinessRecoveryPayload(raw: string | null | undefined): SupabaseReadinessRecoveryPayload | null {
   if (!raw) return null
   let parsed: unknown
@@ -140,5 +174,42 @@ export function parseSupabaseReadinessRecoveryPayload(raw: string | null | undef
     branch: branchValue(row.branch),
     dbRelevanceTrigger: triggerValue(row.dbRelevanceTrigger),
     message: stringOrUndefined(row.message),
+  }
+}
+
+function provisioningStep(value: unknown): SupabaseProvisioningFailureStep | null {
+  return value === "provision" || value === "poll" || value === "handoff" || value === "validate"
+    ? value
+    : null
+}
+
+export function parseSupabaseProvisioningRecoveryPayload(raw: string | null | undefined): SupabaseProvisioningRecoveryPayload | null {
+  if (!raw) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  const row = objectValue(parsed)
+  if (!row || row.type !== "supabase_provisioning" || typeof row.runId !== "string" || typeof row.waveId !== "string" || typeof row.waveNumber !== "number") {
+    return null
+  }
+  const failedStep = provisioningStep(row.failedStep)
+  const failureCause = stringOrUndefined(row.failureCause)
+  const userMessage = stringOrUndefined(row.userMessage)
+  if (!failedStep || !failureCause || !userMessage) return null
+  return {
+    type: "supabase_provisioning",
+    runId: row.runId,
+    workspaceId: stringOrUndefined(row.workspaceId),
+    workspaceKey: stringOrUndefined(row.workspaceKey),
+    projectRef: stringOrUndefined(row.projectRef),
+    waveId: row.waveId,
+    waveNumber: row.waveNumber,
+    branchRef: stringOrUndefined(row.branchRef),
+    failedStep,
+    failureCause,
+    userMessage,
   }
 }
