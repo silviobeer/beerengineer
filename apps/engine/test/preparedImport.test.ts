@@ -859,7 +859,8 @@ test("import-context artifacts distinguish full, partial, unavailable, and empty
       statuses.add(persisted.status)
 
       const runTree = getRunTree(repos, prepared.runId)
-      assert.equal(runTree?.importContext?.status, fixture.expectedStatus)
+      const runTreeImportArtifact = runTree?.artifacts.find(artifact => artifact.label === "Import Context")
+      assert.equal(runTreeImportArtifact?.metadata?.importContext?.status, fixture.expectedStatus)
 
       if (!fixture.runArchitecture) continue
 

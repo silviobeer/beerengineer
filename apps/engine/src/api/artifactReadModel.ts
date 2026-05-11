@@ -59,8 +59,3 @@ export function buildRunArtifactReadModel(artifact: ArtifactFileRow): RunArtifac
 export function buildRunArtifactReadModels(artifacts: ArtifactFileRow[]): RunArtifactReadModel[] {
   return artifacts.map(buildRunArtifactReadModel)
 }
-
-export function summarizeRunImportContext(artifacts: ArtifactFileRow[]): ImportContextReadModel | null {
-  const importArtifact = buildRunArtifactReadModels(artifacts).find(artifact => artifact.metadata?.importContext)
-  return importArtifact?.metadata?.importContext ?? null
-}
