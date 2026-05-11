@@ -90,6 +90,29 @@ test("missing configured DB keeps an empty legacy family in place and logs skipp
   )
 })
 
+test("empty legacy family is removed, warning is suppressed, and one cleaned event is logged", () => {
+  const dataDir = mkdtempSync(join(tmpRoot, "data-"))
+  seedConfiguredDb(dataDir)
+  seedEmptyLegacyDb()
+  writeFileSync(`${LEGACY_DB_PATH()}-wal`, "wal\n", "utf8")
+  writeFileSync(`${LEGACY_DB_PATH()}-shm`, "shm\n", "utf8")
+  process.env.BEERENGINEER_CONFIG_PATH = writeTmpConfig(tmpRoot, dataDir)
+
+  initDatabase().close()
+
+  assert.equal(existsSync(LEGACY_DB_PATH()), false)
+  assert.equal(existsSync(`${LEGACY_DB_PATH()}-wal`), false)
+  assert.equal(existsSync(`${LEGACY_DB_PATH()}-shm`), false)
+  assert.deepEqual(resolveDbPathInfo().warnings, [])
+  const [event] = readCleanupEvents(dataDir)
+  assert.equal(readCleanupEvents(dataDir).length, 1)
+  assert.equal(event?.event, "legacy-db-cleanup")
+  assert.equal(event?.configuredDbPath, join(dataDir, "beerengineer.sqlite"))
+  assert.equal(event?.legacyDbPath, LEGACY_DB_PATH())
+  assert.equal(event?.outcome, "cleaned")
+  assert.match(event?.timestamp ?? "", /^\d{4}-\d{2}-\d{2}T/)
+})
+
 test("corrupt legacy DB stays visible and blocks update preflight", () => {
   const control = initDatabase(":memory:")
   const repos = new Repos(control)
@@ -163,6 +186,47 @@ test("explicit override DB opens do not trigger legacy shadow reconciliation", (
   assert.deepEqual(readCleanupEvents(dataDir), [])
 })
 
+test("missing wal or shm siblings do not block cleaned cleanup outcomes", () => {
+  const scenarios: Array<{
+    name: string
+    createSiblings: () => void
+    expectedRemovedPaths: string[]
+  }> = [
+    {
+      name: "sqlite only",
+      createSiblings: () => {},
+      expectedRemovedPaths: [LEGACY_DB_PATH()],
+    },
+    {
+      name: "sqlite plus wal",
+      createSiblings: () => {
+        writeFileSync(`${LEGACY_DB_PATH()}-wal`, "wal\n", "utf8")
+      },
+      expectedRemovedPaths: [LEGACY_DB_PATH(), `${LEGACY_DB_PATH()}-wal`],
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    const dataDir = mkdtempSync(join(tmpRoot, "data-"))
+    seedConfiguredDb(dataDir)
+    seedEmptyLegacyDb()
+    scenario.createSiblings()
+    process.env.BEERENGINEER_CONFIG_PATH = writeTmpConfig(tmpRoot, dataDir)
+
+    initDatabase().close()
+
+    for (const target of scenario.expectedRemovedPaths) {
+      assert.equal(existsSync(target), false, `${scenario.name} should remove ${target}`)
+    }
+    assert.deepEqual(resolveDbPathInfo().warnings, [], `${scenario.name} should not warn after cleanup`)
+    assert.deepEqual(
+      readCleanupEvents(dataDir).map(event => event.outcome),
+      ["cleaned"],
+      `${scenario.name} should log a cleaned outcome`,
+    )
+  }
+})
+
 function writeTmpConfig(root: string, dataDir: string): string {
   const configPath = join(root, "config.json")
   writeFileSync(configPath, JSON.stringify(buildAppConfig(dataDir), null, 2), "utf8")
@@ -225,6 +289,7 @@ function readCleanupEvents(dataDir: string): Array<{
   configuredDbPath: string
   legacyDbPath: string
   outcome: string
+  timestamp?: string
 }> {
   const logPath = resolveLegacyDbCleanupLogPath(dataDir)
   if (!existsSync(logPath)) return []
@@ -237,5 +302,6 @@ function readCleanupEvents(dataDir: string): Array<{
       configuredDbPath: string
       legacyDbPath: string
       outcome: string
+      timestamp?: string
     })
 }
