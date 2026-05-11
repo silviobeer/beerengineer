@@ -17,6 +17,7 @@ import { isDbRelevantWave, provisionWaveIfDbRelevant } from "./supabaseWaveGate.
 import { canStartDbRelevantWave } from "./dbWaveScheduler.js"
 import { cleanupSuccessfulBranch } from "../../core/supabase/cleanupOrchestrator.js"
 import type { SupabaseWorkflowHook } from "../../core/supabase/workflowHook.js"
+import { recordSupabaseProvisioningBlockedRun } from "../../core/supabase/provisioningRecovery.js"
 import type { ExecutionLlmOptions } from "./index.js"
 import type { StoryTestPlanArtifact } from "./types.js"
 import type {
@@ -186,7 +187,7 @@ async function executeWave(
       // Mark retained-for-diagnosis and abort the wave — do not dispatch workers.
       const runId = activeRun?.runId ?? ctx.runId
       if (runId) supabaseHook.repos.setRunSupabaseLifecycleState(runId, "retained-for-diagnosis")
-      stagePresent.warn(`[supabase] wave ${wave.id} provision/validate failed: ${provisionResult.error}`)
+      stagePresent.warn(`[supabase] wave ${wave.id} provision/validate failed: ${provisionResult.failureCause}`)
       // Build a summary with all stories blocked so the run transitions correctly.
       const blockedSummary: WaveSummary = {
         waveId: wave.id,
@@ -195,7 +196,16 @@ async function executeWave(
         storiesMerged: [],
         storiesBlocked: waveEntries.map(s => s.id),
       }
-      await recordBlockedWave(ctx, wave, blockedSummary)
+      await recordSupabaseProvisioningBlockedRun({
+        repos: supabaseHook.repos,
+        ctx,
+        runId,
+        wave,
+        projectRef: supabaseHook.projectRef,
+        failure: provisionResult,
+        itemId: activeRun?.itemId ?? "unknown-item",
+        title: activeRun?.title ?? activeRun?.itemId ?? "unknown-item",
+      })
       assertWaveSucceeded(wave, blockedSummary) // throws
     } else {
       waveBranchRef = (provisionResult as { branchRef: string }).branchRef || undefined
