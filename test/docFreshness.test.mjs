@@ -200,7 +200,44 @@ test("TC-4 incomplete PROJs do not trigger missing-PROJ failures", () => {
   }
 })
 
-test("TC-5 dependency scan ignores out-of-scope docs", () => {
+test("TC-5 7_progress with only non-markdown files does not mark a PROJ complete", () => {
+  const root = createFixture()
+  try {
+    makeCompletedProj(root, "PROJ-3", "non-markdown-only", ["progress.txt", "notes.json"])
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.missingProjects, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-6 multiple markdown progress logs still yield one missing-PROJ finding", () => {
+  const root = createFixture()
+  try {
+    makeCompletedProj(root, "PROJ-9", "missing-project", [
+      "ship.md",
+      "qa.md",
+      "retro.md",
+    ])
+
+    const result = checkDocFreshness(root)
+    const report = formatDocFreshnessReport(result)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.missingProjects.length, 1)
+    assert.equal(result.findings.missingProjects[0].projId, "PROJ-9")
+    assert.equal(result.findings.missingProjects[0].logCount, 3)
+    assert.match(report, /PROJ-9/)
+    assert.equal(report.match(/docs\/PROJECT\.md:/g)?.length, 1)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-7 dependency scan ignores out-of-scope docs", () => {
   const root = createFixture()
   try {
     appendFile(root, "notes/working-notes.md", "\nPinned candidate: next@^99.0.0\n")
@@ -214,7 +251,7 @@ test("TC-5 dependency scan ignores out-of-scope docs", () => {
   }
 })
 
-test("TC-6 in-scope dependency mismatch reports doc and manifest", () => {
+test("TC-8 in-scope dependency mismatch reports doc and manifest", () => {
   const root = createFixture()
   try {
     appendFile(root, "docs/TECHNICAL.md", "\nPinned dependency: next@^99.0.0\n")
@@ -238,7 +275,7 @@ test("TC-6 in-scope dependency mismatch reports doc and manifest", () => {
   }
 })
 
-test("TC-7 deleted-path scan ignores out-of-scope docs", () => {
+test("TC-9 deleted-path scan ignores out-of-scope docs", () => {
   const root = createFixture()
   try {
     appendFile(root, "notes/working-notes.md", "\nCurrent active code lives in `legacy/`.\n")
@@ -252,7 +289,7 @@ test("TC-7 deleted-path scan ignores out-of-scope docs", () => {
   }
 })
 
-test("TC-8 active stale path in approved docs is reported", () => {
+test("TC-10 active stale path in approved docs is reported", () => {
   const root = createFixture()
   try {
     appendFile(root, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
@@ -272,7 +309,7 @@ test("TC-8 active stale path in approved docs is reported", () => {
   }
 })
 
-test("TC-9 historical deleted-path references are allowed", () => {
+test("TC-11 historical deleted-path references are allowed", () => {
   const root = createFixture()
   try {
     appendFile(
@@ -290,7 +327,7 @@ test("TC-9 historical deleted-path references are allowed", () => {
   }
 })
 
-test("TC-10 root test path fails non-zero with grouped drift report", () => {
+test("TC-12 root test path fails non-zero with grouped drift report", () => {
   const root = createFixture()
   try {
     makeCompletedProj(root, "PROJ-9", "missing-project")
@@ -311,7 +348,7 @@ test("TC-10 root test path fails non-zero with grouped drift report", () => {
   }
 })
 
-test("TC-11 clean repo passes despite out-of-scope doc issues", () => {
+test("TC-13 clean repo passes despite out-of-scope doc issues", () => {
   const root = createFixture()
   try {
     makeCompletedProj(root, "PROJ-2", "listed-project")
