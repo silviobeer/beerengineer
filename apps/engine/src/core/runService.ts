@@ -4,6 +4,7 @@ import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { attachOneShotPromptAnswer } from "./promptAutoAnswer.js"
 import { withPromptPersistence } from "./promptPersistence.js"
+import { recordAnswer, type AnswerResult, type AnswerSource } from "./conversation.js"
 import { buildSupabaseWorkflowHook, prepareRun, type SupabaseAdapterFactory } from "./runOrchestrator.js"
 import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { loadResumeReadiness, performResume, type PerformResumeInput } from "./resume.js"
@@ -324,6 +325,61 @@ function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, ta
 type BackgroundRunner = typeof fireInBackground
 type PrepareRunImpl = typeof prepareRun
 type PerformResumeImpl = (input: PerformResumeInput) => Promise<void>
+
+type AnswerRunPromptOptions = {
+  resumeBlockedRunInProcess?: boolean
+  backgroundRunner?: BackgroundRunner
+  apiWorkerInstanceId?: string
+  workerLeaseClock?: () => number
+  workerLeaseScheduler?: WorkerLeaseScheduler
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  supabaseAdapterFactory?: SupabaseAdapterFactory
+  capabilityResolver?: WorkflowCapabilityResolver
+  resumeRunImpl?: PerformResumeImpl
+}
+
+function shouldResumeBlockedRunAfterAnswer(run: RunRow | undefined): boolean {
+  return run?.status === "blocked" && run.recovery_status === "blocked"
+}
+
+function promptAnswerResumeSummary(source: AnswerSource): string {
+  return `Operator answered a pending prompt via ${source}.`
+}
+
+export async function answerRunPromptInProcess(
+  repos: Repos,
+  input: { runId: string; promptId?: string; answer: string; source: AnswerSource },
+  options: AnswerRunPromptOptions = {},
+): Promise<AnswerResult> {
+  const runBeforeAnswer = repos.getRun(input.runId)
+  const result = recordAnswer(repos, input)
+  if (!result.ok) return result
+  if (!options.resumeBlockedRunInProcess || !shouldResumeBlockedRunAfterAnswer(runBeforeAnswer)) {
+    return result
+  }
+
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundResumeRun(repos, io, {
+    runId: input.runId,
+    summary: promptAnswerResumeSummary(input.source),
+    workerOwnerKind: "api",
+    workerInstanceId: options.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: options.workerLeaseClock,
+    workerLeaseScheduler: options.workerLeaseScheduler,
+    onItemColumnChanged: options.onItemColumnChanged,
+    supabaseAdapterFactory: options.supabaseAdapterFactory,
+    capabilityResolver: options.capabilityResolver,
+    resumeRunImpl: options.resumeRunImpl,
+    persistItemDecision: false,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return result
+  }
+
+  ;(options.backgroundRunner ?? fireInBackground)(io, "answerRunPromptInProcess", prepared.start)
+  return result
+}
 
 function hasStageArtifacts(
   repos: Repos,
