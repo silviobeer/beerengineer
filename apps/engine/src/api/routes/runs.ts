@@ -6,11 +6,11 @@ import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
 import { buildMergeStatus } from "../mergeStatus.js"
 import { isResumeInFlight } from "../../core/resume.js"
-import { buildConversation, recordAnswer, recordUserMessage } from "../../core/conversation.js"
+import { buildConversation, recordUserMessage } from "../../core/conversation.js"
 import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
 import { projectStageLogRow } from "../../core/messagingProjection.js"
-import { isWorkflowCapabilityBlockedResult, resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
+import { answerRunPromptInProcess, isWorkflowCapabilityBlockedResult, resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
@@ -335,11 +335,13 @@ export async function handleAnswer(
   runId: string,
 ): Promise<void> {
   const body = (await readJson(req)) as { answer?: string; promptId?: string }
-  const result = recordAnswer(repos, {
+  const result = await answerRunPromptInProcess(repos, {
     runId,
     promptId: body.promptId,
     answer: typeof body.answer === "string" ? body.answer : "",
     source: "api",
+  }, {
+    resumeBlockedRunInProcess: true,
   })
   if (!result.ok) {
     if (result.code === "empty_answer") return json(res, 400, { error: "answer is required", code: "bad_request" })

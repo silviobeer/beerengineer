@@ -3,6 +3,7 @@ import type {
   StageAgentAdapter,
   StageAgentResponse,
 } from "./adapters.js"
+import { BlockedRunError } from "./blockedError.js"
 import { emitEvent, getActiveRun } from "./runContext.js"
 import { writeRecoveryRecord, type RecoveryCause } from "./recovery.js"
 import { isWorktreePortPoolExhaustedError } from "./portAllocator.js"
@@ -343,7 +344,7 @@ async function blockReviewRun<TState, TArtifact>(
   setStatus(run, "blocked")
   await persistRun(run)
   await recordStageBlocked(run, "review_block", reason)
-  throw new Error(reason)
+  throw new BlockedRunError(reason)
 }
 
 async function blockRepeatedStagePrompt<TState, TArtifact>(
@@ -365,7 +366,7 @@ async function blockRepeatedStagePrompt<TState, TArtifact>(
       "The run was paused to avoid an infinite clarification loop.",
     findings: [{ source: "stage-runtime", severity: "high", message }],
   })
-  throw new Error(summary)
+  throw new BlockedRunError(summary)
 }
 
 function countPriorIdenticalStagePrompts<TState, TArtifact>(
@@ -386,7 +387,7 @@ async function requestRevision<TState, TArtifact, TResult>(
     await persistRun(run)
     const summary = `Blocked: no pass after ${definition.maxReviews} reviews`
     await recordStageBlocked(run, "review_limit", summary, { detail: feedback })
-    throw new Error(summary)
+    throw new BlockedRunError(summary)
   }
 
   setStatus(run, "revision_requested")
@@ -424,11 +425,23 @@ async function continueStageAfterUserMessage<TState, TArtifact, TResult>(
   const userMessage = await definition.askUser(message)
   assertWorkflowNotCancelled()
   if (userMessage === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
-    throw new Error(
+    const summary =
       `Stage "${run.stage}" emitted a prompt but this is a non-interactive run with no stdin answers queued. ` +
-      "Pipe answers via stdin (one per line), use the API (POST /runs/:id/answer) after the run " +
-      "emits a pending_prompt event, or provide all required inputs up-front (e.g. --references)."
-    )
+      "The run remains blocked on the open pending_prompt until a real answer arrives."
+    setStatus(run, "blocked")
+    pushLog(run, {
+      type: "status_changed",
+      message: summary,
+      data: { cause: "non_interactive_prompt_waiting", prompt: message },
+    })
+    await persistRun(run)
+    await recordStageBlocked(run, "stage_error", summary, {
+      detail:
+        "Pipe answers via stdin (one per line), use the API (POST /runs/:id/answer) after the run " +
+        "emits a pending_prompt event, or provide all required inputs up-front (e.g. --references).",
+      findings: [{ source: "stage-runtime", severity: "high", message }],
+    })
+    throw new BlockedRunError(summary)
   }
   pushLog(run, { type: "user_message", message: userMessage })
   run.userTurnCount++
