@@ -206,6 +206,56 @@ export function summarizeWaveDbRelevance(
   }
 }
 
+function evaluateStoryClaimForWave(
+  waveId: string,
+  story: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number]["stories"][number],
+  context: PlanningDbRelevanceContext,
+): { supported: true } | { supported: false; claim: DbRelevanceUnsupportedClaim } {
+  const support = evaluateStoryDbRelevanceSupport({
+    story,
+    hasSupabaseConfigured: context.hasSupabaseConfigured,
+  })
+  if (support.supported) return { supported: true }
+  return {
+    supported: false,
+    claim: {
+      level: "story",
+      waveId,
+      storyId: story.id,
+      reason: support.reason ?? STORY_UNSUPPORTED_REASON,
+    },
+  }
+}
+
+function findUnsupportedClaimsForWave(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+  context: PlanningDbRelevanceContext,
+): DbRelevanceUnsupportedClaim[] {
+  const unsupportedClaims: DbRelevanceUnsupportedClaim[] = []
+  let supportedPositiveStoryCount = 0
+
+  for (const story of wave.stories ?? []) {
+    if (story.dbRelevant !== true) continue
+    const evaluation = evaluateStoryClaimForWave(wave.id, story, context)
+    if (evaluation.supported) {
+      supportedPositiveStoryCount++
+      continue
+    }
+    unsupportedClaims.push(evaluation.claim)
+  }
+
+  const supportedWaveClaim = supportedPositiveStoryCount > 0 || waveHasExplicitDatabaseEvidence(wave)
+  if (wave.dbRelevantWave === true && !supportedWaveClaim) {
+    unsupportedClaims.push({
+      level: "wave",
+      waveId: wave.id,
+      reason: WAVE_UNSUPPORTED_REASON,
+    })
+  }
+
+  return unsupportedClaims
+}
+
 export function findUnsupportedDbRelevanceClaims(
   artifact: ImplementationPlanArtifact,
   context: PlanningDbRelevanceContext,
@@ -214,34 +264,7 @@ export function findUnsupportedDbRelevanceClaims(
 
   for (const wave of artifact.plan?.waves ?? []) {
     if (wave.kind === "setup") continue
-
-    let supportedPositiveStoryCount = 0
-    for (const story of wave.stories ?? []) {
-      if (story.dbRelevant !== true) continue
-      const support = evaluateStoryDbRelevanceSupport({
-        story,
-        hasSupabaseConfigured: context.hasSupabaseConfigured,
-      })
-      if (!support.supported) {
-        unsupportedClaims.push({
-          level: "story",
-          waveId: wave.id,
-          storyId: story.id,
-          reason: support.reason ?? STORY_UNSUPPORTED_REASON,
-        })
-        continue
-      }
-      supportedPositiveStoryCount++
-    }
-
-    const supportedWaveClaim = supportedPositiveStoryCount > 0 || waveHasExplicitDatabaseEvidence(wave)
-    if (wave.dbRelevantWave === true && !supportedWaveClaim) {
-      unsupportedClaims.push({
-        level: "wave",
-        waveId: wave.id,
-        reason: WAVE_UNSUPPORTED_REASON,
-      })
-    }
+    unsupportedClaims.push(...findUnsupportedClaimsForWave(wave, context))
   }
 
   return unsupportedClaims
@@ -265,6 +288,33 @@ function unsupportedClaimKeys(unsupportedClaims: DbRelevanceUnsupportedClaim[]):
   return new Set(unsupportedClaims.map(claim => claim.level === "story" ? `story:${claim.waveId}:${claim.storyId}` : `wave:${claim.waveId}`))
 }
 
+function applyFallbackToWave(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+  unsupportedKeys: Set<string>,
+): void {
+  if (wave.kind === "setup") {
+    wave.dbRelevantStoryCount = 0
+    wave.dbRelevantWave = false
+    return
+  }
+
+  for (const story of wave.stories ?? []) {
+    if (story.dbRelevant !== true) continue
+    if (!unsupportedKeys.has(`story:${wave.id}:${story.id}`)) continue
+    story.dbRelevant = false
+  }
+
+  const summary = summarizeWaveDbRelevance(wave)
+  wave.dbRelevantStoryCount = summary.dbRelevantStoryCount
+  if (wave.dbRelevantWave === true && unsupportedKeys.has(`wave:${wave.id}`)) {
+    wave.dbRelevantWave = false
+    return
+  }
+  if (wave.dbRelevantWave === true || summary.dbRelevantWave) {
+    wave.dbRelevantWave = summary.dbRelevantWave
+  }
+}
+
 export function applyDeterministicDbRelevanceFallback(
   artifact: ImplementationPlanArtifact,
   context: PlanningDbRelevanceContext,
@@ -273,27 +323,7 @@ export function applyDeterministicDbRelevanceFallback(
   const unsupportedKeys = unsupportedClaimKeys(unsupportedClaims)
 
   for (const wave of artifact.plan?.waves ?? []) {
-    if (wave.kind === "setup") {
-      wave.dbRelevantStoryCount = 0
-      wave.dbRelevantWave = false
-      continue
-    }
-
-    for (const story of wave.stories ?? []) {
-      if (story.dbRelevant !== true) continue
-      if (!unsupportedKeys.has(`story:${wave.id}:${story.id}`)) continue
-      story.dbRelevant = false
-    }
-
-    const summary = summarizeWaveDbRelevance(wave)
-    wave.dbRelevantStoryCount = summary.dbRelevantStoryCount
-    if (wave.dbRelevantWave === true && unsupportedKeys.has(`wave:${wave.id}`)) {
-      wave.dbRelevantWave = false
-      continue
-    }
-    if (wave.dbRelevantWave === true || summary.dbRelevantWave) {
-      wave.dbRelevantWave = summary.dbRelevantWave
-    }
+    applyFallbackToWave(wave, unsupportedKeys)
   }
 
   return { artifact, unsupportedClaims }
