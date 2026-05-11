@@ -33,7 +33,7 @@ import {
 export type ResumeReadiness =
   | { kind: "not_found" }
   | { kind: "no_recovery"; run: RunRow }
-  | { kind: "not_resumable"; run: RunRow; reason: "resume_in_progress"; record?: RecoveryRecord }
+  | { kind: "not_resumable"; run: RunRow; reason: "resume_in_progress" | "open_prompt"; record?: RecoveryRecord }
   | { kind: "ready"; run: RunRow; record: RecoveryRecord; ctx: WorkflowContext }
 
 const inflightResumes = new Set<string>()
@@ -90,6 +90,9 @@ export async function loadResumeReadiness(
   if (!run) return { kind: "not_found" }
   if (inflightResumes.has(runId)) {
     return { kind: "not_resumable", run, reason: "resume_in_progress" }
+  }
+  if (repos.getOpenPrompt(runId)) {
+    return { kind: "not_resumable", run, reason: "open_prompt" }
   }
   if (!run.recovery_status) return { kind: "no_recovery", run }
 
