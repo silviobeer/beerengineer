@@ -8,6 +8,7 @@ export type WorkspaceRow = {
   sonar_enabled: number
   supabase_project_ref: string | null
   supabase_region: string | null
+  supabase_db_mode: "branching" | "direct" | null
   supabase_persistent_test_branch_ref: string | null
   supabase_persistent_test_branch_name: string | null
   supabase_persistent_test_branch_status: string | null

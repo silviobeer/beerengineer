@@ -231,7 +231,9 @@ function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | n
 function missingSupabaseCapabilityRequirements(workspace: WorkspaceRow, token: string | null): string[] {
   const missing: string[] = []
   if (!token) missing.push("management token")
-  if (!workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
+  if (workspace.supabase_db_mode !== "direct" && !workspace.supabase_persistent_test_branch_ref?.trim()) {
+    missing.push("persistent test branch")
+  }
   return missing
 }
 
@@ -252,12 +254,16 @@ function defaultSupabaseAdapterFactory(
 ): WorkflowCapabilityBag {
   if (providedFactory) return { supabaseAdapterFactory: providedFactory }
   return {
-    supabaseAdapterFactory: () => ({
-      adapter: createSupabaseAdapter({
-        repos,
-        client: new SupabaseManagementClient({ token }),
-      }),
-    }),
+    supabaseAdapterFactory: () => {
+      const client = new SupabaseManagementClient({ token })
+      return {
+        adapter: createSupabaseAdapter({
+          repos,
+          client,
+        }),
+        handoffClient: client,
+      }
+    },
   }
 }
 

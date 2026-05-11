@@ -345,6 +345,7 @@ export function previewFromDbRow(row: DbWorkspaceRow): WorkspaceRow {
     key: row.key,
     name: row.name,
     rootPath: row.root_path ?? "",
+    supabaseDbMode: row.supabase_db_mode ?? undefined,
     harnessProfile: parsed.profile,
     harnessProfileInvalid: parsed.error,
     sonarEnabled: row.sonar_enabled === 1,

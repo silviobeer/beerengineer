@@ -35,6 +35,7 @@ export type AppConfigView = {
     workspaceId?: string
     projectRef?: string
     region?: string
+    dbMode?: "branching" | "direct"
     persistentTestBranchName?: string
     persistentTestBranchRef?: string
     persistentTestBranchStatus?: string
@@ -191,6 +192,7 @@ function supabaseView(repos: Repos | undefined): AppConfigView["supabase"] {
     workspaceId: workspace?.id,
     projectRef: workspace?.supabase_project_ref ?? undefined,
     region: workspace?.supabase_region ?? undefined,
+    dbMode: workspace?.supabase_db_mode ?? undefined,
     persistentTestBranchName: workspace?.supabase_persistent_test_branch_name ?? undefined,
     persistentTestBranchRef: workspace?.supabase_persistent_test_branch_ref ?? undefined,
     persistentTestBranchStatus: workspace?.supabase_persistent_test_branch_status ?? undefined,

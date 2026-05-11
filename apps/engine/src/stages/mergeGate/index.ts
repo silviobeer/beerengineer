@@ -30,7 +30,9 @@ type BlockRunFn = (
   },
 ) => Promise<never>
 
-function normalizeMergeGateAnswer(answer: string): "promote" | "cancel" | string {
+type ActiveMergeRun = NonNullable<ReturnType<typeof getActiveRun>>
+
+function normalizeMergeGateAnswer(answer: string): string {
   const normalized = answer.trim().toLowerCase()
   if (["promote", "approve", "approved", "yes", "y"].includes(normalized)) return "promote"
   if (["cancel", "no", "n"].includes(normalized)) return "cancel"
@@ -57,26 +59,108 @@ export async function mergeGate(
 ): Promise<void> {
   const activeRun = getActiveRun()
   if (!activeRun) {
-    // `merge-gate` is only reachable under an active run in production.
-    // Keep the legacy direct-runWorkflow test path working, but make the
-    // compatibility contract explicit rather than silently looking like the
-    // normal operator-gated path.
-    git.assertWorkspaceRootOnBaseBranch("before merge-gate (test-only direct workflow path)")
-    git.mergeItemIntoBase()
+    mergeGateWithoutActiveRun(git)
     return
   }
 
   git.assertWorkspaceRootOnBaseBranch("before merge-gate")
   const itemBranch = branchNameItem(context)
+  stagePresent.header("MERGE")
+  stagePresent.step(`Awaiting promotion of ${itemBranch} into ${git.mode.baseBranch}`)
+  await requirePromotionAnswer({ context, git, activeRun, itemBranch, blockRun })
+
+  const performGitMerge = () => {
+    const { mergeSha } = git.mergeItemIntoBase()
+    emitEvent({
+      type: "merge_completed",
+      runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      itemBranch,
+      baseBranch: git.mode.baseBranch,
+      mergeSha,
+    })
+  }
+
+  if (supabaseHook?.dbMode === "direct") {
+    await mergeOrBlock({ context, git, activeRun, itemBranch, blockRun, performGitMerge })
+    return
+  }
+
+  // BUG-PROJ4-QA-005 wiring point 4: Supabase gate stack
+  if (supabaseHook) {
+    await runSupabaseMergeGate({
+      context,
+      activeRun,
+      itemBranch,
+      blockRun,
+      supabaseHook,
+      performGitMerge,
+    })
+    return
+  }
+
+  // Non-Supabase path: unconditional merge.
+  await mergeOrBlock({ context, git, activeRun, itemBranch, blockRun, performGitMerge })
+}
+
+function mergeGateWithoutActiveRun(git: GitAdapter): void {
+  // `merge-gate` is only reachable under an active run in production.
+  // Keep the legacy direct-runWorkflow test path working, but make the
+  // compatibility contract explicit rather than silently looking like the
+  // normal operator-gated path.
+  git.assertWorkspaceRootOnBaseBranch("before merge-gate (test-only direct workflow path)")
+  git.mergeItemIntoBase()
+}
+
+async function requirePromotionAnswer(input: {
+  context: WorkflowContext
+  git: GitAdapter
+  activeRun: ActiveMergeRun
+  itemBranch: string
+  blockRun: BlockRunFn
+}): Promise<void> {
+  const answer = await promptForMergeAnswer(input.git, input.activeRun, input.itemBranch)
+  if (answer === "cancel") {
+    emitEvent({
+      type: "merge_gate_cancelled",
+      runId: input.activeRun.runId,
+      itemId: input.activeRun.itemId,
+      itemBranch: input.itemBranch,
+      baseBranch: input.git.mode.baseBranch,
+    })
+    await input.blockRun(
+      input.context,
+      `Operator postponed merge of ${input.itemBranch} into ${input.git.mode.baseBranch}`,
+      {
+        cause: "merge_gate_cancelled",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+  if (answer !== "promote") {
+    await input.blockRun(
+      input.context,
+      `Merge gate received unsupported answer for ${input.itemBranch}: ${answer || "<empty>"}`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+}
+
+async function promptForMergeAnswer(
+  git: GitAdapter,
+  activeRun: ActiveMergeRun,
+  itemBranch: string,
+): Promise<string> {
   const prompt = `Promote ${itemBranch} into ${git.mode.baseBranch}?`
   const actions = [
     { label: `Promote to ${git.mode.baseBranch}`, value: "promote" },
     { label: "Cancel", value: "cancel" },
   ] as const
-
-  stagePresent.header("MERGE")
-  stagePresent.step(`Awaiting promotion of ${itemBranch} into ${git.mode.baseBranch}`)
-
   const io = getWorkflowIO()
   const promptId = randomUUID()
   emitEvent({
@@ -95,154 +179,118 @@ export async function mergeGate(
         actions: [...actions],
       })
     : io.ask(prompt, { promptId, actions: [...actions] })
-  const answer = normalizeMergeGateAnswer(await answerPromise)
+  return normalizeMergeGateAnswer(await answerPromise)
+}
 
-  if (answer === "cancel") {
-    emitEvent({
-      type: "merge_gate_cancelled",
-      runId: activeRun.runId,
-      itemId: activeRun.itemId,
-      itemBranch,
-      baseBranch: git.mode.baseBranch,
-    })
-    await blockRun(
-      context,
-      `Operator postponed merge of ${itemBranch} into ${git.mode.baseBranch}`,
-      {
-        cause: "merge_gate_cancelled",
-        scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-        branch: itemBranch,
-      },
-    )
-  }
-  if (answer !== "promote") {
-    await blockRun(
-      context,
-      `Merge gate received unsupported answer for ${itemBranch}: ${answer || "<empty>"}`,
-      {
-        cause: "merge_gate_failed",
-        scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-        branch: itemBranch,
-      },
-    )
-  }
-
-  // BUG-PROJ4-QA-005 wiring point 4: Supabase gate stack
-  if (supabaseHook) {
-    const run = supabaseHook.repos.getRun(activeRun.runId)
-    const lifecycleState = run?.supabase_branch_lifecycle_state ?? null
-    const dbRelevant = Boolean(run?.supabase_branch_ref)
-
-    // Gate 1: final wave validation
-    const validationGate = finalWaveValidationGate({ dbRelevant, lifecycleState })
-    if (!validationGate.ok) {
-      await blockRun(
-        context,
-        `Merge blocked: final wave validation incomplete (state=${lifecycleState ?? "missing"})`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
-
-    // Gate 2: destructive confirmation
-    const migrations = context.workspaceRoot
-      ? (() => {
-          try {
-            const files = listSupabaseSqlFiles(context.workspaceRoot!)
-            return files.migrations.map(file => ({
-              file,
-              sql: (() => { try { return readFileSync(file, "utf8") } catch { return "" } })(),
-            }))
-          } catch { return [] }
-        })()
-      : []
-    const findings = detectDestructiveMigrations({ migrations })
-    // destructiveConfirmed lives on the operator-supplied answer. We don't have
-    // a per-merge session flag yet — treat as unconfirmed if findings exist
-    // (the UI gate panel already exposes the confirmation toggle).
-    const destructiveGate = destructiveConfirmationGate({ findings, confirmedForThisMerge: false })
-    if (!destructiveGate.ok) {
-      await blockRun(
-        context,
-        `Merge blocked: destructive migration operations require per-merge confirmation`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
-
-    // Gates 3+4: protection switch + production migration (via mergeWithProtectionSwitch
-    // which captures the switch value atomically before the git merge runs).
-    const mergeContext = {
-      workspaceId: supabaseHook.workspaceId,
-      projectRef: supabaseHook.projectRef,
-      branchRef: run?.supabase_branch_ref ?? supabaseHook.parentBranchRef,
-      runId: activeRun.runId,
-      workspaceRoot: context.workspaceRoot ?? "",
-    }
-    const mergeResult = await mergeWithProtectionSwitch({
-      protectionSwitch: supabaseHook.protectionSwitch,
-      gitMerge: () => {
-        try {
-          const { mergeSha } = git.mergeItemIntoBase()
-          emitEvent({
-            type: "merge_completed",
-            runId: activeRun.runId,
-            itemId: activeRun.itemId,
-            itemBranch,
-            baseBranch: git.mode.baseBranch,
-            mergeSha,
-          })
-        } catch (error) {
-          throw error
-        }
-      },
-      migrateProduction: () => supabaseHook.adapter.migrateProduction(mergeContext),
-    })
-
-    if (!mergeResult.ok) {
-      // Production migration failed after the git merge (QA-009 ordering hazard).
-      // Mark retained-for-diagnosis so the operator knows recovery is needed.
-      supabaseHook.repos.setRunSupabaseLifecycleState(activeRun.runId, "retained-for-diagnosis")
-      await blockRun(
-        context,
-        `Merge blocked: production migration failed — operator-driven recovery required`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
-    // Gate stack passed — merge already happened inside mergeWithProtectionSwitch.
-    return
-  }
-
-  // Non-Supabase path: unconditional merge.
+async function mergeOrBlock(input: {
+  context: WorkflowContext
+  git: GitAdapter
+  activeRun: ActiveMergeRun
+  itemBranch: string
+  blockRun: BlockRunFn
+  performGitMerge: () => void
+}): Promise<void> {
   try {
-    const { mergeSha } = git.mergeItemIntoBase()
-    emitEvent({
-      type: "merge_completed",
-      runId: activeRun.runId,
-      itemId: activeRun.itemId,
-      itemBranch,
-      baseBranch: git.mode.baseBranch,
-      mergeSha,
-    })
+    input.performGitMerge()
   } catch (error) {
-    await blockRun(
-      context,
-      `Merge into ${git.mode.baseBranch} failed for ${itemBranch}: ${(error as Error).message}`,
+    await input.blockRun(
+      input.context,
+      `Merge into ${input.git.mode.baseBranch} failed for ${input.itemBranch}: ${(error as Error).message}`,
       {
         cause: "merge_gate_failed",
-        scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-        branch: itemBranch,
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
       },
     )
+  }
+}
+
+async function runSupabaseMergeGate(input: {
+  context: WorkflowContext
+  activeRun: ActiveMergeRun
+  itemBranch: string
+  blockRun: BlockRunFn
+  supabaseHook: SupabaseWorkflowHook
+  performGitMerge: () => void
+}): Promise<void> {
+  const run = input.supabaseHook.repos.getRun(input.activeRun.runId)
+  const lifecycleState = run?.supabase_branch_lifecycle_state ?? null
+  const dbRelevant = Boolean(run?.supabase_branch_ref)
+
+  const validationGate = finalWaveValidationGate({ dbRelevant, lifecycleState })
+  if (!validationGate.ok) {
+    await input.blockRun(
+      input.context,
+      `Merge blocked: final wave validation incomplete (state=${lifecycleState ?? "missing"})`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+
+  const destructiveGate = destructiveConfirmationGate({
+    findings: loadDestructiveFindings(input.context.workspaceRoot),
+    confirmedForThisMerge: false,
+  })
+  if (!destructiveGate.ok) {
+    await input.blockRun(
+      input.context,
+      `Merge blocked: destructive migration operations require per-merge confirmation`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+
+  const mergeResult = await mergeWithProtectionSwitch({
+    protectionSwitch: input.supabaseHook.protectionSwitch,
+    gitMerge: () => input.performGitMerge(),
+    migrateProduction: () => input.supabaseHook.adapter.migrateProduction({
+      workspaceId: input.supabaseHook.workspaceId,
+      projectRef: input.supabaseHook.projectRef,
+      branchRef: run?.supabase_branch_ref ?? input.supabaseHook.parentBranchRef,
+      runId: input.activeRun.runId,
+      workspaceRoot: input.context.workspaceRoot ?? "",
+    }),
+  })
+
+  if (!mergeResult.ok) {
+    input.supabaseHook.repos.setRunSupabaseLifecycleState(input.activeRun.runId, "retained-for-diagnosis")
+    await input.blockRun(
+      input.context,
+      `Merge blocked: production migration failed — operator-driven recovery required`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+}
+
+function loadDestructiveFindings(workspaceRoot: string | undefined) {
+  if (!workspaceRoot) return detectDestructiveMigrations({ migrations: [] })
+  try {
+    const files = listSupabaseSqlFiles(workspaceRoot)
+    return detectDestructiveMigrations({
+      migrations: files.migrations.map(file => ({
+        file,
+        sql: safeReadSql(file),
+      })),
+    })
+  } catch {
+    return detectDestructiveMigrations({ migrations: [] })
+  }
+}
+
+function safeReadSql(file: string): string {
+  try {
+    return readFileSync(file, "utf8")
+  } catch {
+    return ""
   }
 }

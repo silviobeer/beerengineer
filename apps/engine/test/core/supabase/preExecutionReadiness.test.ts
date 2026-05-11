@@ -263,3 +263,113 @@ test("PROJ-6 PRD-1 US-5: beta token access does not unblock an alpha run", async
     rmSync(ctx.dir, { recursive: true, force: true })
   }
 })
+
+test("REQ-1 AC-1.3: readiness surfaces the stored db mode without reclassifying it", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    const readiness = await createSupabasePreExecutionReadiness({
+      workspace: {
+        id: "ws",
+        key: "alpha",
+        rootPath: "/repo",
+        projectRef: "proj_alpha",
+        dbMode: "direct",
+        persistentTestBranchRef: "br_alpha",
+      },
+      secretStore: { storePath: paths.storePath },
+      managementClient: {
+        getProject: async (projectRef) => ({ id: "p1", ref: projectRef, branchingEnabled: true }),
+        getBranch: async (_projectRef, branchRef) => ({ id: "br", ref: branchRef, status: "ACTIVE_HEALTHY" }),
+      },
+    })
+
+    assert.equal(readiness.status, "ready")
+    assert.equal(readiness.workspace.dbMode, "direct")
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 AC-2.2: direct-mode readiness does not require a persistent test branch", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    let branchCalls = 0
+    const readiness = await createSupabasePreExecutionReadiness({
+      workspace: {
+        id: "ws",
+        key: "alpha",
+        rootPath: "/repo",
+        projectRef: "proj_alpha",
+        dbMode: "direct",
+      },
+      secretStore: { storePath: paths.storePath },
+      managementClient: {
+        getProject: async (projectRef) => ({ id: "p1", ref: projectRef, branchingEnabled: false }),
+        getBranch: async () => {
+          branchCalls += 1
+          return { id: "br", ref: "br_alpha", status: "ACTIVE_HEALTHY" }
+        },
+      },
+    })
+
+    assert.equal(readiness.status, "ready")
+    assert.deepEqual(readiness.missingSetupActions, [])
+    assert.equal(readiness.branch, undefined)
+    assert.equal(branchCalls, 0)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 AC-2.4: branching and legacy readiness still require a persistent test branch", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    let projectCalls = 0
+
+    const branching = await createSupabasePreExecutionReadiness({
+      workspace: {
+        id: "ws",
+        key: "alpha",
+        rootPath: "/repo",
+        projectRef: "proj_alpha",
+        dbMode: "branching",
+      },
+      secretStore: { storePath: paths.storePath },
+      managementClient: {
+        getProject: async () => {
+          projectCalls += 1
+          return { id: "p1", ref: "proj_alpha", branchingEnabled: true }
+        },
+        getBranch: async () => ({ id: "br", ref: "br_alpha", status: "ACTIVE_HEALTHY" }),
+      },
+    })
+
+    const legacy = await createSupabasePreExecutionReadiness({
+      workspace: {
+        id: "ws",
+        key: "alpha",
+        rootPath: "/repo",
+        projectRef: "proj_alpha",
+      },
+      secretStore: { storePath: paths.storePath },
+      managementClient: {
+        getProject: async () => {
+          projectCalls += 1
+          return { id: "p1", ref: "proj_alpha", branchingEnabled: true }
+        },
+        getBranch: async () => ({ id: "br", ref: "br_alpha", status: "ACTIVE_HEALTHY" }),
+      },
+    })
+
+    assert.equal(branching.status, "blocked")
+    assert.deepEqual(branching.missingSetupActions, ["Create persistent test branch"])
+    assert.equal(legacy.status, "blocked")
+    assert.deepEqual(legacy.missingSetupActions, ["Create persistent test branch"])
+    assert.equal(projectCalls, 0)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

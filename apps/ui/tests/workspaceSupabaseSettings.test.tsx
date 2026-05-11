@@ -43,4 +43,21 @@ describe("workspace Supabase settings inputs", () => {
       expect.objectContaining({ body: JSON.stringify({ mode: "attach" }) }),
     ));
   });
+
+  it("keeps branch controls hidden for a direct-mode workspace", () => {
+    render(<WorkspaceSettingsPage workspaceKey="alpha" initialReadiness={{
+      ...notConfigured,
+      status: "ready",
+      missingSetupActions: [],
+      workspace: {
+        ...notConfigured.workspace,
+        projectRef: "proj_direct",
+        dbMode: "direct",
+      },
+    }} />);
+
+    expect(screen.getByText(/Direct mode is active/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create or attach persistent branch" })).toBeNull();
+    expect(screen.queryByLabelText("Attach existing")).toBeNull();
+  });
 });

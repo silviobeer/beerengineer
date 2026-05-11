@@ -6,6 +6,7 @@ export type SupabaseWorkspaceContext = {
   itemId?: string
   projectId?: string
   projectRef?: string
+  dbMode?: SupabaseDbMode
   branchRef?: string
   parentBranchRef?: string
   waveId?: string
@@ -34,6 +35,8 @@ export type SupabaseProject = {
   branchingEnabled?: boolean
   branchQuotaLimit?: number
 }
+
+export type SupabaseDbMode = "branching" | "direct"
 
 export type SupabaseBranch = {
   id: string
@@ -70,6 +73,7 @@ export type SupabaseReadinessWorkspace = {
   key?: string
   rootPath?: string
   projectRef?: string
+  dbMode?: SupabaseDbMode
   persistentTestBranchRef?: string
   persistentTestBranchName?: string
 }

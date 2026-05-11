@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { initDatabase } from "../../../src/db/connection.js"
 import { Repos } from "../../../src/db/repositories.js"
 import { createOrAttachPersistentTestBranch } from "../../../src/core/supabase/persistentTestBranch.js"
+import { SupabaseManagementError } from "../../../src/core/supabase/managementClient.js"
 
 test("PROJ-4 PRD-2 US-3: creates and persists the persistent test branch", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-persistent-create-"))
@@ -140,6 +141,37 @@ test("PROJ-6 PRD-2 US-4: persistent branch setup never creates Supabase projects
 
     assert.equal(result.ok, true)
     assert.equal(typeof client.createProject, "function")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 AC-2.1: persistent branch setup classifies 402 responses as branching unavailable", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-persistent-402-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: dir })
+  repos.connectWorkspaceSupabase(workspace.id, { projectRef: "proj_1", region: "eu", dbMode: "branching" })
+  try {
+    const result = await createOrAttachPersistentTestBranch({
+      repos,
+      workspaceId: workspace.id,
+      client: {
+        listBranches: async () => [],
+        createBranch: async () => {
+          throw new SupabaseManagementError("provider", "Payment Required", 402)
+        },
+      },
+    })
+
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.error, "branching_unavailable")
+      assert.match(result.message, /branching is unavailable/i)
+      assert.doesNotMatch(result.message, /Rotate management token|Re-authorize project access/i)
+    }
+    assert.equal(repos.getWorkspace(workspace.id)?.supabase_persistent_test_branch_ref, null)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
