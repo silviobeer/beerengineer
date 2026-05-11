@@ -15,6 +15,7 @@ import { handleReplanRun } from "../src/api/routes/runs.js"
 import { buildSupabaseReadinessRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { supabaseHandoffPath } from "../src/core/supabase/handoffWriter.js"
 import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
+import { claimWorkerLease } from "../src/core/workerLease.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos, type RunRow } from "../src/db/repositories.js"
 import type { ArchitectureArtifact, ImplementationPlanArtifact, PRD, Project } from "../src/types.js"
@@ -495,6 +496,194 @@ test("POST /runs/:id/replan regenerates the replacement plan from persisted upst
       ["W1--r2", "W2--r2", "W3--r2"],
     )
     assert.equal(f.repos.listLogsForRun(f.run.id).filter(log => log.event_type === "plan_regenerated").length, 1)
+  } finally {
+    f.close()
+  }
+})
+
+test("POST /runs/:id/replan rejects missing and blank reasons, but accepts padded non-blank input", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [
+        { id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] },
+        { id: "W2", number: 2, goal: "Original wave two", storyIds: ["REQ-2"] },
+      ],
+    }))
+    await seedApprovedUpstreamContext(f.ctx)
+    const before = await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8")
+
+    const server = createServer((req, res) => {
+      void handleReplanRun(f.repos, req, res, f.run.id)
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+
+    try {
+      for (const body of [{}, { reason: "" }, { reason: "   " }]) {
+        const response = await fetch(`http://127.0.0.1:${address.port}/`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        })
+        assert.equal(response.status, 422)
+        assert.deepEqual(await response.json(), {
+          error: "reason_required",
+          message: "Replan reason is required.",
+        })
+      }
+
+      const padded = await fetch(`http://127.0.0.1:${address.port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "  deploy hotfix  " }),
+      })
+      assert.equal(padded.status, 200)
+      assert.deepEqual(await padded.json(), { runId: f.run.id, status: "replanned" })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+    ) as PersistedImplementationPlanArtifact
+    assert.equal(persisted.metadata.activePlan.version, 2)
+    assert.notEqual(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+      before,
+    )
+  } finally {
+    f.close()
+  }
+})
+
+test("POST /runs/:id/replan rejects runs that have not produced a plan yet", async () => {
+  const f = fixture()
+  try {
+    const server = createServer((req, res) => {
+      void handleReplanRun(f.repos, req, res, f.run.id)
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Need a new plan shape." }),
+      })
+      assert.equal(response.status, 409)
+      assert.deepEqual(await response.json(), {
+        error: "replan_plan_missing",
+        message: "Run has no persisted plan to replan yet.",
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+    }
+
+    assert.equal(f.repos.getRun(f.run.id)?.id, f.run.id)
+    assert.equal(existsSync(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json")), false)
+  } finally {
+    f.close()
+  }
+})
+
+test("POST /runs/:id/replan returns the documented 409 payload for an actively running run and leaves the active plan unchanged", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [{ id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] }],
+    }))
+    const before = await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8")
+    const heartbeatAt = Date.now()
+    f.repos.updateRun(f.run.id, { status: "running", current_stage: "planning", recovery_status: null, recovery_scope: null, recovery_scope_ref: null, recovery_summary: null, recovery_payload_json: null })
+    claimWorkerLease(f.repos, {
+      runId: f.run.id,
+      workerInstanceId: "api-fresh",
+      workerOwnerKind: "api",
+      now: heartbeatAt,
+    })
+
+    const server = createServer((req, res) => {
+      void handleReplanRun(f.repos, req, res, f.run.id)
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Operator wants a replan now." }),
+      })
+      assert.equal(response.status, 409)
+      assert.deepEqual(await response.json(), {
+        error: "replan_run_active",
+        currentStatus: "running",
+        workerHeartbeatAt: new Date(heartbeatAt).toISOString(),
+        hint: "Use POST /runs/:runId/block-now to pause, then replan.",
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+    }
+
+    assert.equal(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+      before,
+    )
+  } finally {
+    f.close()
+  }
+})
+
+test("POST /runs/:id/replan accepts stale-heartbeat running runs and keeps the same run identity", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [
+        { id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] },
+        { id: "W2", number: 2, goal: "Original wave two", storyIds: ["REQ-2"] },
+      ],
+    }))
+    await seedApprovedUpstreamContext(f.ctx)
+    f.repos.updateRun(f.run.id, { status: "running", current_stage: "planning", recovery_status: null, recovery_scope: null, recovery_scope_ref: null, recovery_summary: null, recovery_payload_json: null })
+    claimWorkerLease(f.repos, {
+      runId: f.run.id,
+      workerInstanceId: "api-stale",
+      workerOwnerKind: "api",
+      now: Date.now() - 120_000,
+    })
+
+    const server = createServer((req, res) => {
+      void handleReplanRun(f.repos, req, res, f.run.id)
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Worker heartbeat is stale; replace the plan." }),
+      })
+      assert.equal(response.status, 200)
+      assert.deepEqual(await response.json(), { runId: f.run.id, status: "replanned" })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+    ) as PersistedImplementationPlanArtifact
+    assert.equal(persisted.metadata.activePlan.version, 2)
+    assert.equal(f.repos.getRun(f.run.id)?.id, f.run.id)
   } finally {
     f.close()
   }

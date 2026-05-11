@@ -44,7 +44,7 @@ import {
   runWorkspaceWorktreeGcCommand,
 } from "./cli/commands/workspaces.js"
 import { runSetupTelegramStatusCommand } from "./cli/commands/setup.js"
-import { runItemAction, runItemImportPrepared, runRunResumeCommand } from "./cli/commands/itemActions.js"
+import { runItemAction, runItemImportPrepared, runRunReplanCommand, runRunResumeCommand } from "./cli/commands/itemActions.js"
 import { runManagedInstallCommand } from "./cli/commands/install.js"
 import { runUpdateCommand } from "./cli/commands/update.js"
 import { runInteractiveWorkflow } from "./cli/workflow.js"
@@ -54,7 +54,7 @@ export { parseArgs } from "./cli/parse.js"
 export { resolveItemReference, runDoctor } from "./cli/common.js"
 export { resolveUiLaunchUrl, resolveUiWorkspacePath, startEngine, startUi } from "./cli/ui.js"
 export { runItemAction } from "./cli/commands/itemActions.js"
-export type { ResumeFlags } from "./cli/types.js"
+export type { ReplanFlags, ResumeFlags } from "./cli/types.js"
 
 async function runNotificationsTestCommand(channel: "telegram"): Promise<number> {
   const config = loadEffectiveConfig()
@@ -129,6 +129,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),
   "run-resume": cmd => runRunResumeCommand(cmd.runId, cmd.resume),
+  "run-replan": cmd => runRunReplanCommand(cmd.runId, cmd.replan),
   "run-open": cmd => runRunOpenCommand(cmd.runId),
   "run-tail": cmd => runRunTailCommand(cmd),
   "run-messages": cmd => runRunMessagesCommand(cmd),
