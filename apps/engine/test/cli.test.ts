@@ -176,6 +176,7 @@ test("doctor --json reports blocked status when the app config is uninitialized"
   const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
   const previousDataDir = process.env.BEERENGINEER_DATA_DIR
   const previousPath = process.env.PATH
+  const previousSandboxBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
   const binPath = resolve(engineRoot, "bin/beerengineer.js")
@@ -188,6 +189,7 @@ test("doctor --json reports blocked status when the app config is uninitialized"
     process.env.BEERENGINEER_CONFIG_PATH = configPath
     process.env.BEERENGINEER_DATA_DIR = dataDir
     process.env.PATH = `${stubBin}:${previousPath ?? ""}`
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
 
     const result = spawnSync(process.execPath, [binPath, "doctor", "--json"], {
       cwd: engineRoot,
@@ -198,9 +200,12 @@ test("doctor --json reports blocked status when the app config is uninitialized"
 
     const report = JSON.parse(result.stdout) as {
       overall: string
+      codexSandbox?: { state: string; reason: string }
       groups: Array<{ id: string; checks: Array<{ id: string; status: string }> }>
     }
     assert.equal(report.overall, "blocked")
+    assert.equal(report.codexSandbox?.state, "unverified_bypassing")
+    assert.equal(report.codexSandbox?.reason, "unverified")
     const core = report.groups.find(group => group.id === "core")
     assert.ok(core)
     assert.equal(core.checks.find(check => check.id === "core.config")?.status, "uninitialized")
@@ -211,6 +216,8 @@ test("doctor --json reports blocked status when the app config is uninitialized"
     else process.env.BEERENGINEER_DATA_DIR = previousDataDir
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
+    if (previousSandboxBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousSandboxBypass
     removeTempDir(dir)
   }
 })

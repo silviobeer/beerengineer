@@ -141,6 +141,7 @@ test("setup recheck forces a fresh Codex sandbox capability evaluation and later
     const beforeCheck = before.groups.flatMap(group => group.checks).find(check => check.id === "llm.openai.sandbox")
     assert.equal(beforeCheck?.status, "ok")
     assert.match(beforeCheck?.detail ?? "", /supported/i)
+    assert.equal(before.codexSandbox?.state, "supported_using_bwrap")
 
     const rechecked = await runSetupRecheck({
       group: "llm.openai",
@@ -149,6 +150,7 @@ test("setup recheck forces a fresh Codex sandbox capability evaluation and later
     const recheckedCheck = rechecked.report.groups.flatMap(group => group.checks).find(check => check.id === "llm.openai.sandbox")
     assert.equal(recheckedCheck?.status, "missing")
     assert.match(recheckedCheck?.detail ?? "", /unsupported/i)
+    assert.equal(rechecked.report.codexSandbox?.state, "unsupported_bypassing")
 
     const resolution = await resolveCodexSandboxBypass("safe-workspace-write", {})
     assert.deepEqual(resolution, { bypass: true, source: "capability" })
@@ -160,6 +162,7 @@ test("setup recheck forces a fresh Codex sandbox capability evaluation and later
     const afterCheck = after.groups.flatMap(group => group.checks).find(check => check.id === "llm.openai.sandbox")
     assert.equal(afterCheck?.status, "missing")
     assert.match(afterCheck?.detail ?? "", /unsupported/i)
+    assert.equal(after.codexSandbox?.state, "unsupported_bypassing")
     assert.equal(probes, 1)
   } finally {
     db.close()

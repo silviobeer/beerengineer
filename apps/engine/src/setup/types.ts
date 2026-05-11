@@ -1,3 +1,5 @@
+import type { CodexSandboxStatus } from "../llm/hosted/providers/codexSandboxPolicy.js"
+
 export type SetupStatus = "ok" | "missing" | "misconfigured" | "skipped" | "unknown" | "uninitialized"
 export type SetupLevel = "required" | "recommended" | "optional"
 export type SonarReadinessStatus = "ok" | "missing" | "invalid" | "unknown"
@@ -61,6 +63,7 @@ export type SetupReport = {
   overall: "ok" | "warning" | "blocked"
   groups: GroupResult[]
   generatedAt: number
+  codexSandbox?: CodexSandboxStatus
 }
 
 export type LlmProvider = "anthropic" | "openai" | "opencode"

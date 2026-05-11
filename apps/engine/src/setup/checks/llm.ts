@@ -3,11 +3,13 @@ import { initDatabase } from "../../db/connection.js"
 import { Repos } from "../../db/repositories.js"
 import {
   type CodexSandboxCapability,
+  type CodexSandboxStatus,
   type CodexSandboxCapabilitySnapshot,
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnknown,
   markCodexSandboxCapabilityUnsupported,
   parseCodexSandboxBypassOverride,
+  projectCodexSandboxStatus,
   readCodexSandboxCapabilitySnapshot,
   recheckCodexSandboxCapability,
 } from "../../llm/hosted/providers/codexSandboxPolicy.js"
@@ -16,6 +18,12 @@ import { createCheck, probeCommand, remedyForTool } from "./shared.js"
 
 type RunLlmChecksOptions = {
   freshCodexSandboxCapabilityCheck?: boolean
+  codexSandboxStatus?: ResolvedCodexSandboxStatus
+}
+
+type ResolvedCodexSandboxStatus = {
+  snapshot: CodexSandboxCapabilitySnapshot
+  status: CodexSandboxStatus
 }
 
 export function getActiveLlmGroup(config: AppConfig | null): string | null {
@@ -121,7 +129,10 @@ function syncCodexSandboxCapability(capability: CodexSandboxCapability): void {
   markCodexSandboxCapabilityUnknown()
 }
 
-function buildCodexSandboxCheck(snapshot: CodexSandboxCapabilitySnapshot): CheckResult {
+function buildCodexSandboxCheck(
+  input: ResolvedCodexSandboxStatus,
+): CheckResult {
+  const { snapshot, status } = input
   const override = parseCodexSandboxBypassOverride(process.env)
   if (override !== null) {
     const stored = snapshot.state === "known" ? snapshot.capability : snapshot.state
@@ -134,10 +145,10 @@ function buildCodexSandboxCheck(snapshot: CodexSandboxCapabilitySnapshot): Check
   }
 
   if (snapshot.state === "known") {
-    if (snapshot.capability === "supported") {
+    if (status.state === "supported_using_bwrap") {
       return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "ok", "Bubblewrap sandbox supported for Codex tool runs.")
     }
-    if (snapshot.capability === "unsupported") {
+    if (status.state === "unsupported_bypassing") {
       return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "missing", "Bubblewrap sandbox unsupported on this host; Codex tool runs will bypass sandboxing until rechecked.")
     }
     return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Bubblewrap sandbox capability is inconclusive; Codex tool runs will bypass sandboxing until rechecked.")
@@ -150,10 +161,10 @@ function buildCodexSandboxCheck(snapshot: CodexSandboxCapabilitySnapshot): Check
   return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Codex sandbox capability has not been detected yet.")
 }
 
-async function runCodexSandboxCheck(
+export async function resolveCodexSandboxStatus(
   config: AppConfig,
-  options: RunLlmChecksOptions,
-): Promise<CheckResult> {
+  options: RunLlmChecksOptions = {},
+): Promise<ResolvedCodexSandboxStatus> {
   const db = initDatabase(resolveConfiguredDbPath(config))
   const repos = new Repos(db)
   const store = {
@@ -174,10 +185,21 @@ async function runCodexSandboxCheck(
     if (snapshot.state === "known") {
       syncCodexSandboxCapability(snapshot.capability)
     }
-    return buildCodexSandboxCheck(snapshot)
+    return {
+      snapshot,
+      status: projectCodexSandboxStatus(snapshot),
+    }
   } finally {
     db.close()
   }
+}
+
+async function runCodexSandboxCheck(
+  config: AppConfig,
+  options: RunLlmChecksOptions,
+): Promise<CheckResult> {
+  const state = options.codexSandboxStatus ?? await resolveCodexSandboxStatus(config, options)
+  return buildCodexSandboxCheck(state)
 }
 
 async function runClaudeChecks(apiKeyRef: string, cliCheck: CheckResult): Promise<CheckResult[]> {

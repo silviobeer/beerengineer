@@ -23,6 +23,19 @@ function tempSetupPaths() {
   }
 }
 
+function openAiConfig(dataDir: string) {
+  return {
+    ...defaultAppConfig(),
+    dataDir,
+    llm: {
+      ...defaultAppConfig().llm,
+      provider: "openai" as const,
+      model: "gpt-5.4",
+      apiKeyRef: "OPENAI_API_KEY",
+    },
+  }
+}
+
 test("AC-1 setup status distinguishes required, recommended, and optional checks", async () => {
   const paths = tempSetupPaths()
   try {
@@ -95,6 +108,7 @@ test("AC-4 GET /setup/status report keeps the readiness model contract", async (
     assert.ok(["ok", "warning", "blocked"].includes(report.overall))
     assert.ok(Array.isArray(report.groups))
     assert.ok(report.groups.every(group => typeof group.id === "string" && Array.isArray(group.checks)))
+    assert.equal(typeof report.codexSandbox?.state, "string")
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
@@ -174,16 +188,7 @@ test("OpenAI setup status hydrates the Codex sandbox cache from persisted capabi
   resetCodexSandboxPolicyForTests()
   const paths = tempSetupPaths()
   const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
-  const config = {
-    ...defaultAppConfig(),
-    dataDir: paths.dataDir,
-    llm: {
-      ...defaultAppConfig().llm,
-      provider: "openai" as const,
-      model: "gpt-5.4",
-      apiKeyRef: "OPENAI_API_KEY",
-    },
-  }
+  const config = openAiConfig(paths.dataDir)
   writeConfigFile(paths.configPath, config)
   const db = initDatabase(resolveConfiguredDbPath(config))
   const repos = new Repos(db)
@@ -200,9 +205,76 @@ test("OpenAI setup status hydrates the Codex sandbox cache from persisted capabi
 
     assert.equal(sandboxCheck?.status, "missing")
     assert.match(sandboxCheck?.detail ?? "", /unsupported/i)
+    assert.deepEqual(report.codexSandbox, {
+      state: "unsupported_bypassing",
+      reason: "unsupported",
+      effectiveMode: "bypass",
+      detectedCapability: "unsupported",
+      overrideMode: null,
+    })
     assert.deepEqual(await resolveCodexSandboxBypass("safe-workspace-write", {}), {
       bypass: true,
       source: "capability",
+    })
+  } finally {
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    db.close()
+    rmSync(paths.dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})
+
+test("OpenAI setup status exposes distinct structured sandbox states", async () => {
+  resetCodexSandboxPolicyForTests()
+  const paths = tempSetupPaths()
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+  const config = openAiConfig(paths.dataDir)
+  writeConfigFile(paths.configPath, config)
+  const db = initDatabase(resolveConfiguredDbPath(config))
+  const repos = new Repos(db)
+
+  try {
+    repos.setCodexSandboxCapabilitySnapshot("supported")
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    let report = await generateSetupReport({
+      group: "llm.openai",
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir, llmProvider: "openai" },
+    })
+    assert.deepEqual(report.codexSandbox, {
+      state: "supported_using_bwrap",
+      reason: "supported",
+      effectiveMode: "bwrap",
+      detectedCapability: "supported",
+      overrideMode: null,
+    })
+
+    process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = "1"
+    report = await generateSetupReport({
+      group: "llm.openai",
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir, llmProvider: "openai" },
+    })
+    assert.deepEqual(report.codexSandbox, {
+      state: "override_bypassing",
+      reason: "override",
+      effectiveMode: "bypass",
+      detectedCapability: "supported",
+      overrideMode: "bypass",
+    })
+
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    repos.setCodexSandboxCapabilitySnapshot("unknown")
+    resetCodexSandboxPolicyForTests()
+    report = await generateSetupReport({
+      group: "llm.openai",
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir, llmProvider: "openai" },
+    })
+    assert.deepEqual(report.codexSandbox, {
+      state: "unverified_bypassing",
+      reason: "unverified",
+      effectiveMode: "bypass",
+      detectedCapability: "unknown",
+      overrideMode: null,
     })
   } finally {
     if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
