@@ -189,7 +189,7 @@ function parseItemSubcommand(context: ParseArgsContext): Command | null {
   const { first, second, argv, workspaceKey, json } = context
   if (first !== "item") return null
   if (second === "import-prepared") {
-    const itemRef = argv[2] && !argv[2].startsWith("--") ? argv[2] : undefined
+    const itemRef = argv[2]?.startsWith("--") ? undefined : argv[2]
     return { kind: "item-import-prepared", itemRef, sourceDir: readFlag(argv, "--from"), workspaceKey, json }
   }
   if (second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
@@ -213,7 +213,7 @@ function buildParseArgsContext(argv: string[]): ParseArgsContext {
   const messagesLevel = messagingLevelFromQuery(readFlag(argv, "--level"), 2)
   const rawLimit = Number(readFlag(argv, "--limit") ?? 200)
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 200
-  const positionalThird = argv[2] && !argv[2].startsWith("--") ? argv[2] : undefined
+  const positionalThird = argv[2]?.startsWith("--") ? undefined : argv[2]
   return {
     argv,
     first,

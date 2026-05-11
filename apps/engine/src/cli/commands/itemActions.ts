@@ -154,7 +154,7 @@ function runResumeCommand(runId: string): string {
 }
 
 function printEngineRecoveryMessage(message: string): void {
-  console.error(message.replace(/\r\n/g, "\n").trimEnd())
+  console.error(message.replaceAll("\r\n", "\n").trimEnd())
 }
 
 function supabaseProvisioningPayloadForRun(
