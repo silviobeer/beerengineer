@@ -1,9 +1,9 @@
 import Database from "better-sqlite3"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
-import { homedir } from "node:os"
 import { fileURLToPath } from "node:url"
 import { REQUIRED_MIGRATION_LEVEL, getConfiguredDataDirOrNull } from "../setup/config.js"
+import { ensureLegacyDbReconciled, legacyDbShadowRequiresWarning, resolveLegacyDbPath } from "./legacyDbReconciler.js"
 
 export type Db = Database.Database
 export type ResolvedDbPathSource = "override" | "env" | "configured" | "legacy"
@@ -13,7 +13,6 @@ export type ResolvedDbPathInfo = {
   warnings: string[]
 }
 
-const legacyDbPath = () => resolve(homedir(), ".local", "share", "beerengineer", "beerengineer.sqlite")
 const emittedDbPathWarnings = new Set<string>()
 
 function emitDbPathWarningOnce(key: string, message: string): void {
@@ -48,16 +47,18 @@ export function resolveDbPathInfo(override?: string | null): ResolvedDbPathInfo 
   const configuredDataDir = getConfiguredDataDirOrNull()
   if (configuredDataDir != null) {
     const configuredDb = resolve(configuredDataDir, "beerengineer.sqlite")
-    const legacy = legacyDbPath()
+    const legacy = resolveLegacyDbPath()
     const warnings: string[] = []
-    // Warn when both files exist so the user knows they may be looking at stale data.
-    if (existsSync(configuredDb) && existsSync(legacy) && configuredDb !== legacy) {
+    if (legacyDbShadowRequiresWarning()) {
       warnings.push(`legacy-db-shadow:${legacy}`)
       emitDbPathWarningOnce(
         `legacy-db-shadow:${configuredDb}:${legacy}`,
-        `[engine] WARNING: both the configured DB (${configuredDb}) and the legacy DB (${legacy}) exist. ` +
-        `The engine will use the configured path. If you have data in the legacy location, ` +
-        `copy it manually before removing the old file.\n`,
+        existsSync(configuredDb)
+          ? `[engine] WARNING: both the configured DB (${configuredDb}) and the legacy DB (${legacy}) exist. ` +
+            `The engine will use the configured path. If you have data in the legacy location, ` +
+            `copy it manually before removing the old file.\n`
+          : `[engine] WARNING: configured DB (${configuredDb}) is missing while legacy DB (${legacy}) still exists. ` +
+            `The engine will keep the legacy shadow in place until the configured path is restored or the old DB is removed manually.\n`,
       )
     }
     return { path: configuredDb, source: "configured", warnings }
@@ -67,7 +68,7 @@ export function resolveDbPathInfo(override?: string | null): ResolvedDbPathInfo 
   process.stderr.write(
     "[engine] db path fell back to legacy location — run beerengineer setup\n",
   )
-  return { path: legacyDbPath(), source: "legacy", warnings: [] }
+  return { path: resolveLegacyDbPath(), source: "legacy", warnings: [] }
 }
 
 export function resolveDbPath(override?: string | null): string {
@@ -75,6 +76,7 @@ export function resolveDbPath(override?: string | null): string {
 }
 
 export function openDatabase(dbPath?: string | null): Db {
+  ensureLegacyDbReconciled()
   const p = resolveDbPath(dbPath)
   mkdirSync(dirname(p), { recursive: true })
   const db = new Database(p)
