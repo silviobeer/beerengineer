@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { accessSync, constants as fsConstants } from "node:fs"
 import type { RuntimePolicy } from "../../runtimePolicy.js"
 
 export type CodexSandboxCapability = "supported" | "unsupported" | "unknown"
@@ -17,6 +18,12 @@ type CodexSandboxCapabilityStore = {
 const TRUE_VALUES = new Set(["1", "true", "yes"])
 const FALSE_VALUES = new Set(["0", "false", "no"])
 const DEFAULT_PROBE_TIMEOUT_MS = 2000
+const BWRAP_BINARY_PATHS = [
+  "/usr/bin/bwrap",
+  "/bin/bwrap",
+  "/usr/local/bin/bwrap",
+  "/run/current-system/sw/bin/bwrap",
+]
 const BWRAP_PROBE_ARGS = [
   "--die-with-parent",
   "--unshare-user",
@@ -128,11 +135,29 @@ function classifyProbeFailure(text: string): CodexSandboxCapability {
   return "unknown"
 }
 
+function resolveBwrapBinaryPath(): string | null {
+  for (const candidate of BWRAP_BINARY_PATHS) {
+    try {
+      accessSync(candidate, fsConstants.X_OK)
+      return candidate
+    } catch {
+      // Keep checking the fixed candidate list.
+    }
+  }
+  return null
+}
+
 function runDefaultCapabilityProbe(): Promise<CodexSandboxCapability> {
   return new Promise(resolve => {
+    const bwrapPath = resolveBwrapBinaryPath()
+    if (!bwrapPath) {
+      resolve("unsupported")
+      return
+    }
+
     let settled = false
     let stderr = ""
-    const child = spawn("bwrap", BWRAP_PROBE_ARGS, {
+    const child = spawn(bwrapPath, BWRAP_PROBE_ARGS, {
       stdio: ["ignore", "ignore", "pipe"],
     })
 
