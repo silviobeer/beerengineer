@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events"
 import type { ExternalRemediationRow, ItemRow, Repos, RunRow } from "../db/repositories.js"
-import { recordAnswer } from "./conversation.js"
+import { answerRunPromptInProcess } from "./runService.js"
 import { loadResumeReadiness } from "./resume.js"
 
 export type ItemAction =
@@ -360,11 +360,13 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     const liveRun = repos.latestActiveRunForItem(item.id)
     const supportedPrompt = liveRun ? promptSupportsAnswer(liveRun.id, transition.promoteAnswer) : null
     if (supportedPrompt) {
-      const answered = recordAnswer(repos, {
+      const answered = await answerRunPromptInProcess(repos, {
         runId: supportedPrompt.runId,
         promptId: supportedPrompt.promptId,
         answer: transition.promoteAnswer,
         source: "api",
+      }, {
+        resumeBlockedRunInProcess: true,
       })
       if (!answered.ok) {
         return {
