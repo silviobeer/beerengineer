@@ -3414,6 +3414,13 @@
             "type": "string",
             "nullable": true
           },
+          "supabaseDbMode": {
+            "type": "string",
+            "enum": [
+              "branching",
+              "direct"
+            ]
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -4991,6 +4998,13 @@
               },
               "region": {
                 "type": "string"
+              },
+              "dbMode": {
+                "type": "string",
+                "enum": [
+                  "branching",
+                  "direct"
+                ]
               },
               "persistentTestBranchName": {
                 "type": "string"

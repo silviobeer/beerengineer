@@ -46,7 +46,11 @@ export function buildSupabaseWorkflowHook(
   workspaceRow: WorkspaceRow | undefined,
   supabaseAdapterFactory?: SupabaseAdapterFactory | null,
 ): SupabaseWorkflowHook | undefined {
-  if (!supabaseAdapterFactory || !workspaceRow?.supabase_project_ref || !workspaceRow.supabase_persistent_test_branch_ref) {
+  if (!supabaseAdapterFactory || !workspaceRow?.supabase_project_ref) {
+    return undefined
+  }
+  const dbMode = workspaceRow.supabase_db_mode ?? "branching"
+  if (dbMode !== "direct" && !workspaceRow.supabase_persistent_test_branch_ref) {
     return undefined
   }
 
@@ -62,7 +66,8 @@ export function buildSupabaseWorkflowHook(
     managementClient: built.managementClient,
     workspaceId,
     projectRef: workspaceRow.supabase_project_ref,
-    parentBranchRef: workspaceRow.supabase_persistent_test_branch_ref,
+    dbMode,
+    parentBranchRef: workspaceRow.supabase_persistent_test_branch_ref ?? undefined,
     protectionSwitch: workspaceRow.supabase_protection_switch ?? "off",
     cleanupPolicy: workspaceRow.supabase_cleanup_policy ?? "on-success-immediate",
     cleanupTtlHours: workspaceRow.supabase_cleanup_ttl_hours ?? null,

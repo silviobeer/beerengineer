@@ -132,6 +132,71 @@ test("mergeGate accepts common approval wording as promotion", async () => {
   assert.equal(merged, true)
 })
 
+test("REQ-3 AC-3.4: direct-mode merge gate skips automatic production migration", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-gate-direct-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+
+  try {
+    const workspace = repos.upsertWorkspace({ key: "direct", name: "Direct", rootPath: dir })
+    repos.connectWorkspaceSupabase(workspace.id, { projectRef: "proj_direct", region: "eu-central-1", dbMode: "direct" })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Item", description: "Desc" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: "Run" })
+
+    const git = makeGit()
+    let merged = false
+    git.mergeItemIntoBase = () => {
+      merged = true
+      return { mergeSha: "deadbeef" }
+    }
+
+    let migrationAttempts = 0
+    const supabaseHook: SupabaseWorkflowHook = {
+      repos,
+      adapter: {
+        provisionBranch: async () => ({ ok: true }),
+        pollBranchStatus: async () => ({ ok: true }),
+        validateBranch: async () => ({ ok: true }),
+        destroyBranch: async () => ({ ok: true }),
+        migrateProduction: async () => {
+          migrationAttempts += 1
+          return { ok: true }
+        },
+        reconcile: async () => ({ ok: true }),
+      },
+      workspaceId: workspace.id,
+      projectRef: "proj_direct",
+      dbMode: "direct",
+      protectionSwitch: "off",
+      cleanupPolicy: "manual",
+    }
+
+    await runWithWorkflowIO(
+      {
+        ask: async () => "promote",
+        emit: () => {},
+      },
+      () =>
+        runWithActiveRun({ runId: run.id, itemId: item.id, stageRunId: "stage-1" }, () =>
+          mergeGate(
+            makeContext({ workspaceId: workspace.id, workspaceRoot: dir, runId: run.id, itemSlug: "direct-item" }),
+            git,
+            async () => {
+              throw new Error("blocked")
+            },
+            supabaseHook,
+          ),
+        ),
+    )
+
+    assert.equal(merged, true)
+    assert.equal(migrationAttempts, 0)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("PROJ-8-PRD-3-US-3: healthy Supabase wiring still blocks destructive production migrations before merge or provider mutation", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-merge-gate-safety-"))
   const db = initDatabase(join(dir, "db.sqlite"))
@@ -169,6 +234,7 @@ test("PROJ-8-PRD-3-US-3: healthy Supabase wiring still blocks destructive produc
       },
       workspaceId: workspace.id,
       projectRef: "proj_demo",
+      dbMode: "branching",
       parentBranchRef: "branch_demo",
       protectionSwitch: "on",
       cleanupPolicy: "manual",

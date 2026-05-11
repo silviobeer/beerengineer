@@ -62,6 +62,20 @@ export async function provisionWaveIfDbRelevant(input: {
     return { ok: true, branchRef: context.branchRef ?? "", handoffPath: "" }
   }
 
+  if (context.dbMode === "direct") {
+    const directHandoff = await writeWaveHandoff({
+      handoffClient: input.handoffClient,
+      workspaceRoot: context.workspaceRoot,
+      runId: context.runId,
+      waveId: wave.id,
+      projectRef: context.projectRef,
+      dbMode: "direct",
+      branchRef: context.branchRef,
+    })
+    if (!directHandoff.ok) return directHandoff
+    return { ok: true, branchRef: "", handoffPath: directHandoff.handoffPath }
+  }
+
   // Step 1: provision
   const provisionResult = await adapter.provisionBranch({ ...context, waveId: wave.id })
   if (!provisionResult.ok) {
@@ -84,38 +98,17 @@ export async function provisionWaveIfDbRelevant(input: {
   }
 
   // Step 3: write handoff dotenv (architecture decision 18: write before validation)
-  let handoffPath = ""
-  if (
-    input.handoffClient &&
-    context.workspaceRoot &&
-    context.runId &&
-    wave.id &&
-    context.projectRef &&
-    branchRef
-  ) {
-    try {
-      await ensureSupabaseHandoffGitignore(context.workspaceRoot)
-      const handoff = await writeSupabaseHandoff({
-        workspaceRoot: context.workspaceRoot,
-        runId: context.runId,
-        waveId: wave.id,
-        projectRef: context.projectRef,
-        branchRef,
-        client: input.handoffClient,
-      })
-      handoffPath = handoff.path
-    } catch (err) {
-      // EEXIST means the handoff already exists (resume path); continue
-      if ((err as NodeJS.ErrnoException).code === "EEXIST" ||
-          (err as Error).message?.includes("already exists")) {
-        // idempotent — find the path without re-writing
-        const { supabaseHandoffPath } = await import("../../core/supabase/handoffWriter.js")
-        handoffPath = supabaseHandoffPath(context.workspaceRoot, context.runId, wave.id)
-      } else {
-        return { ok: false, error: "handoff_write_failed", details: (err as Error).message }
-      }
-    }
-  }
+  const handoff = await writeWaveHandoff({
+    handoffClient: input.handoffClient,
+    workspaceRoot: context.workspaceRoot,
+    runId: context.runId,
+    waveId: wave.id,
+    projectRef: context.projectRef,
+    dbMode: "branching",
+    branchRef,
+  })
+  if (!handoff.ok) return handoff
+  const handoffPath = handoff.handoffPath
 
   // Step 4: validate (migrations + seeds + DB tests)
   const validateResult = await adapter.validateBranch({
@@ -135,4 +128,41 @@ export async function provisionWaveIfDbRelevant(input: {
   }
 
   return { ok: true, branchRef, handoffPath }
+}
+
+async function writeWaveHandoff(input: {
+  handoffClient?: SupabaseHandoffClient
+  workspaceRoot?: string
+  runId?: string
+  waveId: string
+  projectRef?: string
+  dbMode: "branching" | "direct"
+  branchRef?: string
+}): Promise<
+  | { ok: true; handoffPath: string }
+  | { ok: false; error: string; details?: unknown }
+> {
+  if (!input.handoffClient || !input.workspaceRoot || !input.runId || !input.projectRef) {
+    return { ok: true, handoffPath: "" }
+  }
+  try {
+    await ensureSupabaseHandoffGitignore(input.workspaceRoot)
+    const handoff = await writeSupabaseHandoff({
+      workspaceRoot: input.workspaceRoot,
+      runId: input.runId,
+      waveId: input.waveId,
+      projectRef: input.projectRef,
+      dbMode: input.dbMode,
+      branchRef: input.branchRef,
+      client: input.handoffClient,
+    })
+    return { ok: true, handoffPath: handoff.path }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST" ||
+        (err as Error).message?.includes("already exists")) {
+      const { supabaseHandoffPath } = await import("../../core/supabase/handoffWriter.js")
+      return { ok: true, handoffPath: supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId) }
+    }
+    return { ok: false, error: "handoff_write_failed", details: (err as Error).message }
+  }
 }

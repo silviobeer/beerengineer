@@ -167,6 +167,7 @@ async function executeWave(
       workspaceId: supabaseHook.workspaceId,
       workspaceRoot: ctx.workspaceRoot,
       projectRef: supabaseHook.projectRef,
+      dbMode: supabaseHook.dbMode,
       parentBranchRef: supabaseHook.parentBranchRef,
       runId: activeRun?.runId ?? ctx.runId,
       itemId: activeRun?.itemId,

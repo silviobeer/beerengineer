@@ -12,7 +12,7 @@ export type PersistentTestBranchResult =
   | { ok: true; action: "created" | "attached" | "already-connected"; branch: SupabaseBranch; name: string }
   | {
       ok: false
-      error: "workspace_not_found" | "supabase_not_connected" | "branch_not_found" | "branch_not_ready"
+      error: "workspace_not_found" | "supabase_not_connected" | "branch_not_found" | "branch_not_ready" | "branching_unavailable"
       message: string
       recheckRecommended?: boolean
     }
@@ -33,6 +33,12 @@ function isAlreadyExistsError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   const status = typeof err === "object" && err ? (err as { status?: unknown }).status : undefined
   return status === 409 || /already exists|already_exists|conflict/i.test(message)
+}
+
+function isBranchingUnavailableError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  const status = typeof err === "object" && err ? (err as { status?: unknown }).status : undefined
+  return status === 402 || /branching.+(unavailable|not enabled)|payment required/i.test(message)
 }
 
 export async function createOrAttachPersistentTestBranch(input: {
@@ -82,6 +88,13 @@ export async function createOrAttachPersistentTestBranch(input: {
     try {
       branch = await input.client.createBranch(workspace.supabase_project_ref, { name, parentRef: input.parentRef })
     } catch (err) {
+      if (isBranchingUnavailableError(err)) {
+        return {
+          ok: false,
+          error: "branching_unavailable",
+          message: "Supabase branching is unavailable for this project. Reconnect the workspace to continue in direct mode.",
+        }
+      }
       if (!isAlreadyExistsError(err)) throw err
       branch = (await input.client.listBranches(workspace.supabase_project_ref)).find(candidate => candidate.name === name)
       if (!branch) throw err

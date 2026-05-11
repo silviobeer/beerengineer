@@ -231,7 +231,9 @@ function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | n
 function missingSupabaseCapabilityRequirements(workspace: WorkspaceRow, token: string | null): string[] {
   const missing: string[] = []
   if (!token) missing.push("management token")
-  if (!workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
+  if (workspace.supabase_db_mode !== "direct" && !workspace.supabase_persistent_test_branch_ref?.trim()) {
+    missing.push("persistent test branch")
+  }
   return missing
 }
 
@@ -260,6 +262,7 @@ function defaultSupabaseAdapterFactory(
           client,
         }),
         managementClient: client,
+        handoffClient: client,
       }
     },
   }
