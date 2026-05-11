@@ -2,6 +2,8 @@ import type { AppConfig, CheckResult } from "../types.js"
 import { initDatabase } from "../../db/connection.js"
 import { Repos } from "../../db/repositories.js"
 import {
+  type CodexSandboxCapability,
+  type CodexSandboxCapabilitySnapshot,
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnknown,
   markCodexSandboxCapabilityUnsupported,
@@ -107,6 +109,47 @@ async function runCodexChecks(
   ]
 }
 
+function syncCodexSandboxCapability(capability: CodexSandboxCapability): void {
+  if (capability === "supported") {
+    markCodexSandboxCapabilitySupported()
+    return
+  }
+  if (capability === "unsupported") {
+    markCodexSandboxCapabilityUnsupported()
+    return
+  }
+  markCodexSandboxCapabilityUnknown()
+}
+
+function buildCodexSandboxCheck(snapshot: CodexSandboxCapabilitySnapshot): CheckResult {
+  const override = parseCodexSandboxBypassOverride(process.env)
+  if (override !== null) {
+    const stored = snapshot.state === "known" ? snapshot.capability : snapshot.state
+    return createCheck(
+      "llm.openai.sandbox",
+      "OpenAI / Codex sandbox",
+      "ok",
+      `${override ? "Bypass forced on" : "Bypass forced off"} via BEERENGINEER_CODEX_SANDBOX_BYPASS; stored capability is ${stored}.`,
+    )
+  }
+
+  if (snapshot.state === "known") {
+    if (snapshot.capability === "supported") {
+      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "ok", "Bubblewrap sandbox supported for Codex tool runs.")
+    }
+    if (snapshot.capability === "unsupported") {
+      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "missing", "Bubblewrap sandbox unsupported on this host; Codex tool runs will bypass sandboxing until rechecked.")
+    }
+    return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Bubblewrap sandbox capability is inconclusive; Codex tool runs will bypass sandboxing until rechecked.")
+  }
+
+  if (snapshot.state === "invalid") {
+    return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Stored Codex sandbox capability state is invalid; the next Codex tool run will safely re-evaluate it.")
+  }
+
+  return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Codex sandbox capability has not been detected yet.")
+}
+
 async function runCodexSandboxCheck(
   config: AppConfig,
   options: RunLlmChecksOptions,
@@ -124,38 +167,14 @@ async function runCodexSandboxCheck(
     const capability = options.freshCodexSandboxCapabilityCheck
       ? await recheckCodexSandboxCapability(store)
       : undefined
-    const snapshot = capability === undefined
+    const snapshot: CodexSandboxCapabilitySnapshot = capability === undefined
       ? readCodexSandboxCapabilitySnapshot(store)
-      : { state: "known" as const, capability }
+      : { state: "known", capability }
 
-    if (capability === "supported") markCodexSandboxCapabilitySupported()
-    else if (capability === "unsupported") markCodexSandboxCapabilityUnsupported()
-    else if (capability === "unknown") markCodexSandboxCapabilityUnknown()
-
-    const override = parseCodexSandboxBypassOverride(process.env)
-    if (override !== null) {
-      const stored = snapshot.state === "known" ? snapshot.capability : snapshot.state
-      return createCheck(
-        "llm.openai.sandbox",
-        "OpenAI / Codex sandbox",
-        "ok",
-        `${override ? "Bypass forced on" : "Bypass forced off"} via BEERENGINEER_CODEX_SANDBOX_BYPASS; stored capability is ${stored}.`,
-      )
-    }
-
-    if (snapshot.state === "known" && snapshot.capability === "supported") {
-      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "ok", "Bubblewrap sandbox supported for Codex tool runs.")
-    }
-    if (snapshot.state === "known" && snapshot.capability === "unsupported") {
-      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "missing", "Bubblewrap sandbox unsupported on this host; Codex tool runs will bypass sandboxing until rechecked.")
-    }
     if (snapshot.state === "known") {
-      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Bubblewrap sandbox capability is inconclusive; Codex tool runs will bypass sandboxing until rechecked.")
+      syncCodexSandboxCapability(snapshot.capability)
     }
-    if (snapshot.state === "invalid") {
-      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Stored Codex sandbox capability state is invalid; the next Codex tool run will safely re-evaluate it.")
-    }
-    return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Codex sandbox capability has not been detected yet.")
+    return buildCodexSandboxCheck(snapshot)
   } finally {
     db.close()
   }
