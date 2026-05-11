@@ -251,6 +251,24 @@ test("TC-7 dependency scan ignores out-of-scope docs", () => {
   }
 })
 
+test("TC-7b dependency scan ignores nested docs below the approved ADR scope", () => {
+  const root = createFixture()
+  try {
+    writeFile(
+      root,
+      "docs/adr/archive/old-decision.md",
+      "# Archived\n\nCurrent dependency: next@^99.0.0\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
 test("TC-8 in-scope dependency mismatch reports doc and manifest", () => {
   const root = createFixture()
   try {
@@ -372,6 +390,30 @@ test("TC-8d2 direct apps manifests are included in approved dependency truth", (
   }
 })
 
+test("TC-8d3 current-guidance headings apply to the following pinned dependency bullet", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependencies:",
+        "- next@^99.0.0",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
 test("TC-8e current stale claim is reported while historical and example references are ignored", () => {
   const root = createFixture()
   try {
@@ -395,6 +437,28 @@ test("TC-8e current stale claim is reported while historical and example referen
     assert.equal(result.findings.dependencyClaims.length, 1)
     assert.equal(result.findings.dependencyClaims[0].packageName, "next")
     assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8e2 non-current headings suppress following pinned dependency bullets", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical dependencies:",
+        "- next@^99.0.0",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
   } finally {
     cleanup(root)
   }

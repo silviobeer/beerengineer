@@ -75,13 +75,19 @@ function getInScopeDocs(rootPath) {
     })
   }
 
-  for (const absolutePath of walkFiles(join(rootPath, "docs", "adr"))) {
-    if (!absolutePath.endsWith(".md")) continue
-    docs.push({
-      docPath: toRepoPath(rootPath, absolutePath),
-      absolutePath,
-      content: readFileSync(absolutePath, "utf8"),
-    })
+  const adrDir = join(rootPath, "docs", "adr")
+  if (existsSync(adrDir)) {
+    for (const entry of readdirSync(adrDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      if (!entry.name.endsWith(".md")) continue
+
+      const absolutePath = join(adrDir, entry.name)
+      docs.push({
+        docPath: toRepoPath(rootPath, absolutePath),
+        absolutePath,
+        content: readFileSync(absolutePath, "utf8"),
+      })
+    }
   }
 
   docs.sort((left, right) => left.docPath.localeCompare(right.docPath))
@@ -185,9 +191,12 @@ function findMissingProjects(rootPath, docsProjectContent) {
   return findings
 }
 
-function isCurrentDependencyClaim(line) {
+function isCurrentDependencyClaim(line, previousContextLine = "") {
   if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return false
-  return CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)
+  if (CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(line)) return true
+  if (!previousContextLine) return false
+  if (NON_CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(previousContextLine)) return false
+  return CURRENT_DEPENDENCY_CONTEXT_PATTERN.test(previousContextLine)
 }
 
 function findDependencyClaimDrift(rootPath, docs) {
@@ -197,6 +206,7 @@ function findDependencyClaimDrift(rootPath, docs) {
   for (const doc of docs) {
     const lines = doc.content.split(/\r?\n/)
     let insideFencedCodeBlock = false
+    let previousContextLine = ""
     for (const [index, line] of lines.entries()) {
       if (FENCED_CODE_DELIMITER_PATTERN.test(line)) {
         insideFencedCodeBlock = !insideFencedCodeBlock
@@ -204,7 +214,10 @@ function findDependencyClaimDrift(rootPath, docs) {
       }
 
       if (insideFencedCodeBlock) continue
-      if (!isCurrentDependencyClaim(line)) continue
+      if (!isCurrentDependencyClaim(line, previousContextLine)) {
+        if (line.trim().length > 0) previousContextLine = line
+        continue
+      }
 
       for (const match of line.matchAll(DEPENDENCY_CLAIM_PATTERN)) {
         const packageName = match.groups?.package
@@ -237,6 +250,8 @@ function findDependencyClaimDrift(rootPath, docs) {
           claim: `${packageName}@${claimedVersion}`,
         })
       }
+
+      if (line.trim().length > 0) previousContextLine = line
     }
   }
 
