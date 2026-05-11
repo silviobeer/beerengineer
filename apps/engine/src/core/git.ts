@@ -12,7 +12,10 @@ export type { RebaseStoryResult } from "./git/merge.js"
 export {
   assertWorkspaceRootOnBaseBranch,
   detectGitMode,
+  dirtyPathMatchesAllowlist,
   inspectWorkspaceState,
+  normalizeRepoRelativePath,
+  resolveDirtyMasterAllowlistPatterns,
 } from "./git/inspect.js"
 
 export {
