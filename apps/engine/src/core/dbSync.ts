@@ -274,6 +274,19 @@ export function attachDbSync(
         ctx.itemId,
         wasSoleLiveRun,
       )),
+    dirty_master_allowlist_restore: logOnly<"dirty_master_allowlist_restore">(event => ({
+      runId: event.runId,
+      eventType: "dirty_master_allowlist_restore",
+      message: `${event.status} ${event.paths.length} allowlisted path(s) on ${event.branch}`,
+      data: {
+        itemId: event.itemId,
+        title: event.title,
+        branch: event.branch,
+        paths: event.paths,
+        status: event.status,
+        error: event.error,
+      },
+    })),
     external_remediation_recorded: logOnly<"external_remediation_recorded">(event => ({
       runId: event.runId,
       eventType: "external_remediation_recorded",
