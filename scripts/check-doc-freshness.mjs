@@ -8,6 +8,9 @@ const IN_SCOPE_DOCS = [
   "docs/AGENTS.md",
   "docs/PROJECT.md",
   "docs/TECHNICAL.md",
+  "apps/ui/README.md",
+  "apps/engine/docs/AGENTS.md",
+  "apps/ui/docs/AGENTS.md",
 ]
 
 const ROOT_PATH_PREFIXES = [
@@ -397,49 +400,48 @@ export function checkDocFreshness(rootPath = process.cwd()) {
 
 export function formatDocFreshnessReport(result) {
   if (result.ok) {
-    return "Documentation freshness check passed."
+    return "Documentation freshness check passed: no freshness issues were detected."
   }
 
   const lines = ["Documentation freshness check failed.", ""]
 
-  if (result.findings.missingProjects.length > 0) {
-    lines.push("Missing completed PROJs:")
-    for (const finding of result.findings.missingProjects) {
-      lines.push(
-        `- ${finding.docPath}: ${finding.projId} is missing even though ${finding.progressPath} contains ${finding.logCount} progress log(s).`,
-      )
-    }
-    lines.push("")
+  for (const finding of [
+    ...result.findings.missingProjects.map((finding) => ({
+      docPath: finding.docPath,
+      ruleId: "completed-proj-parity",
+      sortKey: [finding.docPath, "completed-proj-parity", finding.projId],
+      message:
+        `${finding.projId} is missing even though ${finding.progressPath} contains ${finding.logCount} progress markdown file(s).`,
+    })),
+    ...result.findings.dependencyClaims.map((finding) => ({
+      docPath: finding.docPath,
+      ruleId: "dependency-claim-parity",
+      sortKey: [
+        finding.docPath,
+        "dependency-claim-parity",
+        `${String(finding.lineNumber).padStart(6, "0")}:${finding.packageName}`,
+      ],
+      message: finding.manifestPath && finding.actualVersion
+        ? `claims ${finding.claim}, but ${finding.manifestPath} declares ${finding.packageName}@${finding.actualVersion}.`
+        : `claims ${finding.claim}, but ${finding.packageName} has no approved manifest entry in package.json or apps/*/package.json.`,
+    })),
+    ...result.findings.stalePaths.map((finding) => ({
+      docPath: finding.docPath,
+      ruleId: "deleted-directory-reference",
+      sortKey: [
+        finding.docPath,
+        "deleted-directory-reference",
+        `${String(finding.lineNumber).padStart(6, "0")}:${finding.referencedPath}`,
+      ],
+      message: `references ${finding.referencedPath}, but that directory does not exist in the repo.`,
+    })),
+  ].sort((left, right) =>
+    left.sortKey.join("\u0000").localeCompare(right.sortKey.join("\u0000")),
+  )) {
+    lines.push(`- ${finding.docPath} [${finding.ruleId}] ${finding.message}`)
   }
 
-  if (result.findings.dependencyClaims.length > 0) {
-    lines.push("Dependency claim drift:")
-    for (const finding of result.findings.dependencyClaims) {
-      if (finding.manifestPath && finding.actualVersion) {
-        lines.push(
-          `- ${finding.docPath}:${finding.lineNumber} claims ${finding.claim}, but ${finding.manifestPath} declares ${finding.packageName}@${finding.actualVersion}.`,
-        )
-        continue
-      }
-
-      lines.push(
-        `- ${finding.docPath}:${finding.lineNumber} claims ${finding.claim}, but ${finding.packageName} has no approved manifest entry in package.json or apps/*/package.json.`,
-      )
-    }
-    lines.push("")
-  }
-
-  if (result.findings.stalePaths.length > 0) {
-    lines.push("Stale active path references:")
-    for (const finding of result.findings.stalePaths) {
-      lines.push(
-        `- ${finding.docPath}:${finding.lineNumber} references ${finding.referencedPath}, but that path does not exist in the repo.`,
-      )
-    }
-    lines.push("")
-  }
-
-  return lines.join("\n").trimEnd()
+  return lines.join("\n")
 }
 
 function runCli() {
