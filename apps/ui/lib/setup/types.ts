@@ -36,11 +36,25 @@ export interface SetupGroup {
   checks: SetupCheck[];
 }
 
+export interface CodexSandboxStatus {
+  state:
+    | "supported_using_bwrap"
+    | "unsupported_bypassing"
+    | "override_using_bwrap"
+    | "override_bypassing"
+    | "unverified_bypassing";
+  reason: "supported" | "unsupported" | "override" | "unverified";
+  effectiveMode: "bwrap" | "bypass";
+  detectedCapability: "supported" | "unsupported" | "unknown" | "missing" | "invalid";
+  overrideMode: "bwrap" | "bypass" | null;
+}
+
 export interface SetupReport {
   reportVersion: 1;
   overall: "ok" | "warning" | "blocked";
   groups: SetupGroup[];
   generatedAt: number;
+  codexSandbox?: CodexSandboxStatus;
 }
 
 export interface GitIdentityDefault {

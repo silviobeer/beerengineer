@@ -541,6 +541,93 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
   }
 })
 
+test("invokeCodex launch wiring consults persisted capability state before choosing sandbox mode", async () => {
+  resetCodexSandboxPolicyForTests()
+  const dir = mkdtempSync(join(tmpdir(), "be2-codex-provider-"))
+  const binDir = join(dir, "bin")
+  const attemptsPath = join(dir, "attempts.log")
+  const db = initDatabase(join(dir, "test.sqlite"))
+  const repos = new Repos(db)
+  const previousPath = process.env.PATH
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+
+  try {
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+printf '%s\n' "$*" >> "${attemptsPath}"
+response=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then
+    response="$arg"
+    break
+  fi
+  prev="$arg"
+done
+printf '{"summary":"done"}' > "$response"
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-persisted-state"}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+
+    repos.setCodexSandboxCapabilitySnapshot("supported")
+    setCodexSandboxCapabilityStore({
+      load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+      persist: capability => {
+        repos.setCodexSandboxCapabilitySnapshot(capability)
+      },
+    })
+    await invokeCodex({
+      prompt: "hello supported",
+      runtime: {
+        harness: "codex",
+        runtime: "cli",
+        provider: "openai",
+        workspaceRoot: dir,
+        policy: { mode: "safe-workspace-write" },
+      } as HostedProviderInvokeInput["runtime"],
+      session: null,
+    })
+
+    resetCodexSandboxPolicyForTests()
+    repos.setCodexSandboxCapabilitySnapshot("unsupported")
+    setCodexSandboxCapabilityStore({
+      load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+      persist: capability => {
+        repos.setCodexSandboxCapabilitySnapshot(capability)
+      },
+    })
+    await invokeCodex({
+      prompt: "hello unsupported",
+      runtime: {
+        harness: "codex",
+        runtime: "cli",
+        provider: "openai",
+        workspaceRoot: dir,
+        policy: { mode: "safe-workspace-write" },
+      } as HostedProviderInvokeInput["runtime"],
+      session: null,
+    })
+
+    const attempts = readFileSync(attemptsPath, "utf8").trim().split(/\r?\n/)
+    assert.equal(attempts.length, 2)
+    assert.match(attempts[0] ?? "", /--sandbox workspace-write/)
+    assert.match(attempts[1] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})
+
 test("invokeCodex retries once with bypass after a CAP_NET_ADMIN sandbox-capability failure", async () => {
   resetCodexSandboxPolicyForTests()
   markCodexSandboxCapabilitySupported()
