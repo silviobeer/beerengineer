@@ -42,6 +42,12 @@ function parseRunSubcommand(context: ParseArgsContext): Command | null {
       ? { kind: "run-resume", runId: argv[2] }
       : { kind: "run-resume", runId: argv[2], resume }
   }
+  if (second === "attach-supabase-branch") {
+    return { kind: "run-attach-supabase-branch", runId: argv[2], branchRef: readFlag(argv, "--ref") }
+  }
+  if (second === "discard-supabase-branch") {
+    return { kind: "run-discard-supabase-branch", runId: argv[2] }
+  }
   if (second === "open") return { kind: "run-open", runId: argv[2] }
   if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
   if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
@@ -363,6 +369,10 @@ export function printHelp(): void {
     "    beerengineer run get <run-id> [--json]               Show one run",
     "    beerengineer run resume <run-id>                     Resume one blocked run",
     "                                                         Flags: --remediation-summary <text> [--branch <name>] [--commit <sha>] [--notes <text>] [--yes]",
+    "    beerengineer run attach-supabase-branch <run-id> --ref <branchRef>",
+    "                                                         Attach a selected Supabase branch to a blocked run before resuming",
+    "    beerengineer run discard-supabase-branch <run-id>",
+    "                                                         Clear the blocked run's Supabase branch attachment before resuming",
     "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
     "                                                         Flags: [--since <id>] [--limit N] [--json]",
     "    beerengineer runs tail <run-id> [--level L1]        Tail canonical message stream",

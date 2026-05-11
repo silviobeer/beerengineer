@@ -5,6 +5,7 @@ import { emitEvent } from "../runContext.js"
 import { layout } from "../workspaceLayout.js"
 import {
   buildSupabaseProvisioningRecoveryPayload,
+  type SupabaseProvisioningRecoveryGuidance,
   type SupabaseProvisioningFailureStep,
 } from "./recoveryPayload.js"
 
@@ -15,6 +16,7 @@ export type SupabaseProvisioningFailure = {
   failedStep: SupabaseProvisioningFailureStep
   failureCause: string
   branchRef?: string
+  guidance?: SupabaseProvisioningRecoveryGuidance
 }
 
 const stepLabels: Record<SupabaseProvisioningFailureStep, string> = {
@@ -64,6 +66,7 @@ export function humanizeSupabaseProvisioningFailure(
     failedStep: step,
     failureCause,
     branchRef: nonEmptyString(row?.branchRef) ?? nonEmptyString(row?.branch_ref) ?? undefined,
+    guidance: objectValue(row?.guidance) as SupabaseProvisioningRecoveryGuidance | undefined,
   }
 }
 
@@ -115,6 +118,7 @@ export async function recordSupabaseProvisioningBlockedRun(input: {
       failedStep: input.failure.failedStep,
       failureCause: input.failure.failureCause,
       userMessage: SUPABASE_PROVISIONING_RECOVERY_USER_MESSAGE,
+      guidance: input.failure.guidance,
     }),
   })
   await writeRecoveryRecord(input.ctx, {
