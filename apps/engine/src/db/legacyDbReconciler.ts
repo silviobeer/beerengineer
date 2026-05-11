@@ -33,11 +33,12 @@ export function getLegacyDbReconciliationState():
   | Pick<ReconciliationState, "cacheKey" | "configuredDbPath" | "legacyDbPath" | "outcome">
   | null {
   const configuredDataDir = getConfiguredDataDirOrNull()
-  if (!configuredDataDir) return null
+  if (configuredDataDir == null) return null
 
   const configuredDbPath = resolve(configuredDataDir, "beerengineer.sqlite")
   const legacyDbPath = resolveLegacyDbPath()
-  if (configuredDbPath === legacyDbPath || !fs.existsSync(legacyDbPath)) return null
+  if (configuredDbPath === legacyDbPath) return null
+  if (fs.existsSync(legacyDbPath) === false) return null
 
   const cacheKey = `${configuredDbPath}::${legacyDbPath}`
   if (cachedState?.cacheKey === cacheKey) return cachedState
@@ -51,14 +52,14 @@ export function getLegacyDbReconciliationState():
 
 export function ensureLegacyDbReconciled(): LegacyDbCleanupOutcome {
   const state = getLegacyDbReconciliationState()
-  if (!state) return "not-applicable"
+  if (state == null) return "not-applicable"
   if (state.outcome !== "not-applicable") return state.outcome
 
   let outcome: Exclude<LegacyDbCleanupOutcome, "not-applicable">
-  if (!fs.existsSync(state.configuredDbPath)) {
-    outcome = "skipped-no-configured-db"
-  } else {
+  if (fs.existsSync(state.configuredDbPath)) {
     outcome = inspectAndMaybeDeleteLegacyDb(state.legacyDbPath)
+  } else {
+    outcome = "skipped-no-configured-db"
   }
 
   appendCleanupEvent({
@@ -72,7 +73,7 @@ export function ensureLegacyDbReconciled(): LegacyDbCleanupOutcome {
 
 export function legacyDbShadowRequiresWarning(): boolean {
   const state = getLegacyDbReconciliationState()
-  if (!state) return false
+  if (state == null) return false
   return state.outcome !== "cleaned"
 }
 
@@ -130,22 +131,24 @@ function deleteLegacyDbFamily(legacyDbPath: string): Exclude<LegacyDbCleanupOutc
 
 function cleanupBackups(backups: Array<{ backup: string }>): void {
   for (const { backup } of backups) {
-    if (!fs.existsSync(backup)) continue
-    try {
-      fs.rmSync(backup, { force: true })
-    } catch {
-      // Best-effort only; the cleanup verdict is determined by the original family.
+    if (fs.existsSync(backup)) {
+      try {
+        fs.rmSync(backup, { force: true })
+      } catch {
+        // Best-effort only; the cleanup verdict is determined by the original family.
+      }
     }
   }
 }
 
 function restoreTargets(backups: Array<{ target: string; backup: string }>): void {
   for (const { target, backup } of backups) {
-    if (fs.existsSync(target) || !fs.existsSync(backup)) continue
-    try {
-      fs.copyFileSync(backup, target)
-    } catch {
-      // Best-effort only. The shadow remains unresolved either way.
+    if (fs.existsSync(target) === false && fs.existsSync(backup)) {
+      try {
+        fs.copyFileSync(backup, target)
+      } catch {
+        // Best-effort only. The shadow remains unresolved either way.
+      }
     }
   }
 }
