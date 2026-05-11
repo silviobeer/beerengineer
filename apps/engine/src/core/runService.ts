@@ -368,10 +368,10 @@ export async function answerRunPromptInProcess(
       resumeRunImpl: options.resumeRunImpl,
       persistItemDecision: false,
     })
-    if (!prepared.ok) {
-      io.close?.()
-    } else {
+    if (prepared.ok) {
       ;(options.backgroundRunner ?? fireInBackground)(io, "answerRunPromptInProcess", prepared.start)
+    } else {
+      io.close?.()
     }
   }
   return result

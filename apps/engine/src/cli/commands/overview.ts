@@ -100,9 +100,11 @@ export async function resumeBlockedRunAfterCliAnswer(
       workerOwnerKind: "cli",
       persistItemDecision: false,
     })
-    if (!prepared.ok) return { ok: false, error: prepared.error }
-    await prepared.start()
-    return { ok: true }
+    if (prepared.ok) {
+      await prepared.start()
+      return { ok: true }
+    }
+    return { ok: false, error: prepared.error }
   } finally {
     io.close?.()
   }
@@ -323,7 +325,9 @@ export async function runChatAnswerCommand(
     if (runBeforeAnswer?.status === "blocked" && runBeforeAnswer.recovery_status === "blocked") {
       const resumeBlockedRun = deps.resumeBlockedRunAfterCliAnswerImpl ?? resumeBlockedRunAfterCliAnswer
       const resumed = await resumeBlockedRun(repos, prompt.run_id)
-      if (!resumed.ok) {
+      if (resumed.ok) {
+        // Resume completed or re-entered the blocked stage successfully.
+      } else {
         console.error(`  Could not resume answered run: ${resumed.error}`)
         return 1
       }
