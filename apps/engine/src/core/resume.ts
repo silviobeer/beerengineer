@@ -285,11 +285,11 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
                 supabaseHook,
-                supabaseReadiness: {
+                supabaseReadiness: workspaceRow?.supabase_project_ref ? {
                   repos: input.repos,
                   runId: run.id,
                   managementClient: supabaseHook?.managementClient,
-                },
+                } : undefined,
                 executionOwnership: {
                   repos: input.repos,
                   runId: run.id,

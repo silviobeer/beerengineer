@@ -206,11 +206,11 @@ export function prepareRun(
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
                 supabaseHook,
-                supabaseReadiness: {
+                supabaseReadiness: workspaceRow?.supabase_project_ref ? {
                   repos,
                   runId: runRow.id,
                   managementClient: supabaseHook?.managementClient,
-                },
+                } : undefined,
                 executionOwnership: {
                   repos,
                   runId: runRow.id,
