@@ -49,6 +49,7 @@ import {
   resolveItemCompletedRun,
   workspaceState,
 } from "./overviewShared.js"
+import type { Repos } from "../../db/repositories.js"
 
 export async function runItemsCommand(workspaceKey: string | undefined, all = false, json = false, compact = false): Promise<number> {
   return withRepos(async repos => {
@@ -73,6 +74,38 @@ export async function runWorkspaceItemsCommand(key: string | undefined, json = f
     return 2
   }
   return runItemsCommand(key, false, json, false)
+}
+
+type ResumeBlockedRunAfterCliAnswerDeps = {
+  prepareForegroundResumeRunImpl?: typeof import("../../core/runService.js").prepareForegroundResumeRun
+  createCliIOImpl?: typeof import("../../core/ioCli.js").createCliIO
+}
+
+export async function resumeBlockedRunAfterCliAnswer(
+  repos: Repos,
+  runId: string,
+  deps: ResumeBlockedRunAfterCliAnswerDeps = {},
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { prepareForegroundResumeRunImpl, createCliIOImpl } = deps
+  const prepareForegroundResumeRun = prepareForegroundResumeRunImpl
+    ?? (await import("../../core/runService.js")).prepareForegroundResumeRun
+  const createCliIO = createCliIOImpl
+    ?? (await import("../../core/ioCli.js")).createCliIO
+
+  const io = createCliIO(repos)
+  try {
+    const prepared = await prepareForegroundResumeRun(repos, io, {
+      runId,
+      summary: "Operator answered a pending prompt via cli.",
+      workerOwnerKind: "cli",
+      persistItemDecision: false,
+    })
+    if (!prepared.ok) return { ok: false, error: prepared.error }
+    await prepared.start()
+    return { ok: true }
+  } finally {
+    io.close?.()
+  }
 }
 
 export async function runChatListCommand(workspaceKey: string | undefined, all = false, json = false, compact = false): Promise<number> {
@@ -262,7 +295,10 @@ export async function runRunGetCommand(runId: string | undefined, json = false):
   })
 }
 
-export async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" }>): Promise<number> {
+export async function runChatAnswerCommand(
+  cmd: Extract<Command, { kind: "chat-answer" }>,
+  deps: { resumeBlockedRunAfterCliAnswerImpl?: typeof resumeBlockedRunAfterCliAnswer } = {},
+): Promise<number> {
   const { recordAnswer } = await import("../../core/conversation.js")
   return withRepos(async repos => {
     let prompt
@@ -273,6 +309,7 @@ export async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-a
       return EXIT_USAGE
     }
     const answer = readAnswerBody({ provided: cmd.answer, multiline: cmd.multiline })
+    const runBeforeAnswer = repos.getRun(prompt.run_id)
     const result = recordAnswer(repos, {
       runId: prompt.run_id,
       promptId: prompt.id,
@@ -282,6 +319,14 @@ export async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-a
     if (!result.ok) {
       console.error(`  Could not record answer: ${result.code}`)
       return EXIT_USAGE
+    }
+    if (runBeforeAnswer?.status === "blocked" && runBeforeAnswer.recovery_status === "blocked") {
+      const resumeBlockedRun = deps.resumeBlockedRunAfterCliAnswerImpl ?? resumeBlockedRunAfterCliAnswer
+      const resumed = await resumeBlockedRun(repos, prompt.run_id)
+      if (!resumed.ok) {
+        console.error(`  Could not resume answered run: ${resumed.error}`)
+        return 1
+      }
     }
     if (cmd.json) return jsonOut(result.conversation)
     console.log(`  answered ${prompt.id}`)
