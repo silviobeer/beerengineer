@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
+  markCodexSandboxCapabilityUnknown,
   markCodexSandboxCapabilityUnsupported,
   markCodexSandboxCapabilitySupported,
   resetCodexSandboxPolicyForTests,
@@ -102,6 +103,44 @@ test("persisted capability snapshots are reused before probing again", async () 
 
     const resolution = await resolveCodexSandboxBypass("safe-workspace-write", {})
     assert.deepEqual(resolution, { bypass: false, source: "capability" })
+    assert.equal(probes, 0)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})
+
+test("persisted inconclusive capability snapshots are reused before probing again", async () => {
+  resetCodexSandboxPolicyForTests()
+  const dir = mkdtempSync(join(tmpdir(), "be2-codex-sandbox-policy-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
+  const repos = new Repos(db)
+  let probes = 0
+
+  try {
+    setCodexSandboxCapabilityStore({
+      load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+      persist: capability => {
+        repos.setCodexSandboxCapabilitySnapshot(capability)
+      },
+    })
+    markCodexSandboxCapabilityUnknown()
+
+    resetCodexSandboxPolicyForTests()
+    setCodexSandboxCapabilityStore({
+      load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+      persist: capability => {
+        repos.setCodexSandboxCapabilitySnapshot(capability)
+      },
+    })
+    setCodexSandboxCapabilityProbeForTests(async () => {
+      probes += 1
+      return "supported"
+    })
+
+    const resolution = await resolveCodexSandboxBypass("safe-workspace-write", {})
+    assert.deepEqual(resolution, { bypass: true, source: "default" })
     assert.equal(probes, 0)
   } finally {
     db.close()

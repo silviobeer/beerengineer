@@ -1,11 +1,29 @@
 import type { AppConfig, CheckResult } from "../types.js"
+import { initDatabase } from "../../db/connection.js"
+import { Repos } from "../../db/repositories.js"
+import {
+  markCodexSandboxCapabilitySupported,
+  markCodexSandboxCapabilityUnknown,
+  markCodexSandboxCapabilityUnsupported,
+  readCodexSandboxCapabilitySnapshot,
+  recheckCodexSandboxCapability,
+} from "../../llm/hosted/providers/codexSandboxPolicy.js"
+import { resolveConfiguredDbPath } from "../config.js"
 import { createCheck, probeCommand, remedyForTool } from "./shared.js"
+
+type RunLlmChecksOptions = {
+  freshCodexSandboxCapabilityCheck?: boolean
+}
 
 export function getActiveLlmGroup(config: AppConfig | null): string | null {
   return config ? `llm.${config.llm.provider}` : null
 }
 
-export async function runLlmChecks(provider: AppConfig["llm"]["provider"], config: AppConfig): Promise<CheckResult[]> {
+export async function runLlmChecks(
+  provider: AppConfig["llm"]["provider"],
+  config: AppConfig,
+  options: RunLlmChecksOptions = {},
+): Promise<CheckResult[]> {
   const defs = {
     anthropic: {
       cliId: "llm.anthropic.cli",
@@ -35,10 +53,16 @@ export async function runLlmChecks(provider: AppConfig["llm"]["provider"], confi
     remedy: cli.ok ? undefined : remedyForTool(def.command),
   })
   if (!cli.ok) {
-    return [cliCheck, createCheck(def.authId, `${def.label} auth`, "skipped", `${def.command} CLI is not available`)]
+    return [
+      cliCheck,
+      createCheck(def.authId, `${def.label} auth`, "skipped", `${def.command} CLI is not available`),
+      ...(provider === "openai"
+        ? [await runCodexSandboxCheck(config, options)]
+        : []),
+    ]
   }
   if (provider === "anthropic") return runClaudeChecks(def.apiKeyRef, cliCheck)
-  if (provider === "openai") return runCodexChecks(def.apiKeyRef, cliCheck)
+  if (provider === "openai") return runCodexChecks(def.apiKeyRef, cliCheck, config, options)
 
   const present = Boolean(process.env[def.apiKeyRef])
   return [
@@ -53,15 +77,21 @@ export async function runLlmChecks(provider: AppConfig["llm"]["provider"], confi
   ]
 }
 
-async function runCodexChecks(apiKeyRef: string, cliCheck: CheckResult): Promise<CheckResult[]> {
+async function runCodexChecks(
+  apiKeyRef: string,
+  cliCheck: CheckResult,
+  config: AppConfig,
+  options: RunLlmChecksOptions,
+): Promise<CheckResult[]> {
+  const sandboxCheck = await runCodexSandboxCheck(config, options)
   if (process.env[apiKeyRef]) {
-    return [cliCheck, createCheck("llm.openai.auth", "OpenAI / Codex auth", "ok", `${apiKeyRef} is set`)]
+    return [cliCheck, createCheck("llm.openai.auth", "OpenAI / Codex auth", "ok", `${apiKeyRef} is set`), sandboxCheck]
   }
 
   const auth = await probeCommand("codex", ["login", "status"])
   if (auth.ok) {
     const detail = (auth.stdout ?? auth.version ?? "Codex auth available").split(/\r?\n/)[0]
-    return [cliCheck, createCheck("llm.openai.auth", "OpenAI / Codex auth", "ok", detail)]
+    return [cliCheck, createCheck("llm.openai.auth", "OpenAI / Codex auth", "ok", detail), sandboxCheck]
   }
   return [
     cliCheck,
@@ -72,7 +102,62 @@ async function runCodexChecks(apiKeyRef: string, cliCheck: CheckResult): Promise
       "Codex is not logged in and OPENAI_API_KEY is not set",
       { remedy: { hint: "Run `codex login`, or export OPENAI_API_KEY before running beerengineer_." } },
     ),
+    sandboxCheck,
   ]
+}
+
+async function runCodexSandboxCheck(
+  config: AppConfig,
+  options: RunLlmChecksOptions,
+): Promise<CheckResult> {
+  const db = initDatabase(resolveConfiguredDbPath(config))
+  const repos = new Repos(db)
+  const store = {
+    load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+    persist: (capability: "supported" | "unsupported" | "unknown") => {
+      repos.setCodexSandboxCapabilitySnapshot(capability)
+    },
+  }
+
+  try {
+    const capability = options.freshCodexSandboxCapabilityCheck
+      ? await recheckCodexSandboxCapability(store)
+      : undefined
+    const snapshot = capability === undefined
+      ? readCodexSandboxCapabilitySnapshot(store)
+      : { state: "known" as const, capability }
+
+    if (capability === "supported") markCodexSandboxCapabilitySupported()
+    else if (capability === "unsupported") markCodexSandboxCapabilityUnsupported()
+    else if (capability === "unknown") markCodexSandboxCapabilityUnknown()
+
+    const override = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS?.trim()
+    if (override) {
+      const stored = snapshot.state === "known" ? snapshot.capability : snapshot.state
+      return createCheck(
+        "llm.openai.sandbox",
+        "OpenAI / Codex sandbox",
+        "ok",
+        `Bypass override active via BEERENGINEER_CODEX_SANDBOX_BYPASS; stored capability is ${stored}.`,
+      )
+    }
+
+    if (snapshot.state === "known" && snapshot.capability === "supported") {
+      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "ok", "Bubblewrap sandbox supported for Codex tool runs.")
+    }
+    if (snapshot.state === "known" && snapshot.capability === "unsupported") {
+      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "missing", "Bubblewrap sandbox unsupported on this host; Codex tool runs will bypass sandboxing until rechecked.")
+    }
+    if (snapshot.state === "known") {
+      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Bubblewrap sandbox capability is inconclusive; Codex tool runs will bypass sandboxing until rechecked.")
+    }
+    if (snapshot.state === "invalid") {
+      return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Stored Codex sandbox capability state is invalid; the next Codex tool run will safely re-evaluate it.")
+    }
+    return createCheck("llm.openai.sandbox", "OpenAI / Codex sandbox", "unknown", "Codex sandbox capability has not been detected yet.")
+  } finally {
+    db.close()
+  }
 }
 
 async function runClaudeChecks(apiKeyRef: string, cliCheck: CheckResult): Promise<CheckResult[]> {
