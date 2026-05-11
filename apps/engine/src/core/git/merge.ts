@@ -43,6 +43,15 @@ function listConflictedPaths(root: string): string[] {
   return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
 }
 
+function hasPendingMerge(root: string): boolean {
+  return runGit(root, ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"]).ok
+}
+
+function tryFinishGitResolvedMerge(root: string): boolean {
+  if (!hasPendingMerge(root)) return false
+  return runGit(root, ["commit", "--no-edit"]).ok
+}
+
 function tryResolveAndCommit(
   root: string,
   message: string,
@@ -102,6 +111,7 @@ function mergeBranchInto(
   const stderr = merge.stderr || merge.stdout
   if (tryResolveAndCommit(root, message, opts, stderr)) return { mergeSha: tipSha(root, "HEAD") }
   const conflictedPaths = listConflictedPaths(root)
+  if (conflictedPaths.length === 0 && tryFinishGitResolvedMerge(root)) return { mergeSha: tipSha(root, "HEAD") }
   runGit(root, ["merge", "--abort"])
   if (conflictedPaths.length > 0) {
     throw new GitMergeConflictError(conflictedPaths, stderr)
@@ -130,6 +140,7 @@ async function mergeBranchIntoAsync(
   const stderr = merge.stderr || merge.stdout
   if (await tryResolveAndCommitAsync(root, message, opts, stderr)) return { mergeSha: tipSha(root, "HEAD") }
   const conflictedPaths = listConflictedPaths(root)
+  if (conflictedPaths.length === 0 && tryFinishGitResolvedMerge(root)) return { mergeSha: tipSha(root, "HEAD") }
   runGit(root, ["merge", "--abort"])
   if (conflictedPaths.length > 0) {
     throw new GitMergeConflictError(conflictedPaths, stderr)

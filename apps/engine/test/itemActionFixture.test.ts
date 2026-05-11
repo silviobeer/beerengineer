@@ -36,5 +36,5 @@ test("PROJ-8-PRD-4-US-5: stale fixture failures attribute drift to engine transi
     /Committed allowed-actions fixture is stale relative to generated engine-side action data\. Source: engine transition rules\. State: merge\/review_required\./,
   )
   assert.match(drift ?? "", /Committed: promote_to_base, cancel_promotion\./)
-  assert.match(drift ?? "", /Generated: resume_run, promote_to_base, cancel_promotion\./)
+  assert.match(drift ?? "", /Generated: resume_run, promote_to_base, confirm_merge_resolved, cancel_promotion\./)
 })

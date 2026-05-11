@@ -59,6 +59,8 @@ type ItemResumePlan = {
    * non-strict behavior (run a stage if its artifact is missing).
    */
   manualStage?: "visual-companion" | "frontend-design"
+  /** Skip re-entering merge-gate and continue directly to completion. */
+  skipMergeGate?: boolean
 }
 
 type DesignPrepFreeze = {
@@ -114,6 +116,8 @@ export type WorkflowResumeInput = {
    * of artifact presence. See {@link ItemResumePlan.manualStage}.
    */
   manualStage?: "visual-companion" | "frontend-design"
+  /** Resume after a manually completed merge without replaying merge-gate. */
+  skipMergeGate?: boolean
 }
 
 export type WorkflowLlmOptions = StageLlmOptions
@@ -240,7 +244,12 @@ function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
   const startStage = (
     ["brainstorm", "visual-companion", "frontend-design", "merge-gate"] as const
   ).find(stage => stage === topStage) ?? "projects"
-  return { startStage, manualStage: input.manualStage, skipDesignPrep: input.skipDesignPrep === true }
+  return {
+    startStage,
+    manualStage: input.manualStage,
+    skipDesignPrep: input.skipDesignPrep === true,
+    skipMergeGate: input.skipMergeGate === true,
+  }
 }
 
 async function loadProjects(context: WorkflowContext): Promise<Project[]> {
@@ -396,7 +405,9 @@ export async function runWorkflow(item: Item, options?: {
       })
     }
 
-    await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+    if (!itemResumePlan.skipMergeGate) {
+      await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+    }
     assertWorkflowNotCancelled()
 
     stagePresent.header("DONE")

@@ -110,9 +110,102 @@ function seedConflictedFiles(root: string): void {
   git(root, ["commit", "-m", "add conflict fixtures"])
 }
 
+function writeWorkspaceConfig(root: string, rerere?: boolean): void {
+  mkdirSync(join(root, ".beerengineer"), { recursive: true })
+  writeFileSync(
+    join(root, ".beerengineer", "workspace.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      key: "merge-conflict",
+      name: "Merge Conflict",
+      harnessProfile: { mode: "fast" },
+      runtimePolicy: {
+        stageAuthoring: "safe-readonly",
+        reviewer: "safe-readonly",
+        coderExecution: "unsafe-autonomous-write",
+      },
+      sonar: { enabled: false },
+      reviewPolicy: {
+        coderabbit: { enabled: false },
+        sonarcloud: { enabled: false },
+      },
+      ...(rerere === undefined ? {} : { git: { rerere } }),
+      createdAt: 123,
+    }, null, 2),
+  )
+}
+
 function writeConflictVariant(root: string, label: string): void {
   writeFileSync(join(root, "conflict.txt"), `${label} root line\n`)
   writeFileSync(join(root, "nested", "space name.txt"), `${label} nested line\n`)
+}
+
+type PromotionAttemptResult =
+  | { status: "merged" }
+  | { status: "blocked"; summary: string; cause?: string; detail?: string }
+
+async function attemptPromotion(context: WorkflowContext, gitAdapter: GitAdapter): Promise<PromotionAttemptResult> {
+  let blocked: { summary: string; cause?: string; detail?: string } | null = null
+
+  try {
+    await runWithWorkflowIO(
+      {
+        ask: async () => "promote",
+        emit: () => {},
+      },
+      () =>
+        runWithActiveRun({ runId: context.runId ?? "run-1", itemId: "ITEM-1", stageRunId: "stage-1" }, () =>
+          mergeGate(context, gitAdapter, async (_ctx, summary, opts) => {
+            blocked = { summary, cause: opts?.cause, detail: opts?.detail }
+            throw new Error("blocked")
+          }),
+        ),
+    )
+  } catch (error) {
+    if ((error as Error).message === "blocked" && blocked) return { status: "blocked", ...blocked }
+    throw error
+  }
+
+  return { status: "merged" }
+}
+
+function seedRerereFixture(root: string): void {
+  seedRepo(root)
+  writeFileSync(join(root, "repeat.txt"), "shared base line\n")
+  writeFileSync(join(root, "second.txt"), "shared second base\n")
+  git(root, ["add", "-A"])
+  git(root, ["commit", "-m", "add rerere fixtures"])
+}
+
+function createSingleConflict(root: string, itemRoot: string): { itemBranch: string; preMergeHead: string } {
+  writeFileSync(join(itemRoot, "repeat.txt"), "item branch line\n")
+  git(itemRoot, ["add", "-A"])
+  git(itemRoot, ["commit", "-m", "item repeat change"])
+  const itemBranch = git(itemRoot, ["branch", "--show-current"])
+
+  writeFileSync(join(root, "repeat.txt"), "base branch line\n")
+  git(root, ["add", "-A"])
+  git(root, ["commit", "-m", "base repeat change"])
+
+  return { itemBranch, preMergeHead: git(root, ["rev-parse", "HEAD"]) }
+}
+
+function teachRememberedResolution(root: string, itemBranch: string, resolution: { path: string; contents: string }[]): void {
+  const merge = spawnSync("git", ["merge", "--no-ff", "-m", "manual resolution", itemBranch], { cwd: root, encoding: "utf8" })
+  assert.equal(merge.status, 1, merge.stderr || merge.stdout)
+  for (const file of resolution) writeFileSync(join(root, file.path), file.contents)
+  git(root, ["add", "-A"])
+  git(root, ["commit", "-m", "teach rerere resolution"])
+}
+
+function addSecondConflict(root: string, itemRoot: string): void {
+  writeFileSync(join(itemRoot, "second.txt"), "item second line\n")
+  git(itemRoot, ["add", "-A"])
+  git(itemRoot, ["commit", "-m", "item second change"])
+
+  writeFileSync(join(root, "second.txt"), "base second line\n")
+  git(root, ["add", "-A"])
+  git(root, ["commit", "-m", "base second change"])
 }
 
 test("mergeGate blocks instead of merging on unexpected free-text answers", async () => {
@@ -400,6 +493,108 @@ test("REQ-3 AC-3.4: direct-mode merge gate skips automatic production migration"
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-3 AC-3.1: workspaces default rerere to off and repeated conflicts block again", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-rerere-default-off-"))
+  const context = makeContext({
+    workspaceId: "rerere-default-off",
+    workspaceRoot: root,
+    runId: "run-rerere-default-off",
+    itemSlug: "demo-item",
+  })
+
+  try {
+    writeWorkspaceConfig(root)
+    seedRerereFixture(root)
+
+    const gitAdapter = createRealMergeGateGit(context)
+    gitAdapter.ensureItemBranch()
+    const { itemBranch, preMergeHead } = createSingleConflict(root, gitAdapter.mode.itemWorktreeRoot)
+
+    const firstAttempt = await attemptPromotion(context, gitAdapter)
+    assert.equal(firstAttempt.status, "blocked")
+    assert.equal(git(root, ["config", "--get", "rerere.enabled"]), "false")
+
+    teachRememberedResolution(root, itemBranch, [{ path: "repeat.txt", contents: "resolved repeat line\n" }])
+    git(root, ["reset", "--hard", preMergeHead])
+
+    const secondAttempt = await attemptPromotion(context, gitAdapter)
+    assert.equal(secondAttempt.status, "blocked")
+    assert.match(secondAttempt.summary, /merge conflict blocked promotion/i)
+    assert.match(secondAttempt.summary, /confirm_merge_resolved/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("REQ-3 AC-3.2/AC-3.3/AC-3.5: rerere opt-in is read from workspace config and only helps repeated conflicts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-rerere-enabled-"))
+  const context = makeContext({
+    workspaceId: "rerere-enabled",
+    workspaceRoot: root,
+    runId: "run-rerere-enabled",
+    itemSlug: "demo-item",
+  })
+
+  try {
+    writeWorkspaceConfig(root, true)
+    seedRerereFixture(root)
+
+    const gitAdapter = createRealMergeGateGit(context)
+    gitAdapter.ensureItemBranch()
+    const { itemBranch, preMergeHead } = createSingleConflict(root, gitAdapter.mode.itemWorktreeRoot)
+
+    const firstAttempt = await attemptPromotion(context, gitAdapter)
+    assert.equal(firstAttempt.status, "blocked")
+    assert.equal(git(root, ["config", "--get", "rerere.enabled"]), "true")
+    assert.equal(git(root, ["config", "--get", "rerere.autoupdate"]), "true")
+
+    teachRememberedResolution(root, itemBranch, [{ path: "repeat.txt", contents: "resolved repeat line\n" }])
+    git(root, ["reset", "--hard", preMergeHead])
+
+    const secondAttempt = await attemptPromotion(context, gitAdapter)
+    assert.deepEqual(secondAttempt, { status: "merged" })
+    assert.equal(readFileSync(join(root, "repeat.txt"), "utf8"), "resolved repeat line\n")
+    assert.match(git(root, ["show", "-s", "--format=%s", "HEAD"]), /Merge item demo-item into master/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("REQ-3 AC-3.4: partial rerere application falls back to structured merge-conflict recovery", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-rerere-partial-"))
+  const context = makeContext({
+    workspaceId: "rerere-partial",
+    workspaceRoot: root,
+    runId: "run-rerere-partial",
+    itemSlug: "demo-item",
+  })
+
+  try {
+    writeWorkspaceConfig(root, true)
+    seedRerereFixture(root)
+
+    const gitAdapter = createRealMergeGateGit(context)
+    gitAdapter.ensureItemBranch()
+    const { itemBranch, preMergeHead } = createSingleConflict(root, gitAdapter.mode.itemWorktreeRoot)
+
+    const firstAttempt = await attemptPromotion(context, gitAdapter)
+    assert.equal(firstAttempt.status, "blocked")
+
+    teachRememberedResolution(root, itemBranch, [{ path: "repeat.txt", contents: "resolved repeat line\n" }])
+    git(root, ["reset", "--hard", preMergeHead])
+
+    addSecondConflict(root, gitAdapter.mode.itemWorktreeRoot)
+
+    const repeatedAttempt = await attemptPromotion(context, gitAdapter)
+    assert.equal(repeatedAttempt.status, "blocked")
+    assert.match(repeatedAttempt.summary, /merge conflict blocked promotion/i)
+    assert.match(repeatedAttempt.summary, /confirm_merge_resolved/)
+    assert.match(repeatedAttempt.detail ?? "", /second\.txt/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 
