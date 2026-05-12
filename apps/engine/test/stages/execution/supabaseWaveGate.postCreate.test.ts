@@ -140,21 +140,13 @@ test("REQ-2 AC-2.2: branch-backed post-create flow completes when the hook facto
   }
 })
 
-test("REQ-2 AC-2.1: a malformed post-create dependency bundle returns a structured handoff failure after branch creation succeeds", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-wave-gate-post-create-malformed-"))
+test("REQ-2 AC-2.1: a missing post-create dependency bundle returns a structured handoff failure after branch creation succeeds", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-wave-gate-post-create-missing-"))
   const db = initDatabase(join(dir, "db.sqlite"))
   const secretStorePath = join(dir, "secrets.json")
   const previousSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
   process.env.BEERENGINEER_SECRET_STORE_PATH = secretStorePath
-  storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp_wave_gate_post_create_malformed", { storePath: secretStorePath })
-
-  const malformedManagementClient = new SupabaseManagementClient({
-    token: "sbp_wave_gate_post_create_malformed",
-    baseUrl: "https://example.test",
-    fetch: (async () => {
-      throw new Error("malformed handoff client should fail before fetch")
-    }) as typeof fetch,
-  })
+  storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp_wave_gate_post_create_missing", { storePath: secretStorePath })
 
   try {
     const result = await provisionWaveIfDbRelevant({
@@ -172,16 +164,12 @@ test("REQ-2 AC-2.1: a malformed post-create dependency bundle returns a structur
         migrateProduction: async () => ({ ok: true }),
         reconcile: async () => ({ ok: true }),
       },
-      handoffClient: {
-        getProjectKeys: malformedManagementClient.getProjectKeys.bind(undefined),
-        getBranchConnectionString: malformedManagementClient.getBranchConnectionString.bind(undefined),
-      },
       context: {
-        workspaceId: "workspace-malformed",
+        workspaceId: "workspace-missing",
         workspaceKey: "demo",
         workspaceRoot: dir,
-        runId: "run-malformed",
-        itemId: "item-malformed",
+        runId: "run-missing",
+        itemId: "item-missing",
         projectId: "project-1",
         projectRef: "proj_1",
         parentBranchRef: "br_parent",
@@ -192,7 +180,7 @@ test("REQ-2 AC-2.1: a malformed post-create dependency bundle returns a structur
     assert.equal(result.ok, false)
     assert.equal(result.failedStep, "handoff")
     assert.equal(result.branchRef, "br_wave")
-    assert.match(result.failureCause, /(reading 'request'|request is not a function)/)
+    assert.equal(result.failureCause, "Missing Supabase post-create handoff dependency: handoffClient")
   } finally {
     if (previousSecretStorePath == null) delete process.env.BEERENGINEER_SECRET_STORE_PATH
     else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStorePath
