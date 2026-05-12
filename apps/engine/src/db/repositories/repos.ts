@@ -681,7 +681,16 @@ export class Repos {
            worker_started_at = ?,
            worker_heartbeat_at = ?,
            updated_at = ?
-       WHERE id = ?`,
+       WHERE id = ?
+         AND status = 'blocked'
+         AND current_stage IN ('planning', 'execution')
+         AND recovery_status = 'blocked'
+         AND recovery_scope = 'stage'
+         AND recovery_scope_ref = 'execution'
+         AND worker_owner_kind = 'api'
+         AND worker_instance_id IS NOT NULL
+         AND worker_started_at IS NOT NULL
+         AND worker_heartbeat_at IS NOT NULL`,
       input.owner,
       input.workerInstanceId,
       input.workerOwnerKind,
