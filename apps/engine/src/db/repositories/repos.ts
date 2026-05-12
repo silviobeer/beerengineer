@@ -663,6 +663,45 @@ export class Repos {
     return result.changes > 0 ? this.getRun(id) : undefined
   }
 
+  restoreBlockedExecutionHandoffClaim(
+    id: string,
+    input: {
+      owner: RunOwner
+      workerInstanceId: string | null
+      workerOwnerKind: WorkerOwnerKind | null
+      workerStartedAt: number | null
+      workerHeartbeatAt: number | null
+    },
+  ): RunRow | undefined {
+    this.run(
+      `UPDATE runs
+       SET owner = ?,
+           worker_instance_id = ?,
+           worker_owner_kind = ?,
+           worker_started_at = ?,
+           worker_heartbeat_at = ?,
+           updated_at = ?
+       WHERE id = ?
+         AND status = 'blocked'
+         AND current_stage IN ('planning', 'execution')
+         AND recovery_status = 'blocked'
+         AND recovery_scope = 'stage'
+         AND recovery_scope_ref = 'execution'
+         AND worker_owner_kind = 'api'
+         AND worker_instance_id IS NOT NULL
+         AND worker_started_at IS NOT NULL
+         AND worker_heartbeat_at IS NOT NULL`,
+      input.owner,
+      input.workerInstanceId,
+      input.workerOwnerKind,
+      input.workerStartedAt,
+      input.workerHeartbeatAt,
+      now(),
+      id,
+    )
+    return this.getRun(id)
+  }
+
   refreshRunWorkerHeartbeat(
     id: string,
     input: { workerInstanceId: string; workerOwnerKind: WorkerOwnerKind; heartbeatAt: number },
