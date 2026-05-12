@@ -612,6 +612,54 @@ test("readWorkspaceConfig upgrades codex CLI workspaces with write-capable execu
   }
 })
 
+test("registerWorkspace rejects non-boolean rerere config values visibly", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-rerere-invalid-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  try {
+    const repos = new Repos(db)
+    const config = { ...defaultAppConfig(), allowedRoots: [dir] }
+    const path = join(dir, "demo")
+    mkdirSync(join(path, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(path, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "demo",
+        name: "Demo",
+        harnessProfile: { mode: "fast" },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "unsafe-autonomous-write",
+        },
+        sonar: { enabled: false },
+        reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+        git: { rerere: "true" },
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const result = await registerWorkspace(
+      {
+        path,
+        harnessProfile: { mode: "fast" },
+        sonar: { enabled: false },
+        git: { init: false },
+      },
+      { repos, config, appReport: readyReport() },
+    )
+
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.error, "workspace_config_invalid")
+    assert.match(result.detail, /git\.rerere/i)
+    assert.match(result.detail, /boolean/i)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("readWorkspaceConfig defaults autoPromoteOnGreenQa to true and preserves explicit false", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   try {

@@ -118,6 +118,7 @@
   "merge/review_required": [
     "resume_run",
     "promote_to_base",
+    "confirm_merge_resolved",
     "cancel_promotion"
   ],
   "requirements/completed": [

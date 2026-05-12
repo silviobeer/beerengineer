@@ -205,6 +205,7 @@ export type PerformResumeInput = {
   io: WorkflowIO & { bus?: EventBus }
   runId: string
   remediation: ExternalRemediationRow
+  resume?: WorkflowResumeInput
   workerOwnerKind?: WorkerOwnerKind
   workerInstanceId?: string
   workerLeaseClock?: () => number
@@ -285,7 +286,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
             await workflowRunner(
               { id: run.item_id, title: run.title, description: "" },
               {
-                resume: buildWorkflowResumeInput(run, record, ctx),
+                resume: input.resume ?? buildWorkflowResumeInput(run, record, ctx),
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
                 supabaseHook,

@@ -390,7 +390,7 @@ export function printHelp(): void {
     "    start_brainstorm  start_visual_companion  start_frontend_design",
     "    promote_to_requirements  start_implementation  import_prepared",
     "    rerun_design_prep",
-    "    promote_to_base  cancel_promotion  resume_run  mark_done",
+    "    promote_to_base  confirm_merge_resolved  cancel_promotion  resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",
     "    --remediation-summary <text>   Required. What you fixed outside beerengineer_.",
