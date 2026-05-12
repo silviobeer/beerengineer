@@ -1613,6 +1613,78 @@
         }
       }
     },
+    "/runs/{id}/recovery/retry-retained": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Retry a retained diagnosis branch through the existing run recovery path.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run recovery was accepted on the retained branch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "recoveryStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "runId",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict — the run is no longer eligible for retained-branch retry or another resume blocker applies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RetryRetainedConflict"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{id}/resume": {
       "parameters": [
         {
@@ -4440,6 +4512,61 @@
           },
           "decision": {
             "$ref": "#/components/schemas/RunRecoveryDecision"
+          }
+        }
+      },
+      "RetryRetainedConflictCurrentState": {
+        "type": "object",
+        "required": [
+          "status",
+          "recoveryStatus",
+          "supabaseBranchLifecycleState"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "recoveryStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "blocked",
+              "failed",
+              null
+            ]
+          },
+          "supabaseBranchLifecycleState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RetryRetainedConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "currentState"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "retry_retained_conflict"
+          },
+          "code": {
+            "type": "string",
+            "const": "retry_retained_conflict"
+          },
+          "message": {
+            "type": "string"
+          },
+          "currentState": {
+            "$ref": "#/components/schemas/RetryRetainedConflictCurrentState"
           }
         }
       },

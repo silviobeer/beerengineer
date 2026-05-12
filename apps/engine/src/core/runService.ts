@@ -118,6 +118,26 @@ export type ResumeRunResult =
     }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
+export type RetryRetainedCurrentState = {
+  status: RunRow["status"]
+  recoveryStatus: RunRow["recovery_status"]
+  supabaseBranchLifecycleState: RunRow["supabase_branch_lifecycle_state"]
+}
+
+export type RetryRetainedRunResult =
+  | { ok: true; runId: string; remediationId: string }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "retry_retained_conflict"
+      code: "retry_retained_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
 export type ReplanRunResult =
   | { ok: true; runId: string }
   | { ok: false; status: 404; error: "run_not_found"; message: string }
@@ -145,6 +165,20 @@ export type PreparedForegroundResumeRunResult =
       code: "operator_decision_required"
       message: string
       decision: RunRecoveryDecision
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type PreparedForegroundRetryRetainedRunResult =
+  | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "retry_retained_conflict"
+      code: "retry_retained_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
     }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
@@ -644,6 +678,38 @@ export function isResumeOperatorDecisionResult(
   result: ResumeRunResult | PreparedForegroundResumeRunResult,
 ): result is Extract<ResumeRunResult, { ok: false; error: "operator_decision_required" }> {
   return !result.ok && result.error === "operator_decision_required"
+}
+
+export function isRetryRetainedConflictResult(
+  result: RetryRetainedRunResult | PreparedForegroundRetryRetainedRunResult,
+): result is Extract<RetryRetainedRunResult, { ok: false; error: "retry_retained_conflict" }> {
+  return !result.ok && result.error === "retry_retained_conflict"
+}
+
+const RETRY_RETAINED_REMEDIATION_SUMMARY = "Operator retried the retained diagnosis branch."
+const RETRY_RETAINED_PRECONDITION_ERROR = "retry_retained_precondition_failed"
+
+function retryRetainedCurrentState(run: RunRow): RetryRetainedCurrentState {
+  return {
+    status: run.status,
+    recoveryStatus: run.recovery_status,
+    supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+  }
+}
+
+function retryRetainedConflict(run: RunRow): Extract<RetryRetainedRunResult, { ok: false; error: "retry_retained_conflict" }> {
+  return {
+    ok: false,
+    status: 409,
+    error: "retry_retained_conflict",
+    code: "retry_retained_conflict",
+    message: "retry-retained is only available while the run is retained for diagnosis.",
+    currentState: retryRetainedCurrentState(run),
+  }
+}
+
+function throwRetryRetainedPreconditionError(): never {
+  throw new Error(RETRY_RETAINED_PRECONDITION_ERROR)
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -1157,6 +1223,39 @@ export async function resumeRunInProcess(
   return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
 }
 
+export async function retryRetainedRunInProcess(
+  repos: Repos,
+  input: {
+    runId: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<RetryRetainedRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundRetryRetainedRun(repos, io, {
+    runId: input.runId,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    resumeRunImpl: input.resumeRunImpl,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "retryRetainedRunInProcess", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
 export async function resumeRunFromExistingRemediationInProcess(
   repos: Repos,
   input: {
@@ -1351,6 +1450,8 @@ export async function prepareForegroundResumeRun(
     admissionController?: WorkerAdmissionController
     resumeRunImpl?: PerformResumeImpl
     persistItemDecision?: boolean
+    bypassRetainedDiagnosisDecision?: boolean
+    verifyBeforeRemediation?: (run: RunRow) => void
   },
 ): Promise<PreparedForegroundResumeRunResult> {
   const summary = input.summary.trim()
@@ -1363,7 +1464,7 @@ export async function prepareForegroundResumeRun(
     return { ok: false, status: 409, error: readiness.reason }
   }
   const decision = retainedDiagnosisRecoveryDecision(readiness.run)
-  if (decision) {
+  if (decision && input.bypassRetainedDiagnosisDecision !== true) {
     return {
       ok: false,
       status: 409,
@@ -1396,6 +1497,10 @@ export async function prepareForegroundResumeRun(
   let scopeRef: string | null = null
   if (scope.type === "stage") scopeRef = scope.stageId
   else if (scope.type === "story") scopeRef = `${scope.waveNumber}/${scope.storyId}`
+
+  const runBeforeRemediation = repos.getRun(input.runId)
+  if (!runBeforeRemediation) return { ok: false, status: 404, error: "run_not_found" }
+  input.verifyBeforeRemediation?.(runBeforeRemediation)
 
   const remediation: ExternalRemediationRow = repos.createExternalRemediation({
     runId: input.runId,
@@ -1471,6 +1576,70 @@ export async function prepareForegroundResumeRun(
       ? queueDeferredStart(admission, input.runId, start)
       : () => admission.runAdmitted(input.runId, start),
   }
+}
+
+export async function prepareForegroundRetryRetainedRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    runId: string
+    workerOwnerKind?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<PreparedForegroundRetryRetainedRunResult> {
+  const readiness = await loadResumeReadiness(repos, input.runId)
+  if (readiness.kind === "not_found") return { ok: false, status: 404, error: "run_not_found" }
+  if (readiness.kind === "not_resumable") {
+    if (retainedDiagnosisRecoveryDecision(readiness.run)) {
+      return { ok: false, status: 409, error: readiness.reason }
+    }
+    return retryRetainedConflict(readiness.run)
+  }
+  if (readiness.kind !== "ready") return retryRetainedConflict(readiness.run)
+  if (!retainedDiagnosisRecoveryDecision(readiness.run)) return retryRetainedConflict(readiness.run)
+
+  let prepared: PreparedForegroundResumeRunResult
+  try {
+    prepared = await prepareForegroundResumeRun(repos, io, {
+      runId: input.runId,
+      summary: RETRY_RETAINED_REMEDIATION_SUMMARY,
+      workerOwnerKind: input.workerOwnerKind,
+      workerInstanceId: input.workerInstanceId,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: input.supabaseAdapterFactory,
+      capabilityResolver: input.capabilityResolver,
+      admissionController: input.admissionController,
+      resumeRunImpl: input.resumeRunImpl,
+      persistItemDecision: false,
+      bypassRetainedDiagnosisDecision: true,
+      verifyBeforeRemediation: run => {
+        if (!retainedDiagnosisRecoveryDecision(run)) throwRetryRetainedPreconditionError()
+      },
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === RETRY_RETAINED_PRECONDITION_ERROR) {
+      const currentRun = repos.getRun(input.runId)
+      return currentRun
+        ? retryRetainedConflict(currentRun)
+        : { ok: false, status: 404, error: "run_not_found" }
+    }
+    throw error
+  }
+
+  if (prepared.ok && repos.getRun(input.runId)?.status === "blocked") {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  return prepared
 }
 
 // Re-export the event type for convenience.

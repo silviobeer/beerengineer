@@ -18,8 +18,9 @@ export type RunRecoveryDecision = {
 }
 
 export function retainedDiagnosisRecoveryDecision(
-  run: Pick<RunRow, "recovery_status" | "recovery_payload_json" | "supabase_branch_lifecycle_state" | "supabase_branch_ref">,
+  run: Pick<RunRow, "status" | "recovery_status" | "recovery_payload_json" | "supabase_branch_lifecycle_state" | "supabase_branch_ref">,
 ): RunRecoveryDecision | null {
+  if (run.status !== "blocked") return null
   if (run.recovery_status !== "blocked") return null
   if (run.supabase_branch_lifecycle_state !== "retained-for-diagnosis") return null
   const payload = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
