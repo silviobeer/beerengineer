@@ -1029,8 +1029,8 @@ export async function runSkipCurrentStageCommand(runId: string | undefined): Pro
   }
 
   const overrides = resolveOverrides()
-  const config = readConfigFile(resolveConfigPath(overrides))
-  const port = overrides.enginePort ?? config?.enginePort ?? defaultAppConfig().enginePort
+  const config = resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
+  const port = config.enginePort
   let response: Response
   try {
     response = await fetch(`http://127.0.0.1:${port}/runs/${runId}/recovery`, {
