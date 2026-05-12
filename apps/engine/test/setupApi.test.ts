@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
@@ -9,7 +9,7 @@ import { initDatabase } from "../src/db/connection.js"
 
 const TEST_API_TOKEN = "test-token"
 
-function startServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string } {
+function startServer(env: NodeJS.ProcessEnv, options?: { apiToken?: string | null }): { proc: ChildProcess; base: string } {
   const port = 4700 + Math.floor(Math.random() * 500)
   const host = "127.0.0.1"
   const serverPath = resolve(new URL(".", import.meta.url).pathname, "..", "src", "api", "server.ts")
@@ -19,8 +19,10 @@ function startServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string
     PORT: String(port),
     HOST: host,
     BEERENGINEER_SEED: "0",
-    BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
   }
+  const apiToken = options?.apiToken === undefined ? TEST_API_TOKEN : options.apiToken
+  if (apiToken) childEnv.BEERENGINEER_API_TOKEN = apiToken
+  else delete childEnv.BEERENGINEER_API_TOKEN
   if (!("BEERENGINEER_PUBLIC_BASE_URL" in env)) delete childEnv.BEERENGINEER_PUBLIC_BASE_URL
   if (!("BEERENGINEER_PREVIEW_HOST" in env)) delete childEnv.BEERENGINEER_PREVIEW_HOST
   const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
@@ -53,7 +55,7 @@ function stopServer(proc: ChildProcess): Promise<void> {
   })
 }
 
-test("AC-8 POST /setup/init requires the engine CSRF token", async () => {
+test("REQ-1 POST /setup/init succeeds for localhost operators without token management", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-setup-api-"))
   const dbPath = join(dir, "server.sqlite")
   initDatabase(dbPath).close()
@@ -61,16 +63,10 @@ test("AC-8 POST /setup/init requires the engine CSRF token", async () => {
     BEERENGINEER_UI_DB_PATH: dbPath,
     BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
     BEERENGINEER_DATA_DIR: join(dir, "data"),
-  })
+  }, { apiToken: null })
   try {
     await waitForHealth(base)
-    const rejected = await fetch(`${base}/setup/init`, { method: "POST" })
-    assert.equal(rejected.status, 403)
-
-    const accepted = await fetch(`${base}/setup/init`, {
-      method: "POST",
-      headers: { "x-beerengineer-token": TEST_API_TOKEN },
-    })
+    const accepted = await fetch(`${base}/setup/init`, { method: "POST" })
     assert.equal(accepted.status, 200)
     const body = await accepted.json() as { ok: boolean; configState: string }
     assert.equal(body.ok, true)
@@ -81,7 +77,7 @@ test("AC-8 POST /setup/init requires the engine CSRF token", async () => {
   }
 })
 
-test("AC-16 PATCH /setup/config requires the engine CSRF token", async () => {
+test("REQ-1 PATCH /setup/config allows tokenless localhost updates and ignores legacy headers", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-setup-config-api-"))
   const dbPath = join(dir, "server.sqlite")
   initDatabase(dbPath).close()
@@ -89,36 +85,38 @@ test("AC-16 PATCH /setup/config requires the engine CSRF token", async () => {
     BEERENGINEER_UI_DB_PATH: dbPath,
     BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
     BEERENGINEER_DATA_DIR: join(dir, "data"),
-  })
+  }, { apiToken: null })
   try {
     await waitForHealth(base)
     const rejected = await fetch(`${base}/setup/config`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ browser: { enabled: true } }),
     })
-    assert.equal(rejected.status, 403)
-
-    const accepted = await fetch(`${base}/setup/config`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json", "x-beerengineer-token": TEST_API_TOKEN },
-      body: JSON.stringify({ browser: { enabled: true } }),
-    })
-    assert.equal(accepted.status, 409)
+    assert.equal(rejected.status, 409)
 
     const initialized = await fetch(`${base}/setup/init`, {
       method: "POST",
-      headers: { "x-beerengineer-token": TEST_API_TOKEN },
     })
     assert.equal(initialized.status, 200)
 
     const patched = await fetch(`${base}/setup/config`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", "x-beerengineer-token": TEST_API_TOKEN },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ browser: { enabled: true } }),
     })
     assert.equal(patched.status, 200)
     const body = await patched.json() as { saved: string[] }
     assert.deepEqual(body.saved, ["browser.enabled"])
+
+    const legacyHeaderPatched = await fetch(`${base}/setup/config`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-beerengineer-token": TEST_API_TOKEN },
+      body: JSON.stringify({ browser: { enabled: false } }),
+    })
+    assert.equal(legacyHeaderPatched.status, 200)
+    const legacyBody = await legacyHeaderPatched.json() as { saved: string[] }
+    assert.deepEqual(legacyBody.saved, ["browser.enabled"])
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
@@ -147,6 +145,38 @@ test("setup JSON endpoints reject oversized request bodies", async () => {
     assert.equal(body.error, "request_body_too_large")
   } finally {
     await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-1 startup stays tokenless and does not create an api.token artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-setup-api-tokenless-"))
+  const dbPath = join(dir, "server.sqlite")
+  const stateDir = join(dir, "state")
+  const tokenPath = join(stateDir, "beerengineer", "api.token")
+  initDatabase(dbPath).close()
+
+  const serverEnv = {
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+    XDG_STATE_HOME: stateDir,
+  }
+
+  const first = startServer(serverEnv, { apiToken: null })
+  try {
+    await waitForHealth(first.base)
+    assert.equal(existsSync(tokenPath), false)
+  } finally {
+    await stopServer(first.proc)
+  }
+
+  const second = startServer(serverEnv, { apiToken: null })
+  try {
+    await waitForHealth(second.base)
+    assert.equal(existsSync(tokenPath), false)
+  } finally {
+    await stopServer(second.proc)
     rmSync(dir, { recursive: true, force: true })
   }
 })

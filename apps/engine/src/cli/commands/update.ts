@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
-import { readApiTokenFile } from "../../api/tokenFile.js"
 import { readEnginePidFile } from "../../api/pidFile.js"
 import { Repos } from "../../db/repositories.js"
 import type { AppConfig } from "../../setup/types.js"
@@ -230,14 +229,12 @@ async function maybeSubmitRemoteUpdateApply(
   const pid = readEnginePidFile()
   if (pid?.port !== config.enginePort) return null
   if (!existsSync(join(config.dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"))) return null
-  const token = process.env.BEERENGINEER_API_TOKEN ?? readApiTokenFile()
-  if (!token) return null
+  const headers: Record<string, string> = { "content-type": "application/json" }
+  const token = process.env.BEERENGINEER_API_TOKEN?.trim()
+  if (token) headers["x-beerengineer-token"] = token
   const response = await fetch(`http://127.0.0.1:${config.enginePort}/update/apply`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-beerengineer-token": token,
-    },
+    headers,
     body: JSON.stringify({
       version: cmd.version,
       allowLegacyDbShadow: cmd.allowLegacyDbShadow === true,

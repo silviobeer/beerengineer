@@ -1,7 +1,6 @@
 import { chmodSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
-import { resolveApiTokenFilePath } from "../../api/tokenFile.js"
 import { resolveEnginePidFilePath } from "../../api/pidFile.js"
 import { resolveDbPathInfo } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
@@ -298,7 +297,6 @@ function writePreparedSwitcher(
     api: {
       enginePort: input.appConfig.enginePort,
       host: "127.0.0.1",
-      apiTokenFile: resolveApiTokenFilePath(),
       pidFile: resolveEnginePidFilePath(),
     },
     requiredMigrationLevel: REQUIRED_MIGRATION_LEVEL,

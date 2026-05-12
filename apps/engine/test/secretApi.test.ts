@@ -50,7 +50,7 @@ function stopServer(proc: ChildProcess): Promise<void> {
   })
 }
 
-test("AC-13 mutating secret actions are CSRF-protected and redacted", async () => {
+test("REQ-1 localhost secret actions stay redacted without requiring a token", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-secret-api-"))
   const dbPath = join(dir, "server.sqlite")
   initDatabase(dbPath).close()
@@ -62,11 +62,12 @@ test("AC-13 mutating secret actions are CSRF-protected and redacted", async () =
   })
   try {
     await waitForHealth(base)
-    const rejected = await fetch(`${base}/setup/secrets/sonar.token`, {
+    const acceptedWithoutToken = await fetch(`${base}/setup/secrets/sonar.token`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "replace", value: "api-secret-value" }),
     })
-    assert.equal(rejected.status, 403)
+    assert.equal(acceptedWithoutToken.status, 200)
 
     const accepted = await fetch(`${base}/setup/secrets/sonar.token`, {
       method: "POST",
