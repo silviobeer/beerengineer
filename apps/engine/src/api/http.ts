@@ -43,8 +43,8 @@ export async function readJson(req: IncomingMessage, limit = DEFAULT_JSON_BODY_L
  * `allowedOrigin` may be a comma-separated list (e.g.
  * "http://127.0.0.1:3100,http://100.80.38.41:3100") to support multiple
  * reachable hostnames (loopback + Tailscale + LAN). The string `"*"`
- * disables the origin check — only safe because every mutating method is
- * still gated by `x-beerengineer-token`.
+ * disables the origin check and should be treated as a deliberate
+ * relaxation for non-default installs.
  */
 export function setCors(res: ServerResponse, req: IncomingMessage, allowedOrigin: string): void {
   const origin = req.headers.origin
@@ -61,8 +61,16 @@ export function setCors(res: ServerResponse, req: IncomingMessage, allowedOrigin
 
 const MUTATING_METHODS = new Set(["POST", "DELETE", "PUT", "PATCH"])
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  return address === "127.0.0.1"
+    || address === "::1"
+    || address === "::ffff:127.0.0.1"
+}
+
 export function requireCsrfToken(req: IncomingMessage, token: string): boolean {
   if (!MUTATING_METHODS.has(req.method ?? "")) return true
+  if (isLoopbackAddress(req.socket.remoteAddress)) return true
+  if (!token) return false
   const header = req.headers["x-beerengineer-token"]
   const value = Array.isArray(header) ? header[0] : header
   return typeof value === "string" && value === token

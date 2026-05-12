@@ -1,17 +1,14 @@
-import { randomBytes } from "node:crypto"
 import { URL } from "node:url"
 
 import { createApiHttpShell } from "./httpShell.js"
 import { createApiLifecycleCoordinator } from "./lifecycleCoordinator.js"
 import { composeApiPrivilegedDependencies, exportPublicBaseUrlFromConfig } from "./privilegedDependencies.js"
 import { registerApiRoutes } from "./routeRegistration.js"
-import { writeApiTokenFile } from "./tokenFile.js"
 import { writeEnginePidFile } from "./pidFile.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
-const API_TOKEN = process.env.BEERENGINEER_API_TOKEN ?? randomBytes(24).toString("hex")
-const API_TOKEN_WAS_PROVIDED = Boolean(process.env.BEERENGINEER_API_TOKEN)
+const API_TOKEN = process.env.BEERENGINEER_API_TOKEN ?? ""
 
 exportPublicBaseUrlFromConfig()
 
@@ -54,8 +51,4 @@ await lifecycle.start(() => {
     startedAt: new Date().toISOString(),
   })
   console.error(`[engine] wrote pid file to ${pidPath}`)
-  if (!API_TOKEN_WAS_PROVIDED) {
-    const tokenPath = writeApiTokenFile(API_TOKEN)
-    console.error(`[engine] wrote API token to ${tokenPath}`)
-  }
 })

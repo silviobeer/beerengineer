@@ -974,7 +974,7 @@ test("workspace HTTP add rejects malformed harnessProfile with 400", async () =>
   }
 })
 
-test("mutating requests without the CSRF token are rejected with 403", async () => {
+test("tokenless localhost mutations reach normal validation instead of failing auth", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
@@ -983,11 +983,11 @@ test("mutating requests without the CSRF token are rejected with 403", async () 
     const res = await fetch(`${base}/workspaces`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: "/tmp/x", harnessProfile: { mode: "fast" } }),
+      body: JSON.stringify({ path: "/tmp/x", harnessProfile: { mode: "does-not-exist" } }),
     })
-    assert.equal(res.status, 403)
+    assert.equal(res.status, 400)
     const body = await res.json() as { error: string }
-    assert.equal(body.error, "csrf_token_required")
+    assert.equal(body.error, "invalid_harness_profile")
   } finally {
     await stopServer(proc)
   }

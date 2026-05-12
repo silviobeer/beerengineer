@@ -1,34 +1,7 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
 import { engineBaseUrl } from "./baseUrl";
 
-function tokenPath(): string {
-  const envPath = process.env.BEERENGINEER_API_TOKEN_FILE;
-  if (envPath) return resolve(envPath);
-  const xdgState = process.env.XDG_STATE_HOME;
-  const base = xdgState ? resolve(xdgState) : join(homedir(), ".local", "state");
-  return join(base, "beerengineer", "api.token");
-}
-
-function readToken(): string | null {
-  const direct = process.env.BEERENGINEER_API_TOKEN;
-  if (direct) return direct;
-  try {
-    const raw = readFileSync(tokenPath(), "utf8").trim();
-    return raw || null;
-  } catch {
-    return null;
-  }
-}
-
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = extra ? { ...extra } : {};
-  const token = readToken();
-  if (token) {
-    headers["x-beerengineer-token"] = token;
-  }
-  return headers;
+  return extra ? { ...extra } : {};
 }
 
 function jsonResponse(error: string, status: number): Response {

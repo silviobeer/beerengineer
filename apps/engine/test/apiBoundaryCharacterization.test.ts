@@ -49,7 +49,7 @@ async function reservePort(): Promise<number> {
   })
 }
 
-async function startServer(env: NodeJS.ProcessEnv): Promise<ServerHandle> {
+async function startServer(env: NodeJS.ProcessEnv, options?: { apiToken?: string | null }): Promise<ServerHandle> {
   const host = "127.0.0.1"
   let lastError: Error | null = null
 
@@ -61,8 +61,10 @@ async function startServer(env: NodeJS.ProcessEnv): Promise<ServerHandle> {
       PORT: String(port),
       HOST: host,
       BEERENGINEER_SEED: "0",
-      BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
     }
+    const apiToken = options?.apiToken === undefined ? TEST_API_TOKEN : options.apiToken
+    if (apiToken) childEnv.BEERENGINEER_API_TOKEN = apiToken
+    else delete childEnv.BEERENGINEER_API_TOKEN
     if (!("BEERENGINEER_PUBLIC_BASE_URL" in env)) delete childEnv.BEERENGINEER_PUBLIC_BASE_URL
     if (!("BEERENGINEER_PREVIEW_HOST" in env)) delete childEnv.BEERENGINEER_PREVIEW_HOST
 
@@ -239,59 +241,58 @@ test("REQ-10-1 characterizes the current item action 404 failure path", async ()
   }
 })
 
-test("REQ-10-1 characterizes current token enforcement on POST /setup/init", async () => {
+test("REQ-1 tokenless localhost mutations are admitted whether legacy token headers are absent or present", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-api-boundary-auth-"))
   const dbPath = join(dir, "server.sqlite")
+  const configPath = join(dir, "config.json")
+  const allowedRoot = join(dir, "projects")
+  const { mkdirSync, writeFileSync } = await import("node:fs")
   initDatabase(dbPath).close()
-  const { proc, base } = await startServer(makeServerEnv(dir, dbPath))
+  mkdirSync(allowedRoot, { recursive: true })
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, { apiToken: null })
   try {
     await waitForHealth(base)
 
-    const missing = await fetch(`${base}/setup/init`, { method: "POST" })
-    assert.equal(missing.status, 403)
-    assert.deepEqual(await missing.json(), { error: "csrf_token_required" })
+    const headers = [
+      undefined,
+      { "x-beerengineer-token": "wrong-token" },
+      { "x-beerengineer-token": TEST_API_TOKEN },
+    ]
 
-    const invalid = await fetch(`${base}/setup/init`, {
-      method: "POST",
-      headers: { "x-beerengineer-token": "wrong-token" },
-    })
-    assert.equal(invalid.status, 403)
-    assert.deepEqual(await invalid.json(), { error: "csrf_token_required" })
-
-    const accepted = await fetch(`${base}/setup/init`, {
-      method: "POST",
-      headers: { "x-beerengineer-token": TEST_API_TOKEN },
-    })
-    assert.equal(accepted.status, 200)
-    const body = await accepted.json() as {
-      ok: boolean
-      configState: string
-      dataDirState: string
-      databaseState: string
-      configPath: string
-      dataDir: string
-      dbPath: string
-      config: { schemaVersion: number; browser: { enabled: boolean } }
+    for (const headerSet of headers) {
+      const res = await fetch(`${base}/workspaces`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(headerSet ?? {}),
+        },
+        body: JSON.stringify({
+          path: join(allowedRoot, "bad"),
+          harnessProfile: { mode: "does-not-exist" },
+        }),
+      })
+      assert.equal(res.status, 400)
+      const body = await res.json() as { error: string }
+      assert.equal(body.error, "invalid_harness_profile")
     }
-    assert.deepEqual(Object.keys(body).sort(), [
-      "config",
-      "configPath",
-      "configState",
-      "dataDir",
-      "dataDirState",
-      "databaseState",
-      "dbPath",
-      "ok",
-    ])
-    assert.equal(body.ok, true)
-    assert.equal(body.configState, "created")
-    assert.equal(body.dataDirState, "created")
-    assert.equal(body.databaseState, "created")
-    assert.equal(body.configPath, join(dir, "config.json"))
-    assert.equal(body.dataDir, join(dir, "data"))
-    assert.equal(body.dbPath, join(dir, "data", "beerengineer.sqlite"))
-    assert.equal(body.config.schemaVersion, 1)
-    assert.equal(body.config.browser.enabled, false)
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
@@ -691,8 +692,8 @@ test("REQ-10-1 characterizes the touched route matrix and current OpenAPI board 
     const boardCard = openapi.components.schemas.BoardCard
     const boardColumn = openapi.components.schemas.BoardColumn
 
-    assert.deepEqual(setupInit.security, [{ csrfToken: [] }])
-    assert.deepEqual(itemAction.security, [{ csrfToken: [] }])
+    assert.equal(setupInit.security, undefined)
+    assert.equal(itemAction.security, undefined)
     assert.ok(events.responses?.["200"]?.content?.["text/event-stream"])
     assert.deepEqual(board.responses?.["200"]?.content?.["application/json"]?.schema, { $ref: "#/components/schemas/Board" })
     assert.deepEqual(boardColumn.properties?.key, {
