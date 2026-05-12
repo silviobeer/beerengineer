@@ -426,7 +426,7 @@ From `apps/engine/src/core/harness/presets.json`:
 | `fast`              | codex / gpt-5.4             | claude / claude-haiku-4-5 | claude / claude-haiku-4-5   | none                         |
 | `claude-sdk-first`  | claude:sdk / claude-sonnet-4-6 | codex / gpt-5.4         | claude:sdk / claude-sonnet-4-6 | none                      |
 | `codex-sdk-first`   | codex:sdk / gpt-5.4         | claude / claude-sonnet-4-6 | codex:sdk / gpt-5.4        | none                         |
-| `opencode-china`    | opencode / qwen3.5-coder    | opencode / deepseek-v3.2  | opencode / qwen3.5-coder    | deepseek QA, qwen QA-review  |
+| `opencode-china`    | opencode / qwen3-coder-plus      | opencode / deepseek-v4-pro| opencode / qwen3-coder-plus      | deepseek QA, qwen QA-review  |
 | `opencode-euro`     | opencode / codestral-2501   | opencode / mistral-large  | opencode / codestral-2501   | none                         |
 
 Both SDK-backed presets keep the **reviewer** on the opposite vendor's

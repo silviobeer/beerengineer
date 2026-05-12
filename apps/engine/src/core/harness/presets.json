@@ -21,7 +21,7 @@
     {
       "name": "openrouter",
       "models": [
-        { "id": "qwen/qwen3.5-coder" },
+        { "id": "qwen/qwen3-coder-plus" },
         { "id": "deepseek/deepseek-v4-pro" },
         { "id": "mistralai/codestral-2501" },
         { "id": "mistralai/mistral-large-2411" }
@@ -84,13 +84,13 @@
       "merge-resolver": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "cli" }
     },
     "opencode-china": {
-      "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
+      "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3-coder-plus" },
       "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v4-pro" },
-      "merge-resolver": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
+      "merge-resolver": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3-coder-plus" },
       "stageOverrides": {
         "qa": {
           "coder": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v4-pro" },
-          "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" }
+          "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3-coder-plus" }
         }
       }
     },

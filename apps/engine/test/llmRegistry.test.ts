@@ -164,8 +164,8 @@ test("opencode-china declares the same qa reviewer-as-author override", () => {
   >
   const qaOverride = presets["opencode-china"].stageOverrides?.qa
 
-  assert.equal(qaOverride?.coder?.model, "deepseek/deepseek-v3.2")
-  assert.equal(qaOverride?.reviewer?.model, "qwen/qwen3.5-coder")
+  assert.equal(qaOverride?.coder?.model, "deepseek/deepseek-v4-pro")
+  assert.equal(qaOverride?.reviewer?.model, "qwen/qwen3-coder-plus")
 })
 
 test("resolveHarness supports opencode in self-mode profiles", () => {
@@ -175,7 +175,7 @@ test("resolveHarness supports opencode in self-mode profiles", () => {
       harnessProfile: {
         mode: "self",
         roles: {
-          coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3.5-coder" },
+          coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus" },
           reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6" },
         },
       },
@@ -188,7 +188,7 @@ test("resolveHarness supports opencode in self-mode profiles", () => {
   assert.equal(resolved.harness, "opencode")
   assert.equal(resolved.provider, "openrouter")
   assert.equal(resolved.runtime, "cli")
-  assert.equal(resolved.model, "qwen/qwen3.5-coder")
+  assert.equal(resolved.model, "qwen/qwen3-coder-plus")
 })
 
 test("resolveHarness upgrades coder to opus for execution stage on claude-first (implementation needs the strongest model)", () => {
