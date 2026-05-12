@@ -672,6 +672,146 @@ test("REQ-3 CLI run resume proceeds against the blocked run with a zero exit cod
   }
 })
 
+test("REQ-3 CLI ambiguous recovery prints attach/discard guidance with concrete run and branch context", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-recovery-guidance-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+    })
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const run = repos.getRun(blockedRunId)!
+    repos.setRunRecovery(blockedRunId, {
+      status: "blocked",
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+      payloadJson: buildSupabaseProvisioningRecoveryPayload({
+        runId: blockedRunId,
+        workspaceId: run.workspace_id,
+        workspaceKey: "alpha",
+        projectRef: "proj_alpha",
+        waveId: "W1",
+        waveNumber: 1,
+        branchRef: "br_selected",
+        failedStep: "validate",
+        failureCause: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+        userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+        guidance: {
+          reason: "branch_not_active_healthy",
+          attachBranchRefs: ["br_selected"],
+        },
+      }),
+    })
+    db.close()
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "resume", blockedRunId],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", /automatic branch reuse because the current branch state is ambiguous/i)
+    assert.match(result.stderr ?? "", new RegExp(`beerengineer run discard-supabase-branch ${blockedRunId}`))
+    assert.match(result.stderr ?? "", new RegExp(`beerengineer run attach-supabase-branch ${blockedRunId} --ref br_selected`))
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI attach-supabase-branch updates the blocked run attachment and recovery payload branch ref", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-attach-branch-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "attach-supabase-branch", blockedRunId, "--ref", "br_selected"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /attached Supabase branch/i)
+    assert.match(result.stdout ?? "", new RegExp(`run-id: ${blockedRunId}`))
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    const run = verifyRepos.getRun(blockedRunId)
+    assert.equal(run?.supabase_branch_ref, "br_selected")
+    assert.match(run?.recovery_payload_json ?? "", /"branchRef":"br_selected"/)
+    verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI discard-supabase-branch clears the blocked run attachment and recovery payload branch ref", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-discard-branch-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "discard-supabase-branch", blockedRunId],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /cleared Supabase branch attachment/i)
+    assert.match(result.stdout ?? "", new RegExp(`run-id: ${blockedRunId}`))
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    const run = verifyRepos.getRun(blockedRunId)
+    assert.equal(run?.supabase_branch_ref, null)
+    assert.doesNotMatch(run?.recovery_payload_json ?? "", /"branchRef":"/)
+    verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
 test("REQ-3 CLI run resume rejects the wrong run target and names the correct blocked run command", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-resume-wrong-"))
   const testDir = dirname(fileURLToPath(import.meta.url))

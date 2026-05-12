@@ -7,6 +7,7 @@ export type CanonicalMessageType =
   | "run_finished"
   | "run_failed"
   | "run_blocked"
+  | "dirty_master_allowlist_restore"
   | "startup_recovery"
   | "run_resumed"
   | "plan_regenerated"
@@ -61,6 +62,7 @@ const SIMPLE_EVENT_TYPES = [
   "run_finished",
   "run_failed",
   "run_blocked",
+  "dirty_master_allowlist_restore",
   "run_resumed",
   "plan_regenerated",
   "external_remediation_recorded",
@@ -95,6 +97,7 @@ const SIMPLE_LEVELS_BY_EVENT: Record<SimpleEventType, LevelInfo> = {
   run_finished: { level: 2, force: false, type: "run_finished" },
   run_failed: { level: 2, force: true, type: "run_failed" },
   run_blocked: { level: 2, force: true, type: "run_blocked" },
+  dirty_master_allowlist_restore: { level: 1, force: false, type: "dirty_master_allowlist_restore" },
   run_resumed: { level: 2, force: false, type: "run_resumed" },
   plan_regenerated: { level: 2, force: false, type: "plan_regenerated" },
   external_remediation_recorded: { level: 2, force: false, type: "external_remediation_recorded" },

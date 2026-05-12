@@ -40,7 +40,7 @@ right stage.
 Every stage is observable: pending prompts surface in the CLI, the
 HTTP API, or Telegram; artefacts are written to disk per run; events
 stream over SSE for live UIs.
-Items now pause in a dedicated **Merge** column after per-project handoff and only land on the base branch when an operator explicitly promotes them.
+Items move through the dedicated **Merge** column after per-project handoff. By default, green QA auto-promotes the item to the base branch; operators may opt out per workspace by setting `autoPromoteOnGreenQa: false` in `.beerengineer/workspace.json`, in which case the item waits in **Merge** for an explicit promotion.
 
 ## Features
 

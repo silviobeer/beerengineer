@@ -1,4 +1,5 @@
 import type { EventBus } from "./bus.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 import type { Repos } from "../db/repositories.js"
 
 /**
@@ -32,6 +33,9 @@ export function withPromptPersistence(bus: EventBus, repos: Repos): () => void {
         return
       }
       if (event.type === "prompt_answered") {
+        if (event.answer === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
+          return
+        }
         repos.answerPendingPrompt(event.promptId, event.answer)
       }
     } catch (err) {

@@ -1,6 +1,7 @@
 import type { ItemRow, Repos } from "../db/repositories.js"
 import type { EventBus } from "./bus.js"
 import { mapStageToColumn } from "./boardColumns.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 import type { WorkflowEvent } from "./io.js"
 import { parseSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 
@@ -162,6 +163,7 @@ export function attachDbSync(
       data: { promptId: event.promptId, prompt: event.prompt, actions: event.actions },
     })),
     prompt_answered: createEventHandler<"prompt_answered">(event => {
+      if (event.answer === NON_INTERACTIVE_NO_ANSWER_SENTINEL) return
       if (event.source === "bridge") return
       persistLogOnlyEvent(repos, track, event, current => ({
         runId: current.runId,
@@ -279,6 +281,19 @@ export function attachDbSync(
         ctx.itemId,
         wasSoleLiveRun,
       )),
+    dirty_master_allowlist_restore: logOnly<"dirty_master_allowlist_restore">(event => ({
+      runId: event.runId,
+      eventType: "dirty_master_allowlist_restore",
+      message: `${event.status} ${event.paths.length} allowlisted path(s) on ${event.branch}`,
+      data: {
+        itemId: event.itemId,
+        title: event.title,
+        branch: event.branch,
+        paths: event.paths,
+        status: event.status,
+        error: event.error,
+      },
+    })),
     external_remediation_recorded: logOnly<"external_remediation_recorded">(event => ({
       runId: event.runId,
       eventType: "external_remediation_recorded",

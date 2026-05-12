@@ -48,6 +48,12 @@ function parseRunSubcommand(context: ParseArgsContext): Command | null {
       ? { kind: "run-replan", runId: argv[2] }
       : { kind: "run-replan", runId: argv[2], replan }
   }
+  if (second === "attach-supabase-branch") {
+    return { kind: "run-attach-supabase-branch", runId: argv[2], branchRef: readFlag(argv, "--ref") }
+  }
+  if (second === "discard-supabase-branch") {
+    return { kind: "run-discard-supabase-branch", runId: argv[2] }
+  }
   if (second === "open") return { kind: "run-open", runId: argv[2] }
   if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
   if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
@@ -378,6 +384,10 @@ export function printHelp(): void {
     "                                                         Flags: --remediation-summary <text> [--branch <name>] [--commit <sha>] [--notes <text>] [--yes]",
     "    beerengineer run replan <run-id>                     Regenerate the active plan on the same run",
     "                                                         Flags: --reason <text>",
+    "    beerengineer run attach-supabase-branch <run-id> --ref <branchRef>",
+    "                                                         Attach a selected Supabase branch to a blocked run before resuming",
+    "    beerengineer run discard-supabase-branch <run-id>",
+    "                                                         Clear the blocked run's Supabase branch attachment before resuming",
     "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
     "                                                         Flags: [--since <id>] [--limit N] [--json]",
     "    beerengineer runs tail <run-id> [--level L1]        Tail canonical message stream",
@@ -395,7 +405,7 @@ export function printHelp(): void {
     "    start_brainstorm  start_visual_companion  start_frontend_design",
     "    promote_to_requirements  start_implementation  import_prepared",
     "    rerun_design_prep",
-    "    promote_to_base  cancel_promotion  resume_run  mark_done",
+    "    promote_to_base  confirm_merge_resolved  cancel_promotion  resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",
     "    --remediation-summary <text>   Required. What you fixed outside beerengineer_.",

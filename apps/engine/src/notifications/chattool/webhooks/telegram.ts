@@ -120,7 +120,7 @@ async function handleParsedTelegramUpdate(
     return plainOk(res)
   }
 
-  const result = handleChatToolInbound(repos, "telegram", update)
+  const result = await handleChatToolInbound(repos, "telegram", update)
   if (!result.ok) {
     await softReply(resolved.botToken, update.channelRef, inboundFailureMessage(result.error), deps.send)
     return plainOk(res)

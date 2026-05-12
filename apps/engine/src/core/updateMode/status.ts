@@ -1,4 +1,5 @@
 import { resolveDbPathInfo } from "../../db/connection.js"
+import { ensureLegacyDbReconciled } from "../../db/legacyDbReconciler.js"
 import type { Repos } from "../../db/repositories.js"
 import type { AppConfig } from "../../setup/types.js"
 import { readLatestBackup } from "./backup.js"
@@ -14,6 +15,7 @@ export function buildUpdateStatus(
   config: AppConfig,
   opts: { pid?: number | null; latestRelease?: UpdateCheckResult["latestRelease"] | null } = {},
 ): UpdateStatus {
+  ensureLegacyDbReconciled()
   const currentVersion = currentAppVersion()
   const githubRepo = resolveGithubRepo()
   const db = resolveDbPathInfo()

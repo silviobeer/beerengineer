@@ -161,16 +161,9 @@ export function classifyStartupAutoResumeEligibility(input: {
   hasOpenPrompt: boolean
   autoResumeEnabled: boolean
 }): StartupAutoResumeEligibility {
-  if (input.hasOpenPrompt) {
-    return { eligible: false, reason: "open_prompt" }
-  }
-  if (!input.hasOrphanedWorkerLease) {
-    return { eligible: false, reason: "worker_lease_not_orphaned" }
-  }
-  if (!input.autoResumeEnabled) {
-    return { eligible: false, reason: "auto_resume_disabled" }
-  }
-  return { eligible: true }
+  if (input.hasOrphanedWorkerLease && input.autoResumeEnabled) return { eligible: true }
+  if (input.hasOrphanedWorkerLease) return { eligible: false, reason: "auto_resume_disabled" }
+  return { eligible: false, reason: "worker_lease_not_orphaned" }
 }
 
 function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string): string {

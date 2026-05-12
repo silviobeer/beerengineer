@@ -141,6 +141,10 @@ export type WorkspaceTelegramInboundConfig = {
   }
 }
 
+export type WorkspaceGitConfig = {
+  rerere?: boolean
+}
+
 export type WorkspacePreview = {
   schemaVersion: WorkspaceSchemaVersion
   path: string
@@ -241,6 +245,10 @@ export type WorkspaceConfigFile = {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy: WorkspaceRuntimePolicy
+  git?: WorkspaceGitConfig
+  autoPromoteOnGreenQa: boolean
+  dirtyMasterAllowlist?: string[]
+  autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig

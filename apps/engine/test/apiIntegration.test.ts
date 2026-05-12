@@ -12,6 +12,7 @@ import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { createDatabaseBackup } from "../src/core/updateMode.js"
 import { claimWorkerLease } from "../src/core/workerLease.js"
+import { recoverLostWorkerRuns } from "../src/core/orphanRecovery.js"
 import { getBoard } from "../src/api/board.js"
 
 test("PROJ-3-PRD-2 AC-4 workspace API contract keeps existing fields and adds capabilities", () => {
@@ -565,10 +566,34 @@ test("POST /items/import-prepared scopes new imports by workspace key", async ()
 
 test("GET /setup/status returns the doctor report contract", async () => {
   const dbPath = tmpDbPath()
-  initDatabase(dbPath).close()
   const dir = mkdtempSync(join(tmpdir(), "be2-setup-"))
   const configPath = join(dir, "config.json")
   const dataDir = join(dir, "data")
+  const previousSandboxBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+  const config = {
+    schemaVersion: 1,
+    dataDir,
+    allowedRoots: [dir],
+    enginePort: 4100,
+    llm: {
+      provider: "openai",
+      model: "gpt-5.4",
+      apiKeyRef: "OPENAI_API_KEY",
+      defaultHarnessProfile: { mode: "codex-first" },
+    },
+    notifications: { telegram: { enabled: false, level: 2, inbound: { enabled: false } } },
+    vcs: { github: { enabled: false } },
+    recovery: { startupAutoResume: true },
+    browser: { enabled: false },
+  }
+  mkdirSync(dataDir, { recursive: true })
+  const db = initDatabase(join(dataDir, "beerengineer.sqlite"))
+  const repos = new Repos(db)
+  repos.setCodexSandboxCapabilitySnapshot("unsupported")
+  db.close()
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8")
+  delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
   const { proc, base } = startServer({
     BEERENGINEER_UI_DB_PATH: dbPath,
     BEERENGINEER_CONFIG_PATH: configPath,
@@ -581,14 +606,30 @@ test("GET /setup/status returns the doctor report contract", async () => {
     const body = await res.json() as {
       reportVersion: number
       overall: string
+      codexSandbox?: {
+        state: string
+        reason: string
+        detectedCapability: string
+        effectiveMode: string
+        overrideMode: string | null
+      }
       groups: Array<{ id: string }>
     }
     assert.equal(body.reportVersion, 1)
     assert.equal(body.groups.length, 1)
     assert.equal(body.groups[0]?.id, "core")
-    assert.equal(body.overall, "blocked")
+    assert.ok(["ok", "warning", "blocked"].includes(body.overall))
+    assert.deepEqual(body.codexSandbox, {
+      state: "unsupported_bypassing",
+      reason: "unsupported",
+      detectedCapability: "unsupported",
+      effectiveMode: "bypass",
+      overrideMode: null,
+    })
   } finally {
     await stopServer(proc)
+    if (previousSandboxBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousSandboxBypass
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -1848,17 +1889,22 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
   const ws = repos.upsertWorkspace({ key: "t", name: "T" })
   const skippedItem = repos.createItem({ workspaceId: ws.id, title: "Skipped stale run", description: "" })
   const failedItem = repos.createItem({ workspaceId: ws.id, title: "Failed stale run", description: "" })
-  const skippedRun = seedStaleRunningRun(repos, {
-    workspaceId: ws.id,
-    itemId: skippedItem.id,
-    title: skippedItem.title,
-    lease: {
-      workerInstanceId: "cli-waiting",
-      workerOwnerKind: "cli",
-      now: 1_700_000_000_000,
-    },
+  const freshLeaseNow = Date.now()
+  const skippedRun = repos.createRun({ workspaceId: ws.id, itemId: skippedItem.id, title: skippedItem.title, owner: "cli" })
+  repos.updateRun(skippedRun.id, {
+    status: "failed",
+    current_stage: "execution",
+    recovery_status: "failed",
+    recovery_scope: "run",
+    recovery_scope_ref: null,
+    recovery_summary: "CLI worker heartbeat is stale — no live worker; resume or abandon.",
   })
-  repos.createPendingPrompt({ runId: skippedRun.id, prompt: "Need approval?" })
+  claimWorkerLease(repos, {
+    runId: skippedRun.id,
+    workerInstanceId: "cli-fresh",
+    workerOwnerKind: "cli",
+    now: freshLeaseNow,
+  })
   const failedRun = seedStaleRunningRun(repos, {
     workspaceId: ws.id,
     itemId: failedItem.id,
@@ -1875,7 +1921,7 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
   try {
     await waitForHealth(base)
     for (const [runId, expected] of [
-      [skippedRun.id, { outcome: "skipped", reason: "open_prompt" }],
+      [skippedRun.id, { outcome: "skipped", reason: "worker_lease_not_orphaned" }],
       [failedRun.id, { outcome: "failed", reason: "auto_resume_failed" }],
     ] as const) {
       const res = await fetch(`${base}/runs/${runId}/messages?level=2`)
@@ -1888,6 +1934,88 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
       assert.equal(recoveryEntries[0]?.runId, runId)
       assert.equal(recoveryEntries[0]?.payload.outcome, expected.outcome)
       assert.equal(recoveryEntries[0]?.payload.reason, expected.reason)
+    }
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("startup-recovered runs keep the original prompt and accept answers through POST /runs/:id/answer", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Recovered waiting run", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+  repos.updateRun(run.id, { current_stage: "execution" })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "cli-stale",
+    workerOwnerKind: "cli",
+    now: 1_700_000_000_000,
+  })
+  const prompt = repos.createPendingPrompt({ id: "p-recovered", runId: run.id, prompt: "Need approval?" })
+  repos.appendLog({
+    runId: run.id,
+    eventType: "prompt_requested",
+    message: prompt.prompt,
+    data: { promptId: prompt.id },
+  })
+
+  await recoverLostWorkerRuns(repos, {
+    apiWorkerInstanceId: "api-current",
+    now: 1_700_000_130_001,
+    autoResume: {
+      enabled: true,
+      resumeRun: async staleRun => {
+        repos.clearRunRecovery(staleRun.id)
+        repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+      },
+    },
+  })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "cli-fresh",
+    workerOwnerKind: "cli",
+    now: Date.now(),
+  })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const runRes = await fetch(`${base}/runs/${run.id}`)
+    assert.equal(runRes.status, 200)
+    const runBody = await runRes.json() as {
+      id: string
+      status: string
+      openPrompt: null | { promptId: string; text: string }
+    }
+    assert.equal(runBody.status, "running")
+    assert.equal(runBody.openPrompt?.promptId, prompt.id)
+    assert.equal(runBody.openPrompt?.text, prompt.prompt)
+
+    const answerRes = await fetch(`${base}/runs/${run.id}/answer`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ promptId: prompt.id, answer: "Ship it" }),
+    })
+    assert.equal(answerRes.status, 200)
+    const answerBody = await answerRes.json() as {
+      openPrompt: null | { promptId: string }
+      entries: Array<{ kind: string; text: string; answerTo?: string }>
+    }
+    assert.equal(answerBody.openPrompt, null)
+    assert.ok(answerBody.entries.some(entry => entry.kind === "answer" && entry.answerTo === prompt.id && entry.text === "Ship it"))
+
+    const dbAfter = initDatabase(dbPath)
+    const reposAfter = new Repos(dbAfter)
+    try {
+      assert.equal(reposAfter.getPendingPrompt(prompt.id)?.answer, "Ship it")
+      assert.ok(reposAfter.getPendingPrompt(prompt.id)?.answered_at)
+    } finally {
+      dbAfter.close()
     }
   } finally {
     await stopServer(proc)

@@ -8,11 +8,12 @@ import { spawn, spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 import { initDatabase } from "../src/db/connection.js"
+import { resolveLegacyDbCleanupLogPath } from "../src/db/legacyDbReconciler.js"
 import { Repos } from "../src/db/repositories.js"
 import { main, parseArgs, resolveItemReference, resolveUiLaunchUrl, resolveUiWorkspacePath } from "../src/index.js"
 import { printHelp } from "../src/cli/parse.js"
 import { assignPort } from "../src/core/portAllocator.js"
-import { resolveConfiguredDbPath } from "../src/setup/config.js"
+import { CONFIG_SCHEMA_VERSION, resolveConfiguredDbPath } from "../src/setup/config.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeWorkspaceConfig } from "../src/core/workspaces.js"
 import { buildWorkspaceConfigFile } from "../src/core/workspaces/configFile.js"
@@ -176,6 +177,7 @@ test("doctor --json reports blocked status when the app config is uninitialized"
   const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
   const previousDataDir = process.env.BEERENGINEER_DATA_DIR
   const previousPath = process.env.PATH
+  const previousSandboxBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
   const binPath = resolve(engineRoot, "bin/beerengineer.js")
@@ -188,6 +190,7 @@ test("doctor --json reports blocked status when the app config is uninitialized"
     process.env.BEERENGINEER_CONFIG_PATH = configPath
     process.env.BEERENGINEER_DATA_DIR = dataDir
     process.env.PATH = `${stubBin}:${previousPath ?? ""}`
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
 
     const result = spawnSync(process.execPath, [binPath, "doctor", "--json"], {
       cwd: engineRoot,
@@ -198,9 +201,12 @@ test("doctor --json reports blocked status when the app config is uninitialized"
 
     const report = JSON.parse(result.stdout) as {
       overall: string
+      codexSandbox?: { state: string; reason: string }
       groups: Array<{ id: string; checks: Array<{ id: string; status: string }> }>
     }
     assert.equal(report.overall, "blocked")
+    assert.equal(report.codexSandbox?.state, "unverified_bypassing")
+    assert.equal(report.codexSandbox?.reason, "unverified")
     const core = report.groups.find(group => group.id === "core")
     assert.ok(core)
     assert.equal(core.checks.find(check => check.id === "core.config")?.status, "uninitialized")
@@ -211,6 +217,8 @@ test("doctor --json reports blocked status when the app config is uninitialized"
     else process.env.BEERENGINEER_DATA_DIR = previousDataDir
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
+    if (previousSandboxBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousSandboxBypass
     removeTempDir(dir)
   }
 })
@@ -643,6 +651,171 @@ test("update --check prints machine-readable release info", async () => {
     assert.equal(parsed.check.latestRelease.tag, "v9.9.9")
     assert.equal(parsed.check.updateAvailable, true)
     assert.equal(parsed.status.install.root, join(dataDir, "install"))
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    removeTempDir(dir)
+  }
+})
+
+test("workspace list silently cleans an empty legacy shadow and continues on the configured database", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-legacy-shadow-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const home = join(dir, "home")
+  const dataDir = join(dir, "data")
+  const configPath = join(dir, "config", "config.json")
+  const config = buildCliAppConfig(dataDir, dir)
+  const configuredDbPath = resolveConfiguredDbPath(config)
+  const legacyDbPath = join(home, ".local", "share", "beerengineer", "beerengineer.sqlite")
+
+  try {
+    writeCliAppConfig(configPath, config)
+    const configuredDb = initDatabase(configuredDbPath)
+    const repos = new Repos(configuredDb)
+    repos.upsertWorkspace({ key: "demo", name: "Demo workspace", rootPath: join(dir, "workspace") })
+    configuredDb.close()
+    initDatabase(legacyDbPath).close()
+    writeFileSync(`${legacyDbPath}-wal`, "wal\n", "utf8")
+    writeFileSync(`${legacyDbPath}-shm`, "shm\n", "utf8")
+
+    const result = spawnSync(process.execPath, [binPath, "workspace", "list", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        BEERENGINEER_CONFIG_PATH: configPath,
+        BEERENGINEER_UI_DB_PATH: "",
+      },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.doesNotMatch(result.stderr ?? "", /legacy-db-shadow|both the configured DB|configured DB .* is missing/)
+    assert.equal(existsSync(legacyDbPath), false)
+    assert.equal(existsSync(`${legacyDbPath}-wal`), false)
+    assert.equal(existsSync(`${legacyDbPath}-shm`), false)
+    const workspaces = JSON.parse(result.stdout) as Array<{ key: string }>
+    assert.deepEqual(workspaces.map(workspace => workspace.key), ["demo"])
+    const [event] = readLegacyCleanupEvents(dataDir)
+    assert.equal(readLegacyCleanupEvents(dataDir).length, 1)
+    assert.equal(event?.event, "legacy-db-cleanup")
+    assert.equal(event?.configuredDbPath, configuredDbPath)
+    assert.equal(event?.legacyDbPath, legacyDbPath)
+    assert.equal(event?.outcome, "cleaned")
+    assert.match(event?.timestamp ?? "", /^\d{4}-\d{2}-\d{2}T/)
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("update --dry-run proceeds past legacy shadow preflight after successful cleanup", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-cleaned-shadow-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const home = join(dir, "home")
+  const dataDir = join(dir, "data")
+  const configPath = join(dir, "config", "config.json")
+  const config = buildCliAppConfig(dataDir, dir)
+  const configuredDbPath = resolveConfiguredDbPath(config)
+  const legacyDbPath = join(home, ".local", "share", "beerengineer", "beerengineer.sqlite")
+  const releaseRoot = join(dir, "beerengineer-release")
+  const tarballPath = join(dir, "release.tar.gz")
+
+  mkdirSync(join(releaseRoot, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "ui"), { recursive: true })
+  writeFileSync(join(releaseRoot, "package.json"), JSON.stringify({
+    name: "beerengineer-release",
+    version: "9.9.9",
+    private: true,
+    workspaces: ["apps/*"],
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
+    name: "@beerengineer/engine",
+    version: "9.9.9",
+    private: true,
+    type: "module",
+    bin: {
+      beerengineer: "./bin/beerengineer.js",
+    },
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
+  writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
+    name: "@beerengineer/ui",
+    version: "9.9.9",
+    private: true,
+  }, null, 2))
+  const tarResult = spawnSync("tar", ["-czf", tarballPath, "-C", dir, "beerengineer-release"], { encoding: "utf8" })
+  assert.equal(tarResult.status, 0, tarResult.stderr)
+
+  const server = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${port}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/gzip" })
+      res.end(readFileSync(tarballPath))
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  try {
+    writeCliAppConfig(configPath, config)
+    initDatabase(configuredDbPath).close()
+    initDatabase(legacyDbPath).close()
+    writeFileSync(`${legacyDbPath}-wal`, "wal\n", "utf8")
+
+    const child = spawn(process.execPath, [binPath, "update", "--dry-run", "--json", "--version", "v9.9.9"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        HOME: home,
+        BEERENGINEER_CONFIG_PATH: configPath,
+        BEERENGINEER_UI_DB_PATH: "",
+        BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+        BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${port}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    child.stderr?.on("data", chunk => stderrChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    const stdout = Buffer.concat(stdoutChunks).toString("utf8")
+    const stderr = Buffer.concat(stderrChunks).toString("utf8")
+
+    assert.equal(exitCode, 0, stderr)
+    assert.doesNotMatch(`${stdout}\n${stderr}`, /update_preflight_failed:legacy_db_shadow|legacy-db-shadow/)
+    assert.equal(existsSync(legacyDbPath), false)
+    assert.equal(existsSync(`${legacyDbPath}-wal`), false)
+    const parsed = JSON.parse(stdout) as {
+      dryRun: {
+        status: string
+        warnings: string[]
+      }
+    }
+    assert.equal(parsed.dryRun.status, "aborted-dry-run")
+    assert.deepEqual(parsed.dryRun.warnings, [])
+    const [event] = readLegacyCleanupEvents(dataDir)
+    assert.equal(readLegacyCleanupEvents(dataDir).length, 1)
+    assert.equal(event?.event, "legacy-db-cleanup")
+    assert.equal(event?.configuredDbPath, configuredDbPath)
+    assert.equal(event?.legacyDbPath, legacyDbPath)
+    assert.equal(event?.outcome, "cleaned")
+    assert.match(event?.timestamp ?? "", /^\d{4}-\d{2}-\d{2}T/)
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
     removeTempDir(dir)
@@ -1350,3 +1523,49 @@ test("help output explains that user prompts are limited to intake and blockers"
   assert.match(output, /cancel_promotion/)
   assert.match(output, /BEERENGINEER_WORKTREE_PORT_POOL/)
 })
+
+function buildCliAppConfig(dataDir: string, allowedRoot: string) {
+  return {
+    schemaVersion: CONFIG_SCHEMA_VERSION,
+    dataDir,
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    notifications: { telegram: { enabled: false, level: 2, inbound: { enabled: false } } },
+    vcs: { github: { enabled: false } },
+    recovery: { startupAutoResume: true },
+    browser: { enabled: false },
+  }
+}
+
+function writeCliAppConfig(configPath: string, config: ReturnType<typeof buildCliAppConfig>): void {
+  mkdirSync(dirname(configPath), { recursive: true })
+  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8")
+}
+
+function readLegacyCleanupEvents(dataDir: string): Array<{
+  event: string
+  configuredDbPath: string
+  legacyDbPath: string
+  outcome: string
+  timestamp?: string
+}> {
+  const logPath = resolveLegacyDbCleanupLogPath(dataDir)
+  if (!existsSync(logPath)) return []
+  return readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(line => JSON.parse(line) as {
+      event: string
+      configuredDbPath: string
+      legacyDbPath: string
+      outcome: string
+      timestamp?: string
+    })
+}

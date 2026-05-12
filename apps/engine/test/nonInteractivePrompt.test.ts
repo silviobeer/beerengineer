@@ -8,12 +8,20 @@
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { initDatabase } from "../src/db/connection.js"
+import { Repos } from "../src/db/repositories.js"
+import { createBus, busToWorkflowIO } from "../src/core/bus.js"
+import { BlockedRunError } from "../src/core/blockedError.js"
 import { runStage } from "../src/core/stageRuntime.js"
 import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../src/core/constants.js"
+import { withPromptPersistence } from "../src/core/promptPersistence.js"
+import { runWithActiveRun, withStageLifecycle } from "../src/core/runContext.js"
+import { runWithWorkflowIO } from "../src/core/io.js"
+import { layout } from "../src/core/workspaceLayout.js"
 import type {
   ReviewAgentAdapter,
   ReviewAgentResponse,
@@ -32,6 +40,18 @@ function withTmpCwd(): { restore: () => void } {
   return {
     restore: () => {
       process.chdir(prev)
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+function tmpDb() {
+  const dir = mkdtempSync(join(tmpdir(), "be2-noninteractive-db-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
+  return {
+    db,
+    cleanup: () => {
+      db.close()
       rmSync(dir, { recursive: true, force: true })
     },
   }
@@ -108,7 +128,7 @@ test("stageRuntime fails with a descriptive error when askUser returns the non-i
       (err: Error) => {
         // Must be our descriptive error, not a cascade from the agent
         assert.match(err.message, /non-interactive/)
-        assert.match(err.message, /pending_prompt/)
+        assert.match(err.message, /pending[_ ]prompt/i)
         // Must not be "scripted stage: no more responses" — the sentinel
         // check must fire before the agent sees the answer
         assert.ok(
@@ -121,6 +141,95 @@ test("stageRuntime fails with a descriptive error when askUser returns the non-i
   } finally {
     env.restore()
   }
+})
+
+test("non-interactive unanswered prompts block the run and keep the prompt open", async () => {
+  const env = withTmpCwd()
+  const db = tmpDb()
+  try {
+    const repos = new Repos(db.db)
+    const workspace = repos.upsertWorkspace({ key: "test", name: "Test", rootPath: process.cwd() })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "T", description: "D" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title })
+    const bus = createBus()
+    const io = busToWorkflowIO(bus)
+    const detachPromptPersistence = withPromptPersistence(bus, repos)
+
+    bus.subscribe(event => {
+      if (event.type === "prompt_requested") {
+        bus.answer(event.promptId, NON_INTERACTIVE_NO_ANSWER_SENTINEL)
+      }
+    })
+
+    const stage = new ScriptedStage([
+      { kind: "message", message: "Do you have wireframe references?" },
+      { kind: "artifact", artifact: { payload: "should-not-reach" } },
+    ])
+    const reviewer = new ScriptedReviewer([{ kind: "pass" }])
+
+    await assert.rejects(
+      () =>
+        runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: run.id, itemId: item.id, title: item.title }, () =>
+            runStage(baseDefinition({
+              stageAgent: stage,
+              reviewer,
+              askUser: prompt => io.ask(prompt),
+            })),
+          ),
+        ),
+      /non-interactive/,
+    )
+
+    const prompt = repos.getOpenPrompt(run.id)
+    assert.ok(prompt, "expected the unanswered prompt to remain open")
+    assert.equal(prompt?.prompt, "Do you have wireframe references?")
+    assert.equal(repos.getOpenPrompt(run.id)?.id, prompt?.id)
+    assert.equal(repos.getOpenPrompt(run.id)?.id, prompt?.id)
+    assert.equal(repos.getPendingPrompt(prompt!.id)?.answered_at, null)
+
+    const ctx = { workspaceId: "ws-noninteractive", workspaceRoot: process.cwd(), runId: "run-noninteractive" }
+    const runSnapshot = JSON.parse(readFileSync(layout.runFile(ctx), "utf8")) as { status: string; currentStage: string }
+    assert.equal(runSnapshot.status, "blocked")
+    assert.equal(runSnapshot.currentStage, "test-vc")
+
+    detachPromptPersistence()
+    io.close()
+  } finally {
+    env.restore()
+    db.cleanup()
+  }
+})
+
+test("withStageLifecycle does not emit a failed stage completion for intentional blocks", async () => {
+  const events: Array<{ type: string; status?: string }> = []
+
+  await assert.rejects(
+    () =>
+      runWithWorkflowIO(
+        {
+          async ask() {
+            throw new Error("should not ask")
+          },
+          emit(event) {
+            events.push({ type: event.type, status: "status" in event ? event.status : undefined })
+          },
+        },
+        () =>
+          runWithActiveRun({ runId: "run-1", itemId: "item-1", title: "T" }, () =>
+            withStageLifecycle("requirements", async () => {
+              throw new BlockedRunError("blocked")
+            }),
+          ),
+      ),
+    /blocked/,
+  )
+
+  assert.ok(events.some(event => event.type === "stage_started"))
+  assert.equal(
+    events.some(event => event.type === "stage_completed" && event.status === "failed"),
+    false,
+  )
 })
 
 test("stageRuntime passes normally when askUser returns a real non-empty answer", async () => {
