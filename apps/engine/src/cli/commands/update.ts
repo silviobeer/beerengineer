@@ -229,12 +229,9 @@ async function maybeSubmitRemoteUpdateApply(
   const pid = readEnginePidFile()
   if (pid?.port !== config.enginePort) return null
   if (!existsSync(join(config.dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"))) return null
-  const headers: Record<string, string> = { "content-type": "application/json" }
-  const token = process.env.BEERENGINEER_API_TOKEN?.trim()
-  if (token) headers["x-beerengineer-token"] = token
   const response = await fetch(`http://127.0.0.1:${config.enginePort}/update/apply`, {
     method: "POST",
-    headers,
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       version: cmd.version,
       allowLegacyDbShadow: cmd.allowLegacyDbShadow === true,

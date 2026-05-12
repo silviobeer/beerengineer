@@ -1216,6 +1216,126 @@ test("update prepares a staged apply attempt and returns machine-readable metada
   }
 })
 
+test("REQ-2 local update handoff succeeds without token discovery or legacy header injection", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-remote-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  const stateDir = join(dir, "state")
+  const configPath = join(dir, "config.json")
+  const requests: Array<{ headers: Record<string, string | string[] | undefined>; body: string }> = []
+  initDatabase(dbPath).close()
+  mkdirSync(join(dataDir, "install", "current", "apps", "engine", "bin"), { recursive: true })
+  writeFileSync(join(dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"), "console.log('backup')\n", "utf8")
+
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on("data", chunk => chunks.push(Buffer.from(chunk)))
+    req.on("end", () => {
+      requests.push({
+        headers: req.headers,
+        body: Buffer.concat(chunks).toString("utf8"),
+      })
+      res.writeHead(202, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        operationId: `op-${requests.length}`,
+        state: "queued",
+        currentVersion: "0.1.0",
+        targetRelease: {
+          tag: "v9.9.9",
+          version: "9.9.9",
+          publishedAt: "2026-04-27T00:00:00.000Z",
+          tarballUrl: "https://example.test/release.tar.gz",
+          url: "https://example.test/releases/v9.9.9",
+        },
+        githubRepo: "demo/beerengineer",
+        stagedRoot: join(dir, `staged-${requests.length}`),
+        switcherPath: join(dir, `switcher-${requests.length}.js`),
+        metadataPath: join(dir, `metadata-${requests.length}.json`),
+        warnings: [],
+      }))
+    })
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: CONFIG_SCHEMA_VERSION,
+    dataDir,
+    allowedRoots: [dir],
+    enginePort: port,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }, null, 2))
+  mkdirSync(join(stateDir, "beerengineer"), { recursive: true })
+  writeFileSync(join(stateDir, "beerengineer", "engine.pid"), JSON.stringify({
+    pid: process.pid,
+    host: "127.0.0.1",
+    port,
+    startedAt: new Date().toISOString(),
+  }, null, 2))
+
+  async function runUpdate(envToken?: string): Promise<{
+    exitCode: number | null
+    stdout: string
+    stderr: string
+  }> {
+    const child = spawn(process.execPath, [binPath, "update", "--json", "--version", "v9.9.9"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_CONFIG_PATH: configPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        XDG_STATE_HOME: stateDir,
+        ...(envToken ? { BEERENGINEER_API_TOKEN: envToken } : {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    child.stderr?.on("data", chunk => stderrChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    return {
+      exitCode,
+      stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+      stderr: Buffer.concat(stderrChunks).toString("utf8"),
+    }
+  }
+
+  try {
+    const tokenless = await runUpdate()
+    assert.equal(tokenless.exitCode, 0, tokenless.stderr)
+    const tokenlessBody = JSON.parse(tokenless.stdout) as { execution: { reason: string } }
+    assert.equal(tokenlessBody.execution.reason, "engine_handoff_requested")
+
+    const legacyEnv = await runUpdate("legacy-env-token")
+    assert.equal(legacyEnv.exitCode, 0, legacyEnv.stderr)
+    const legacyEnvBody = JSON.parse(legacyEnv.stdout) as { execution: { reason: string } }
+    assert.equal(legacyEnvBody.execution.reason, "engine_handoff_requested")
+
+    assert.equal(requests.length, 2)
+    for (const request of requests) {
+      assert.equal(request.headers["x-beerengineer-token"], undefined)
+      const body = JSON.parse(request.body) as { version: string; allowLegacyDbShadow: boolean }
+      assert.equal(body.version, "v9.9.9")
+      assert.equal(body.allowLegacyDbShadow, false)
+    }
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    removeTempDir(dir)
+  }
+})
+
 test("chat answer reads the answer body from stdin when --text is omitted", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
