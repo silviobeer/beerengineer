@@ -40,6 +40,32 @@ export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: s
   handoffClient?: SupabaseHandoffClient
 } | null
 
+function asBoundSupabaseHandoffClient(
+  client: SupabaseHandoffClient | undefined,
+): SupabaseHandoffClient | undefined {
+  if (!client) return undefined
+  return {
+    getProjectKeys: client.getProjectKeys.bind(client),
+    getBranchConnectionString: client.getBranchConnectionString.bind(client),
+  }
+}
+
+function isSupabaseHandoffClient(value: unknown): value is SupabaseHandoffClient {
+  if (!value || typeof value !== "object") return false
+  return typeof (value as SupabaseHandoffClient).getProjectKeys === "function"
+    && typeof (value as SupabaseHandoffClient).getBranchConnectionString === "function"
+}
+
+function copiedUnboundHandoffMethods(input: {
+  handoffClient?: SupabaseHandoffClient
+  managementClient?: SupabaseReadinessManagementClient
+}): boolean {
+  const { handoffClient, managementClient } = input
+  if (!handoffClient || !isSupabaseHandoffClient(managementClient) || handoffClient === managementClient) return false
+  return handoffClient.getProjectKeys === managementClient.getProjectKeys
+    && handoffClient.getBranchConnectionString === managementClient.getBranchConnectionString
+}
+
 export function buildSupabaseWorkflowHook(
   repos: Repos,
   workspaceId: string,
@@ -60,6 +86,17 @@ export function buildSupabaseWorkflowHook(
   })
   if (!built) return undefined
 
+  const managementHandoffClient = isSupabaseHandoffClient(built.managementClient)
+    ? built.managementClient
+    : undefined
+  const handoffClient = copiedUnboundHandoffMethods({
+    handoffClient: built.handoffClient,
+    managementClient: built.managementClient,
+  })
+    ? asBoundSupabaseHandoffClient(managementHandoffClient)
+    : asBoundSupabaseHandoffClient(built.handoffClient)
+      ?? asBoundSupabaseHandoffClient(managementHandoffClient)
+
   return {
     repos,
     adapter: built.adapter,
@@ -71,7 +108,7 @@ export function buildSupabaseWorkflowHook(
     protectionSwitch: workspaceRow.supabase_protection_switch ?? "off",
     cleanupPolicy: workspaceRow.supabase_cleanup_policy ?? "on-success-immediate",
     cleanupTtlHours: workspaceRow.supabase_cleanup_ttl_hours ?? null,
-    handoffClient: built.handoffClient,
+    handoffClient,
   }
 }
 
