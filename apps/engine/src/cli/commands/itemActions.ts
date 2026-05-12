@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import { readApiTokenFile } from "../../api/tokenFile.js"
 import { ask, close } from "../../sim/human.js"
 import { createCliIO } from "../../core/ioCli.js"
 import type { ItemAction, ItemActionResult } from "../../core/itemActions.js"
@@ -33,7 +34,7 @@ import {
 import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ReplanFlags, ResumeFlags } from "../types.js"
-import { deriveRunStatus, resolveItemReference, resolveSelectedWorkspace } from "../common.js"
+import { deriveRunStatus, EXIT_TRANSPORT, resolveItemReference, resolveSelectedWorkspace } from "../common.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../../setup/config.js"
 import type { AppConfig } from "../../setup/types.js"
 
@@ -62,6 +63,26 @@ type SuccessfulPreparedImportRunResult = Extract<
 type PreparedImportCliStart =
   | { ok: true; workspace: WorkspaceRow }
   | { ok: false; exitCode: number }
+
+type RecoveryActionCliResult =
+  | {
+      ok: true
+      runId: string
+      action: string
+      outcome: "accepted"
+      currentStage?: string
+      stageStatus?: "skipped"
+      runStatus?: string
+      recoveryStatus?: string
+    }
+  | {
+      ok: false
+      error: string
+      code: string
+      reason: string
+      message: string
+      action?: string
+    }
 
 const CLI_RUN_DEATH_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
@@ -993,6 +1014,53 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
   } finally {
     db.close()
   }
+}
+
+export async function runSkipCurrentStageCommand(runId: string | undefined): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run skip-current-stage <run-id>")
+    return 2
+  }
+
+  const token = process.env.BEERENGINEER_API_TOKEN ?? readApiTokenFile()
+  if (!token) {
+    console.error("  Missing engine API token. Start the engine or export BEERENGINEER_API_TOKEN.")
+    return EXIT_TRANSPORT
+  }
+
+  const overrides = resolveOverrides()
+  const config = readConfigFile(resolveConfigPath(overrides))
+  const port = overrides.enginePort ?? config?.enginePort ?? defaultAppConfig().enginePort
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/runs/${runId}/recovery`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-beerengineer-token": token,
+      },
+      body: JSON.stringify({ action: "skip_current_stage" }),
+    })
+  } catch {
+    console.error(`  Could not reach the local engine API on http://127.0.0.1:${port}.`)
+    console.error("  Start it with: beerengineer start")
+    return EXIT_TRANSPORT
+  }
+
+  const payload = await response.json().catch(() => null) as RecoveryActionCliResult | null
+  if (!response.ok || !payload?.ok) {
+    const message = payload && !payload.ok ? payload.message : `Recovery request failed with HTTP ${response.status}.`
+    console.error(`  ${message}`)
+    return response.status === 404 ? 1 : 75
+  }
+
+  console.log("  current stage skipped")
+  console.log(`  run-id: ${payload.runId}`)
+  if (payload.currentStage) console.log(`  stage: ${payload.currentStage}`)
+  if (payload.runStatus && payload.recoveryStatus) {
+    console.log(`  state: ${payload.runStatus} / ${payload.recoveryStatus}`)
+  }
+  return 0
 }
 
 export async function runRunResumeCommand(runId: string | undefined, resumeFlags?: ResumeFlags): Promise<number> {

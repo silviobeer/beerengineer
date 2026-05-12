@@ -33,7 +33,7 @@ function withRepos<T>(fn: (repos: Repos) => T): T {
 function createRunFixture(repos: Repos) {
   const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
   const item = repos.createItem({ workspaceId: workspace.id, title: "Recovery Item", description: "desc" })
-  const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title, owner: "api", status: "blocked" })
+  const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title, owner: "api", status: "running" })
   return { workspace, item, run }
 }
 
@@ -102,21 +102,125 @@ test("SETUP-1 clear actions return a canonical HTTP-200 noop when the targeted f
   })
 })
 
-test("SETUP-1 named recovery and skip actions stay on the canonical route with specific rejection vocabulary until later waves implement them", () => {
+test("REQ-2 skip_current_stage records the current stage as skipped and blocks the run for manual review", () => {
   withRepos(repos => {
     const { run } = createRunFixture(repos)
+    repos.updateRun(run.id, { status: "running", current_stage: "execution" })
+    const stage = repos.createStageRun({ runId: run.id, stageKey: "execution" })
 
     const result = mutate(repos, run.id, { action: "skip_current_stage" })
 
     assert.deepEqual(result, {
-      ok: false,
-      status: 501,
-      error: "recovery_action_reserved",
-      code: "not_implemented",
+      ok: true,
+      runId: run.id,
       action: "skip_current_stage",
-      reason: "action_not_implemented",
-      message: "Named recovery actions are reserved on POST /runs/:id/recovery and will be wired by later stories.",
+      outcome: "accepted",
+      latestState: {
+        recoveryPayloadJson: null,
+        supabaseBranchRef: null,
+        supabaseBranchLifecycleState: null,
+      },
+      currentStage: "execution",
+      stageStatus: "skipped",
+      runStatus: "blocked",
+      recoveryStatus: "blocked",
     })
+
+    const stageAfter = repos.listStageRunsForRun(run.id).find(candidate => candidate.id === stage.id)
+    assert.equal(stageAfter?.status, "skipped")
+    const runAfter = repos.getRun(run.id)
+    assert.equal(runAfter?.status, "blocked")
+    assert.equal(runAfter?.current_stage, "execution")
+    assert.equal(runAfter?.recovery_status, "blocked")
+    assert.equal(runAfter?.recovery_scope, "stage")
+    assert.equal(runAfter?.recovery_scope_ref, "execution")
+  })
+})
+
+test("REQ-2 skip_current_stage rejects ineligible requests with specific reasons and no state change", () => {
+  withRepos(repos => {
+    const noCurrent = createRunFixture(repos).run
+
+    const inactive = createRunFixture(repos).run
+    repos.updateRun(inactive.id, { status: "blocked", current_stage: "planning" })
+    repos.createStageRun({ runId: inactive.id, stageKey: "planning" })
+
+    const terminal = createRunFixture(repos).run
+    repos.updateRun(terminal.id, { status: "running", current_stage: "requirements" })
+    const terminalStage = repos.createStageRun({ runId: terminal.id, stageKey: "requirements" })
+    repos.completeStageRun(terminalStage.id, "completed")
+
+    const activeLease = createRunFixture(repos).run
+    repos.updateRun(activeLease.id, { status: "running", current_stage: "execution" })
+    repos.createStageRun({ runId: activeLease.id, stageKey: "execution" })
+    repos.claimRunWorkerLease(activeLease.id, {
+      workerInstanceId: "cli-worker-active",
+      workerOwnerKind: "cli",
+      startedAt: Date.now(),
+    })
+
+    const skipped = createRunFixture(repos).run
+    repos.updateRun(skipped.id, { status: "blocked", current_stage: "execution", recovery_status: "blocked", recovery_scope: "stage", recovery_scope_ref: "execution", recovery_summary: "Already skipped." })
+    const skippedStage = repos.createStageRun({ runId: skipped.id, stageKey: "execution" })
+    repos.completeStageRun(skippedStage.id, "skipped")
+
+    const noCurrentBefore = JSON.stringify({ run: repos.getRun(noCurrent.id), logs: repos.listLogsForRun(noCurrent.id) })
+    const inactiveBefore = JSON.stringify({ run: repos.getRun(inactive.id), logs: repos.listLogsForRun(inactive.id) })
+    const terminalBefore = JSON.stringify({ run: repos.getRun(terminal.id), logs: repos.listLogsForRun(terminal.id) })
+    const activeLeaseBefore = JSON.stringify({ run: repos.getRun(activeLease.id), logs: repos.listLogsForRun(activeLease.id) })
+    const skippedBefore = JSON.stringify({ run: repos.getRun(skipped.id), logs: repos.listLogsForRun(skipped.id) })
+
+    assert.deepEqual(mutate(repos, noCurrent.id, { action: "skip_current_stage" }), {
+      ok: false,
+      status: 409,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "no_current_stage",
+      message: "Skip current stage is unavailable because the run has no current stage.",
+    })
+    assert.deepEqual(mutate(repos, inactive.id, { action: "skip_current_stage" }), {
+      ok: false,
+      status: 409,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_not_active",
+      message: "Skip current stage is unavailable because the current stage is not active.",
+    })
+    assert.deepEqual(mutate(repos, terminal.id, { action: "skip_current_stage" }), {
+      ok: false,
+      status: 409,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_terminal",
+      message: "Skip current stage is unavailable because the current stage is already terminal.",
+    })
+    assert.deepEqual(mutate(repos, activeLease.id, { action: "skip_current_stage" }), {
+      ok: false,
+      status: 409,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_worker_active",
+      message: "Skip current stage is unavailable because a worker still holds the active stage lease.",
+    })
+    assert.deepEqual(mutate(repos, skipped.id, { action: "skip_current_stage" }), {
+      ok: false,
+      status: 409,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_already_skipped",
+      message: "Skip current stage is unavailable because the current stage is already recorded as skipped.",
+    })
+
+    assert.equal(JSON.stringify({ run: repos.getRun(noCurrent.id), logs: repos.listLogsForRun(noCurrent.id) }), noCurrentBefore)
+    assert.equal(JSON.stringify({ run: repos.getRun(inactive.id), logs: repos.listLogsForRun(inactive.id) }), inactiveBefore)
+    assert.equal(JSON.stringify({ run: repos.getRun(terminal.id), logs: repos.listLogsForRun(terminal.id) }), terminalBefore)
+    assert.equal(JSON.stringify({ run: repos.getRun(activeLease.id), logs: repos.listLogsForRun(activeLease.id) }), activeLeaseBefore)
+    assert.equal(JSON.stringify({ run: repos.getRun(skipped.id), logs: repos.listLogsForRun(skipped.id) }), skippedBefore)
   })
 })
 
@@ -156,6 +260,9 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
     "replan",
     "retry_supabase_readiness",
     "skip_current_stage",
+    "recover_fresh_branch",
+    "retry_retained",
+    "clear_and_fresh",
     "clear_recovery_payload",
     "clear_supabase_branch_ref",
     "clear_supabase_branch_lifecycle_state",
@@ -168,8 +275,18 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   assert.ok(rejectionReasons.includes("action_required"))
   assert.ok(rejectionReasons.includes("unsupported_action"))
   assert.ok(rejectionReasons.includes("action_not_implemented"))
+  assert.ok(rejectionReasons.includes("incompatible_recovery_state"))
+  assert.ok(rejectionReasons.includes("no_current_stage"))
+  assert.ok(rejectionReasons.includes("current_stage_not_active"))
+  assert.ok(rejectionReasons.includes("current_stage_terminal"))
+  assert.ok(rejectionReasons.includes("current_stage_worker_active"))
+  assert.ok(rejectionReasons.includes("current_stage_already_skipped"))
 
   assert.match(docs, /Canonical recovery mutation surface for named recovery, skip, and narrow clear actions\./)
+  assert.match(docs, /The implemented skip action is `skip_current_stage`; it records the active current stage as skipped and leaves the run blocked for manual review without auto-advancing\./)
+  assert.match(docs, /skip_current_stage` is offered only when the run has an active non-terminal current stage that is not already recorded as skipped and no live worker still holds the stage lease; ineligible requests reject with specific reasons such as `no_current_stage`, `current_stage_not_active`, `current_stage_worker_active`, `current_stage_terminal`, and `current_stage_already_skipped`\./)
+  assert.match(docs, /The implemented named path-changing actions are `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh`\./)
+  assert.match(docs, /the contract-defined post-action values are `fresh_path_recovery` and `retained_path_recovery`\./)
   assert.match(docs, /Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear\./)
-  assert.match(docs, /Later waves extend the same route with specific machine-readable rejection reasons instead of introducing a second mutation surface\./)
+  assert.match(docs, /Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged\./)
 })
