@@ -1685,6 +1685,112 @@
         }
       }
     },
+    "/runs/{id}/recovery/clear-and-fresh": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Clear a retained diagnosis branch and continue recovery on the fresh path.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run recovery was accepted on the fresh path after clearing the retained branch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "recoveryStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "runId",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "400": {
+            "description": "Bad Request — capability blocked or missing readiness.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowCapabilityBlockedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — the run is no longer eligible for clear-and-fresh or another resume blocker applies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ClearAndFreshConflict"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable — capability not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowCapabilityBlockedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{id}/resume": {
       "parameters": [
         {
@@ -4567,6 +4673,60 @@
           },
           "currentState": {
             "$ref": "#/components/schemas/RetryRetainedConflictCurrentState"
+          }
+        }
+      },
+      "ClearAndFreshConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "currentState"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "clear_and_fresh_conflict"
+          },
+          "code": {
+            "type": "string",
+            "const": "clear_and_fresh_conflict"
+          },
+          "message": {
+            "type": "string"
+          },
+          "currentState": {
+            "$ref": "#/components/schemas/RetryRetainedConflictCurrentState"
+          }
+        }
+      },
+      "WorkflowCapabilityBlockedError": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "workflow_capability_blocked"
+          },
+          "code": {
+            "type": "string",
+            "const": "workflow_capability_blocked"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "incomplete_config",
+              "blocked_readiness",
+              "gate_blocked"
+            ]
           }
         }
       },

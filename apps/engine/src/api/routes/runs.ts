@@ -13,6 +13,8 @@ import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messag
 import { projectStageLogRow } from "../../core/messagingProjection.js"
 import {
   answerRunPromptInProcess,
+  clearAndFreshRunInProcess,
+  isClearAndFreshConflictResult,
   isRetryRetainedConflictResult,
   isResumeOperatorDecisionResult,
   isWorkflowCapabilityBlockedResult,
@@ -43,6 +45,7 @@ function contentTypeFor(path: string): string {
 
 type ResumeRunFailure = Exclude<Awaited<ReturnType<typeof resumeRunInProcess>>, { ok: true }>
 type RetryRetainedRunFailure = Exclude<Awaited<ReturnType<typeof retryRetainedRunInProcess>>, { ok: true }>
+type ClearAndFreshRunFailure = Exclude<Awaited<ReturnType<typeof clearAndFreshRunInProcess>>, { ok: true }>
 
 function resumeFailureBody(result: ResumeRunFailure): Record<string, unknown> {
   if (isWorkflowCapabilityBlockedResult(result)) {
@@ -74,6 +77,26 @@ function retryRetainedFailureBody(result: RetryRetainedRunFailure): Record<strin
     }
   }
   if (isRetryRetainedConflictResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      currentState: result.currentState,
+    }
+  }
+  return { error: result.error }
+}
+
+function clearAndFreshFailureBody(result: ClearAndFreshRunFailure): Record<string, unknown> {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      reason: "reason" in result ? result.reason : undefined,
+    }
+  }
+  if (isClearAndFreshConflictResult(result)) {
     return {
       error: result.error,
       code: result.code,
@@ -376,6 +399,29 @@ export async function handleRetryRetainedRecovery(
   })
   if (!result.ok) {
     return json(res, result.status, retryRetainedFailureBody(result))
+  }
+  const run = repos.getRun(result.runId)
+  json(res, 200, {
+    ok: true,
+    runId: result.runId,
+    status: run?.status ?? "running",
+    recoveryStatus: run?.recovery_status ?? null,
+  })
+}
+
+export async function handleClearAndFreshRecovery(
+  repos: Repos,
+  _req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const result = await clearAndFreshRunInProcess(repos, {
+    runId,
+    onItemColumnChanged,
+  })
+  if (!result.ok) {
+    return json(res, result.status, clearAndFreshFailureBody(result))
   }
   const run = repos.getRun(result.runId)
   json(res, 200, {

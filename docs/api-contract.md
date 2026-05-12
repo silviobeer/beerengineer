@@ -104,6 +104,12 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - Response: `{ ok, runId, status, recoveryStatus }`.
   - Starts recovery work on the same retained diagnosis branch through the existing resume orchestration. No follow-up `POST /runs/:id/resume` call is required after this action is accepted.
   - `409 { error: "retry_retained_conflict", code: "retry_retained_conflict", message, currentState }` when the run's current authoritative state is no longer eligible for retained-branch retry. `currentState` includes `status`, `recoveryStatus`, and `supabaseBranchLifecycleState`. This conflict is side-effect free: the engine does not create a remediation row or start recovery work.
+- `POST /runs/:id/recovery/clear-and-fresh`
+  - Request: `{}`.
+  - Response: `{ ok, runId, status, recoveryStatus }`.
+  - Detaches the retained diagnosis branch from the run, starts best-effort cleanup for that branch, and immediately re-enters the normal run-scoped recovery pipeline on the fresh path. No follow-up `POST /runs/:id/resume` call is required after this action is accepted.
+  - Cleanup failure is exposed through the normal recovery observability surfaces as a warning; it does not roll back the accepted run-side transition.
+  - `409 { error: "clear_and_fresh_conflict", code: "clear_and_fresh_conflict", message, currentState }` when the run's current authoritative state is no longer eligible for retained-branch clearing. `currentState` includes `status`, `recoveryStatus`, and `supabaseBranchLifecycleState`. This conflict is side-effect free: the engine does not create a remediation row, start cleanup, or start recovery work.
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
@@ -115,7 +121,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - `409 { error: "replan_plan_missing", message }` when the run has not yet produced a persisted plan.
   - `409 { error: "replan_run_active", currentStatus, workerHeartbeatAt, hint }` when the run is still active; `hint` is the pause-first guidance and `workerHeartbeatAt` is an ISO 8601 UTC timestamp or `null`.
 
-`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text. `GET /runs/:id/recovery` also exposes `decision: RunRecoveryDecision | null`; retained-diagnosis runs set `decision.reason = "retained_diagnosis_branch"`, enumerate both operator choices in `decision.nextActions`, and set `resumable = false` until one of those choices is taken. `POST /runs/:id/recovery/retry-retained` is the first of those explicit operator actions and re-enters recovery on the retained branch through the normal run-scoped recovery pipeline.
+`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text. `GET /runs/:id/recovery` also exposes `decision: RunRecoveryDecision | null`; retained-diagnosis runs set `decision.reason = "retained_diagnosis_branch"`, enumerate both operator choices in `decision.nextActions`, and set `resumable = false` until one of those choices is taken. `POST /runs/:id/recovery/retry-retained` re-enters recovery on the retained branch through the normal run-scoped recovery pipeline, while `POST /runs/:id/recovery/clear-and-fresh` discards the retained target and immediately resumes on the fresh path.
 
 ### Conversation (run-scoped)
 
