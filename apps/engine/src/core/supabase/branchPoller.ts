@@ -17,7 +17,7 @@ export type BranchPollerClock = {
   sleep(ms: number): Promise<void>
 }
 
-export function isSupabaseBranchReady(branch: SupabaseBranch): boolean {
+export function isSupabaseBranchReady(branch: { status?: string }): boolean {
   return branch.status === "ACTIVE_HEALTHY" || branch.status === "FUNCTIONS_DEPLOYED"
 }
 

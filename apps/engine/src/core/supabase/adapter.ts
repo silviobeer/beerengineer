@@ -2,7 +2,7 @@ import type { SupabaseAdapter, SupabaseAdapterResult, SupabaseWorkspaceContext }
 import { createOrAttachPersistentTestBranch, type PersistentBranchClient } from "./persistentTestBranch.js"
 import type { Repos } from "../../db/repositories.js"
 import { ownedWaveBranchPrefix, waveBranchName } from "./branchNaming.js"
-import { pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoller.js"
+import { isSupabaseBranchReady, pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoller.js"
 import { applySupabaseMigrationsAndSeeds, type SupabaseMigrationClient } from "./migrationRunner.js"
 import { listSupabaseSqlFiles } from "./migrationRunner.js"
 import { migrationSmoke } from "./dbTests/migrationSmoke.js"
@@ -232,7 +232,7 @@ function expectedWaveBranchName(input: Required<Pick<SupabaseWorkspaceContext, "
 
 function branchNotHealthyFailure(branch: ReusableBranch, expectedName: string): SupabaseAdapterResult {
   return recoveryGuidanceFailure(
-    `Supabase recovery refused to reuse branch ${branch.ref} because ${expectedName} is not ACTIVE_HEALTHY (provider status: ${branch.status ?? "unknown"}).`,
+    `Supabase recovery refused to reuse branch ${branch.ref} because ${expectedName} is not ready (provider status: ${branch.status ?? "unknown"}).`,
     {
       reason: "branch_not_active_healthy",
       attachBranchRefs: [branch.ref],
@@ -242,7 +242,7 @@ function branchNotHealthyFailure(branch: ReusableBranch, expectedName: string): 
 }
 
 function validateHealthyReusableBranch(branch: ReusableBranch, expectedName: string): SupabaseAdapterResult | null {
-  return branch.status === "ACTIVE_HEALTHY"
+  return isSupabaseBranchReady(branch)
     ? null
     : branchNotHealthyFailure(branch, expectedName)
 }
