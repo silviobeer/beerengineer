@@ -660,6 +660,62 @@ test("registerWorkspace rejects non-boolean rerere config values visibly", async
   }
 })
 
+test("readWorkspaceConfig defaults autoPromoteOnGreenQa to true and preserves explicit false", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  try {
+    const enabledRoot = join(dir, "enabled")
+    mkdirSync(join(enabledRoot, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(enabledRoot, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "enabled",
+        name: "Enabled",
+        harnessProfile: { mode: "fast" },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "unsafe-autonomous-write",
+        },
+        sonar: { enabled: false },
+        reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const disabledRoot = join(dir, "disabled")
+    mkdirSync(join(disabledRoot, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(disabledRoot, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "disabled",
+        name: "Disabled",
+        harnessProfile: { mode: "fast" },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "unsafe-autonomous-write",
+        },
+        sonar: { enabled: false },
+        reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+        autoPromoteOnGreenQa: false,
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const [enabledConfig, disabledConfig] = await Promise.all([
+      import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(enabledRoot)),
+      import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(disabledRoot)),
+    ])
+
+    assert.equal(enabledConfig?.autoPromoteOnGreenQa, true)
+    assert.equal(disabledConfig?.autoPromoteOnGreenQa, false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // Regression: readWorkspaceConfig used to return null for workspaces written
 // with claude-sdk-first / codex-sdk-first because isValidHarnessProfile's
 // allowlist hadn't been updated. That broke previewWorkspace, openWorkspace,

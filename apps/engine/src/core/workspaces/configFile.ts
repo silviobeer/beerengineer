@@ -153,6 +153,18 @@ function normalizeWorkspaceTelegramConfig(raw: unknown): WorkspaceTelegramInboun
   return Object.keys(normalized).length > 0 ? normalized : undefined
 }
 
+function normalizeDirtyMasterAllowlist(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw
+    .filter((value): value is string => typeof value === "string")
+    .map(value => value.trim())
+    .filter(Boolean)
+}
+
+function normalizeOptionalBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === "boolean" ? raw : undefined
+}
+
 function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
   if (!raw || typeof raw !== "object") return false
   const mode = (raw as { mode?: unknown }).mode
@@ -187,6 +199,9 @@ export function buildWorkspaceConfigFile(input: {
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
   git?: WorkspaceGitConfig
+  autoPromoteOnGreenQa?: boolean
+  dirtyMasterAllowlist?: string[]
+  autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig
@@ -201,6 +216,9 @@ export function buildWorkspaceConfigFile(input: {
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
     git: input.git,
+    autoPromoteOnGreenQa: input.autoPromoteOnGreenQa ?? true,
+    dirtyMasterAllowlist: input.dirtyMasterAllowlist?.map(value => value.trim()).filter(Boolean),
+    autoRestoreAllowlisted: input.autoRestoreAllowlisted,
     preview: input.preview,
     sonar: input.sonar,
     telegram: input.telegram,
@@ -221,6 +239,9 @@ type RawWorkspaceConfigFile = {
   harnessProfile?: unknown
   runtimePolicy?: unknown
   git?: unknown
+  autoPromoteOnGreenQa?: unknown
+  dirtyMasterAllowlist?: unknown
+  autoRestoreAllowlisted?: unknown
   preview?: unknown
   sonar?: unknown
   telegram?: unknown
@@ -273,6 +294,9 @@ function buildParsedWorkspaceConfig(
     harnessProfile,
     runtimePolicy,
     git,
+    autoPromoteOnGreenQa: raw.autoPromoteOnGreenQa !== false,
+    dirtyMasterAllowlist: normalizeDirtyMasterAllowlist(raw.dirtyMasterAllowlist),
+    autoRestoreAllowlisted: normalizeOptionalBoolean(raw.autoRestoreAllowlisted),
     preview: normalizePreviewConfig(raw.preview),
     sonar,
     telegram: normalizeWorkspaceTelegramConfig(raw.telegram),

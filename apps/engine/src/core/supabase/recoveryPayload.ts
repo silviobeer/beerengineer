@@ -29,10 +29,50 @@ export type SupabaseReadinessRecoverySource = {
   message?: string
 }
 
+export type SupabaseProvisioningFailureStep = "provision" | "poll" | "handoff" | "validate"
+
+export type SupabaseProvisioningGuidanceReason =
+  | "ref_conflict"
+  | "branch_not_active_healthy"
+  | "multiple_name_matches"
+  | "wave_mismatch"
+
+export type SupabaseProvisioningRecoveryGuidance = {
+  reason: SupabaseProvisioningGuidanceReason
+  attachBranchRefs: string[]
+}
+
+export type SupabaseProvisioningOperatorAction = "attach" | "discard"
+
+export type SupabaseProvisioningRecoveryPayload = {
+  type: "supabase_provisioning"
+  runId: string
+  workspaceId?: string
+  workspaceKey?: string
+  projectRef?: string
+  waveId: string
+  waveNumber: number
+  branchRef?: string
+  failedStep: SupabaseProvisioningFailureStep
+  failureCause: string
+  userMessage: string
+  guidance?: SupabaseProvisioningRecoveryGuidance
+  operatorAction?: SupabaseProvisioningOperatorAction
+}
+
+export type SupabaseProvisioningRecoverySource = Omit<SupabaseProvisioningRecoveryPayload, "type">
+
 const setupActions = new Set<string>(SUPABASE_READINESS_SETUP_ACTIONS)
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const values = value
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+  return Array.from(new Set(values))
 }
 
 function booleanOrFalse(value: unknown): boolean {
@@ -119,6 +159,24 @@ export function buildSupabaseReadinessRecoveryPayload(source: SupabaseReadinessR
   } satisfies SupabaseReadinessRecoveryPayload)
 }
 
+export function buildSupabaseProvisioningRecoveryPayload(source: SupabaseProvisioningRecoverySource): string {
+  return JSON.stringify({
+    type: "supabase_provisioning",
+    runId: source.runId,
+    workspaceId: source.workspaceId,
+    workspaceKey: source.workspaceKey,
+    projectRef: source.projectRef,
+    waveId: source.waveId,
+    waveNumber: source.waveNumber,
+    branchRef: source.branchRef,
+    failedStep: source.failedStep,
+    failureCause: source.failureCause,
+    userMessage: source.userMessage,
+    guidance: source.guidance,
+    operatorAction: source.operatorAction,
+  } satisfies SupabaseProvisioningRecoveryPayload)
+}
+
 export function parseSupabaseReadinessRecoveryPayload(raw: string | null | undefined): SupabaseReadinessRecoveryPayload | null {
   if (!raw) return null
   let parsed: unknown
@@ -141,4 +199,103 @@ export function parseSupabaseReadinessRecoveryPayload(raw: string | null | undef
     dbRelevanceTrigger: triggerValue(row.dbRelevanceTrigger),
     message: stringOrUndefined(row.message),
   }
+}
+
+function provisioningStep(value: unknown): SupabaseProvisioningFailureStep | null {
+  return value === "provision" || value === "poll" || value === "handoff" || value === "validate"
+    ? value
+    : null
+}
+
+function provisioningGuidanceReason(value: unknown): SupabaseProvisioningGuidanceReason | null {
+  return value === "ref_conflict"
+    || value === "branch_not_active_healthy"
+    || value === "multiple_name_matches"
+    || value === "wave_mismatch"
+    ? value
+    : null
+}
+
+export function parseSupabaseProvisioningGuidance(value: unknown): SupabaseProvisioningRecoveryGuidance | undefined {
+  const row = objectValue(value)
+  if (!row) return undefined
+  const reason = provisioningGuidanceReason(row.reason)
+  if (!reason) return undefined
+  return {
+    reason,
+    attachBranchRefs: stringArray(row.attachBranchRefs),
+  }
+}
+
+function provisioningOperatorAction(value: unknown): SupabaseProvisioningOperatorAction | undefined {
+  return value === "attach" || value === "discard" ? value : undefined
+}
+
+export function runResumeCommand(runId: string): string {
+  return `beerengineer run resume ${runId} --remediation-summary "<what you fixed>"`
+}
+
+export function discardSupabaseBranchCommand(runId: string): string {
+  return `beerengineer run discard-supabase-branch ${runId}`
+}
+
+export function attachSupabaseBranchCommand(runId: string, branchRef: string): string {
+  return `beerengineer run attach-supabase-branch ${runId} --ref ${branchRef}`
+}
+
+export function parseSupabaseProvisioningRecoveryPayload(raw: string | null | undefined): SupabaseProvisioningRecoveryPayload | null {
+  if (!raw) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  const row = objectValue(parsed)
+  if (!row || row.type !== "supabase_provisioning" || typeof row.runId !== "string" || typeof row.waveId !== "string" || typeof row.waveNumber !== "number") {
+    return null
+  }
+  const failedStep = provisioningStep(row.failedStep)
+  const failureCause = stringOrUndefined(row.failureCause)
+  const userMessage = stringOrUndefined(row.userMessage)
+  if (!failedStep || !failureCause || !userMessage) return null
+  return {
+    type: "supabase_provisioning",
+    runId: row.runId,
+    workspaceId: stringOrUndefined(row.workspaceId),
+    workspaceKey: stringOrUndefined(row.workspaceKey),
+    projectRef: stringOrUndefined(row.projectRef),
+    waveId: row.waveId,
+    waveNumber: row.waveNumber,
+    branchRef: stringOrUndefined(row.branchRef),
+    failedStep,
+    failureCause,
+    userMessage,
+    guidance: parseSupabaseProvisioningGuidance(row.guidance),
+    operatorAction: provisioningOperatorAction(row.operatorAction),
+  }
+}
+
+export function updateSupabaseProvisioningRecoveryPayload(
+  raw: string | null | undefined,
+  patch: {
+    branchRef?: string | null
+    guidance?: SupabaseProvisioningRecoveryGuidance | null
+    operatorAction?: SupabaseProvisioningOperatorAction | null
+  },
+): string | null {
+  const payload = parseSupabaseProvisioningRecoveryPayload(raw)
+  if (!payload) return null
+  return buildSupabaseProvisioningRecoveryPayload({
+    ...payload,
+    branchRef: patch.branchRef === undefined
+      ? payload.branchRef
+      : (patch.branchRef ?? undefined),
+    guidance: patch.guidance === undefined
+      ? payload.guidance
+      : (patch.guidance ?? undefined),
+    operatorAction: patch.operatorAction === undefined
+      ? payload.operatorAction
+      : (patch.operatorAction ?? undefined),
+  })
 }

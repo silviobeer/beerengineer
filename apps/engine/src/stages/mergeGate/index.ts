@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { existsSync, readFileSync } from "node:fs"
 import { branchNameItem } from "../../core/branchNames.js"
 import { hasEventBus } from "../../core/bus.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../../core/constants.js"
 import type { GitAdapter } from "../../core/gitAdapter.js"
 import { GitMergeConflictError } from "../../core/git/merge.js"
 import { runGit } from "../../core/git/shared.js"
@@ -154,6 +155,18 @@ async function requirePromotionAnswer(input: {
   blockRun: BlockRunFn
 }): Promise<void> {
   const answer = await promptForMergeAnswer(input.git, input.activeRun, input.itemBranch)
+  if (answer === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
+    await input.blockRun(
+      input.context,
+      `Merge gate opened for ${input.itemBranch} in a non-interactive run with no queued answer. ` +
+      "The run remains blocked on the open pending_prompt until a real answer arrives.",
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
   if (answer === "cancel") {
     emitEvent({
       type: "merge_gate_cancelled",

@@ -36,6 +36,7 @@ const STARTUP_RECOVERY_REASONS = [
   "open_prompt",
   "worker_lease_not_orphaned",
   "auto_resume_disabled",
+  "recovery_threshold_exceeded",
   "auto_resume_failed",
  ] as const satisfies ReadonlyArray<NonNullable<StartupRecoveryReason>>
 const STARTUP_RECOVERY_REASON_SET = new Set<string>(STARTUP_RECOVERY_REASONS)
@@ -224,11 +225,24 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     cause: typeof data.cause === "string" ? data.cause : "",
     summary: row.message,
   }),
+  dirty_master_allowlist_restore: (row, data) => ({
+    type: "dirty_master_allowlist_restore",
+    runId: row.run_id,
+    itemId: typeof data.itemId === "string" ? data.itemId : "",
+    title: typeof data.title === "string" ? data.title : "",
+    branch: typeof data.branch === "string" ? data.branch : "",
+    paths: Array.isArray(data.paths) ? data.paths.filter((value): value is string => typeof value === "string") : [],
+    status: data.status === "failed" ? "failed" : "completed",
+    error: typeof data.error === "string" ? data.error : undefined,
+  }),
   startup_recovery: (row, data) => ({
     type: "startup_recovery",
     runId: row.run_id,
     outcome: data.outcome === "auto_resumed" || data.outcome === "failed" ? data.outcome : "skipped",
     reason: parseStartupRecoveryReason(data.reason),
+    heldBackRunIds: Array.isArray(data.heldBackRunIds)
+      ? data.heldBackRunIds.filter((value): value is string => typeof value === "string")
+      : undefined,
     error: typeof data.error === "string" ? data.error : undefined,
   }),
   external_remediation_recorded: (row, data) => ({

@@ -40,7 +40,7 @@ right stage.
 Every stage is observable: pending prompts surface in the CLI, the
 HTTP API, or Telegram; artefacts are written to disk per run; events
 stream over SSE for live UIs.
-Items now pause in a dedicated **Merge** column after per-project handoff and only land on the base branch when an operator explicitly promotes them.
+Items move through the dedicated **Merge** column after per-project handoff. By default, green QA auto-promotes the item to the base branch; operators may opt out per workspace by setting `autoPromoteOnGreenQa: false` in `.beerengineer/workspace.json`, in which case the item waits in **Merge** for an explicit promotion.
 
 ## Features
 
@@ -78,7 +78,8 @@ Items now pause in a dedicated **Merge** column after per-project handoff and on
 ## Docs
 
 - [Features](docs/PROJECT.md) — shipped PROJs, scope, PRDs, and QA status
-- [Technical](docs/TECHNICAL.md) — architecture, data model, decisions, and gotchas
+- [ADRs](docs/adr/) — canonical home for durable architecture decisions
+- [Technical](docs/TECHNICAL.md) — architecture, data model, dependencies, and gotchas
 - [Agent orientation](AGENTS.md) — durable conventions for AI-pair coding
 
 ## Prerequisites
@@ -353,7 +354,7 @@ configuration.
 - [`apps/engine/docs/PROJECT.md`](apps/engine/docs/PROJECT.md) — feature
   catalog (stages, runtimes, integrations, persistence).
 - [`apps/engine/docs/TECHNICAL.md`](apps/engine/docs/TECHNICAL.md) —
-  architecture map, source layout, cross-cutting decisions, gotchas.
+  engine architecture map, source layout, and gotchas.
 - [`apps/engine/docs/engine-architecture.md`](apps/engine/docs/engine-architecture.md) —
   registry-driven pipeline, `GitAdapter`, iteration loop, file map,
   how to add a stage.

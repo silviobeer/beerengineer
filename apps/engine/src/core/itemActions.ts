@@ -7,6 +7,7 @@ import {
   readMergeConflictRecoveryArtifact,
   validateMergeConflictResolution,
 } from "./mergeConflictRecovery.js"
+import { answerRunPromptInProcess } from "./runService.js"
 import { loadResumeReadiness } from "./resume.js"
 import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { WorkflowResumeInput } from "../workflow.js"
@@ -414,11 +415,13 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     const liveRun = repos.latestActiveRunForItem(item.id)
     const supportedPrompt = liveRun ? promptSupportsAnswer(liveRun.id, transition.promoteAnswer) : null
     if (supportedPrompt) {
-      const answered = recordAnswer(repos, {
+      const answered = await answerRunPromptInProcess(repos, {
         runId: supportedPrompt.runId,
         promptId: supportedPrompt.promptId,
         answer: transition.promoteAnswer,
         source: "api",
+      }, {
+        resumeBlockedRunInProcess: true,
       })
       if (!answered.ok) {
         return invalidTransition(item, action)

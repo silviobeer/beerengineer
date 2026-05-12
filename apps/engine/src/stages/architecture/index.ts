@@ -20,6 +20,7 @@ export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<Ar
     createInitialState: (): ArchitectureState => ({
       projectId: ctx.project.id,
       prd: ctx.prd,
+      importContext: ctx.importContext,
       wireframes: ctx.wireframes,
       design: projectDesignGuidance(ctx.design),
       codebase: ctx.codebase,

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
+import { buildSupabaseProvisioningRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { removeTempDir } from "./helpers/fs.js"
 
@@ -272,7 +273,7 @@ test("beerengineer item action resume_run exits 75 without remediation summary i
   }
 })
 
-test("beerengineer item action resume_run surfaces the real execution blocker without creating a new run", async () => {
+test("beerengineer item action resume_run rejects Supabase provisioning recovery and points operators to run resume", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-supabase-blocked-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
@@ -281,84 +282,20 @@ test("beerengineer item action resume_run surfaces the real execution blocker wi
   seedCliRepo(repoRoot)
 
   try {
-    const dbPath = join(dir, "workflow.sqlite")
-    const db = initDatabase(dbPath)
-    const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: repoRoot })
-    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "DB Workflow", description: "needs db" })
-    repos.setItemColumn(item.id, "implementation", "failed")
-    const workspaceFsId = `db-workflow-${item.id.toLowerCase()}`
-    const run = repos.createRun({
-      workspaceId: ws.id,
-      itemId: item.id,
-      title: item.title,
-      owner: "cli",
-      workspaceFsId,
+    const recoveryMessage = [
+      "Supabase provisioning failed.",
+      "Create or verify the branch manually.",
+      "Then resume this run after confirming the fix.",
+    ].join("\n")
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: recoveryMessage,
     })
-    const ctx = { workspaceId: workspaceFsId, workspaceRoot: repoRoot, runId: run.id }
-    const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
-    const requirementsDir = layout.stageArtifactsDir(ctx, "requirements")
-    const architectureDir = layout.stageArtifactsDir(ctx, "architecture")
-    const planningDir = layout.stageArtifactsDir(ctx, "planning")
-    mkdirSync(brainstormDir, { recursive: true })
-    mkdirSync(requirementsDir, { recursive: true })
-    mkdirSync(architectureDir, { recursive: true })
-    mkdirSync(planningDir, { recursive: true })
-    writeFileSync(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
-    writeFileSync(join(brainstormDir, "projects.json"), JSON.stringify([{ id: "PROJ", name: "DB Project", description: "schema", hasUi: false, concept: { summary: "db", problem: "db", users: ["ops"], constraints: [] } }], null, 2))
-    writeFileSync(join(requirementsDir, "prd.json"), JSON.stringify({ prd: { id: "PRD", title: "DB", stories: [] } }, null, 2))
-    writeFileSync(join(architectureDir, "architecture.json"), JSON.stringify({ project: { id: "PROJ", name: "DB Project", description: "schema" }, architecture: { summary: "db" } }, null, 2))
-    writeFileSync(join(planningDir, "implementation-plan.json"), JSON.stringify({
-      project: { id: "PROJ", name: "DB Project" },
-      conceptSummary: "db",
-      architectureSummary: "db",
-      plan: {
-        summary: "db",
-        assumptions: [],
-        sequencingNotes: [],
-        dependencies: [],
-        risks: [],
-        waves: [
-          {
-            id: "W1",
-            number: 1,
-            goal: "copy",
-            kind: "feature",
-            stories: [{ id: "US-1", title: "copy", dbRelevant: false }],
-            dbRelevantStoryCount: 0,
-            dbRelevantWave: false,
-            internallyParallelizable: false,
-            dependencies: [],
-            exitCriteria: [],
-          },
-          {
-            id: "W2",
-            number: 2,
-            goal: "schema",
-            kind: "feature",
-            stories: [{ id: "US-2", title: "schema", dbRelevant: true }],
-            dbRelevantStoryCount: 1,
-            dbRelevantWave: true,
-            internallyParallelizable: false,
-            dependencies: ["W1"],
-            exitCriteria: [],
-          },
-        ],
-      },
-    }, null, 2))
-    await writeRecoveryRecord(ctx, {
-      status: "blocked",
-      cause: "stage_error",
-      scope: { type: "stage", runId: run.id, stageId: "execution" },
-      summary: "Retry Supabase readiness.",
-      evidencePaths: [planningDir],
-    })
-    repos.setRunRecovery(run.id, { status: "blocked", scope: "stage", scopeRef: "execution", summary: "Retry Supabase readiness." })
-    db.close()
 
     const result = spawnSync(
       process.execPath,
-      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "resume_run", "--remediation-summary", "setup changed"],
+      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "resume_run"],
       {
         cwd: engineRoot,
         encoding: "utf8",
@@ -366,24 +303,26 @@ test("beerengineer item action resume_run surfaces the real execution blocker wi
           ...process.env,
           BEERENGINEER_UI_DB_PATH: dbPath,
           BEERENGINEER_ALLOWED_ROOTS: dir,
-          BEERENGINEER_SECRET_STORE_PATH: join(dir, "secrets.json"),
         },
-        timeout: 10000,
       },
     )
 
-    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
-    assert.match(result.stdout ?? "", /resume_run applied/)
-    assert.match(result.stdout ?? "", /stage entered  execution/)
-    assert.match(result.stderr ?? "", /Workflow start blocked by Supabase readiness/)
+    assert.notEqual(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.equal((result.stderr ?? "").indexOf("Supabase provisioning failed."), 0)
+    assert.match(result.stderr ?? "", /Create or verify the branch manually\./)
+    assert.match(result.stderr ?? "", /Then resume this run after confirming the fix\./)
+    assert.match(result.stderr ?? "", new RegExp(`beerengineer run resume ${blockedRunId} --remediation-summary`))
+    assert.doesNotMatch(result.stderr ?? "", /Missing --remediation-summary/)
+    assert.doesNotMatch(result.stdout ?? "", /resume_run applied/)
 
     const verifyDb = initDatabase(dbPath)
     const verifyRepos = new Repos(verifyDb)
-    const runs = verifyRepos.listRuns().filter(candidate => candidate.item_id === item.id)
+    const runs = verifyRepos.listRuns()
     assert.equal(runs.length, 1)
-    assert.equal(runs[0]?.id, run.id)
+    assert.equal(runs[0]?.id, blockedRunId)
     assert.equal(runs[0]?.status, "blocked")
     assert.equal(runs[0]?.recovery_status, "blocked")
+    assert.equal(verifyRepos.listExternalRemediations(blockedRunId).length, 0)
     verifyDb.close()
   } finally {
     removeTempDir(dir)
@@ -434,6 +373,374 @@ test("beerengineer item action start_brainstorm fails early on dirty workspace r
     const verifyRepos = new Repos(verifyDb)
     assert.equal(verifyRepos.listRuns().length, 0)
     verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+async function seedResumableSupabaseProvisioningRunFixture(input: {
+  dir: string
+  repoRoot: string
+  userMessage: string
+  extraRun?: "completed_nonrecoverable" | "completed_with_alternate_recoverable"
+}): Promise<{ dbPath: string; blockedRunId: string; wrongRunId?: string }> {
+  const dbPath = join(input.dir, "workflow.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: input.repoRoot })
+  const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "DB Workflow", description: "needs db" })
+  repos.setItemColumn(item.id, "implementation", "failed")
+  const blockedRun = repos.createRun({
+    workspaceId: ws.id,
+    itemId: item.id,
+    title: item.title,
+    owner: "api",
+    workspaceFsId: `cli-recovery-${item.id.toLowerCase()}`,
+  })
+  const ctx = { workspaceId: blockedRun.workspace_fs_id!, workspaceRoot: input.repoRoot, runId: blockedRun.id }
+  const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
+  const requirementsDir = layout.stageArtifactsDir(ctx, "requirements")
+  const architectureDir = layout.stageArtifactsDir(ctx, "architecture")
+  const planningDir = layout.stageArtifactsDir(ctx, "planning")
+  mkdirSync(brainstormDir, { recursive: true })
+  mkdirSync(requirementsDir, { recursive: true })
+  mkdirSync(architectureDir, { recursive: true })
+  mkdirSync(planningDir, { recursive: true })
+  writeFileSync(layout.runFile(ctx), `${JSON.stringify({ id: blockedRun.id }, null, 2)}\n`)
+  writeFileSync(join(brainstormDir, "projects.json"), JSON.stringify([{ id: "PROJ", name: "DB Project", description: "schema", hasUi: false, concept: { summary: "db", problem: "db", users: ["ops"], constraints: [] } }], null, 2))
+  writeFileSync(join(requirementsDir, "prd.json"), JSON.stringify({
+    prd: {
+      id: "PRD",
+      title: "DB",
+      stories: [{ id: "US-1", title: "copy", acceptanceCriteria: [] }],
+    },
+  }, null, 2))
+  writeFileSync(join(architectureDir, "architecture.json"), JSON.stringify({ project: { id: "PROJ", name: "DB Project", description: "schema" }, architecture: { summary: "db" } }, null, 2))
+  writeFileSync(join(planningDir, "implementation-plan.json"), JSON.stringify({
+    project: { id: "PROJ", name: "DB Project" },
+    conceptSummary: "db",
+    architectureSummary: "db",
+    plan: {
+      summary: "db",
+      assumptions: [],
+      sequencingNotes: [],
+      dependencies: [],
+      risks: [],
+      waves: [
+        {
+          id: "W1",
+          number: 1,
+          goal: "copy",
+          kind: "feature",
+          stories: [{ id: "US-1", title: "copy", dbRelevant: false }],
+          dbRelevantStoryCount: 0,
+          dbRelevantWave: false,
+          internallyParallelizable: false,
+          dependencies: [],
+          exitCriteria: [],
+        },
+      ],
+    },
+  }, null, 2))
+  await writeRecoveryRecord(ctx, {
+    status: "blocked",
+    cause: "stage_error",
+    scope: { type: "stage", runId: blockedRun.id, stageId: "execution" },
+    summary: "Supabase provisioning failed during branch validation: original failure",
+    evidencePaths: [planningDir],
+  })
+  repos.updateRun(blockedRun.id, { status: "blocked", current_stage: "execution" })
+  repos.setRunRecovery(blockedRun.id, {
+    status: "blocked",
+    scope: "stage",
+    scopeRef: "execution",
+    summary: "Supabase provisioning failed during branch validation: original failure",
+    payloadJson: buildSupabaseProvisioningRecoveryPayload({
+      runId: blockedRun.id,
+      workspaceId: ws.id,
+      workspaceKey: ws.key,
+      projectRef: "proj_alpha",
+      waveId: "W1",
+      waveNumber: 1,
+      branchRef: "br_saved",
+      failedStep: "validate",
+      failureCause: "Migration smoke test failed",
+      userMessage: input.userMessage,
+    }),
+  })
+
+  let wrongRunId: string | undefined
+  if (input.extraRun) {
+    const wrongRun = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: `${item.title} wrong target`,
+      owner: "cli",
+      workspaceFsId: `cli-recovery-wrong-${item.id.toLowerCase()}`,
+    })
+    repos.updateRun(wrongRun.id, { status: "completed", current_stage: "handoff" })
+    wrongRunId = wrongRun.id
+    if (input.extraRun === "completed_nonrecoverable") {
+      repos.updateRun(blockedRun.id, { status: "completed", current_stage: "handoff" })
+      repos.clearRunRecovery(blockedRun.id)
+    }
+  }
+
+  db.close()
+  if (input.extraRun === "completed_nonrecoverable") {
+    return { dbPath, blockedRunId: wrongRunId! }
+  }
+  return { dbPath, blockedRunId: blockedRun.id, wrongRunId }
+}
+
+test("REQ-3 CLI run resume proceeds against the blocked run with a zero exit code", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-resume-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const recoveryMessage = [
+      "Supabase provisioning failed.",
+      "Create or verify the branch manually.",
+      "Then resume this run after confirming the fix.",
+    ].join("\n")
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: recoveryMessage,
+    })
+
+    const resume = spawnSync(
+      process.execPath,
+      [binPath, "run", "resume", blockedRunId, "--remediation-summary", "validated manual provider fix"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+        timeout: 10000,
+      },
+    )
+
+    assert.equal(resume.status, 0, `${resume.stdout ?? ""}\n${resume.stderr ?? ""}`)
+    assert.match(resume.stdout ?? "", /run resume applied/)
+    assert.match(resume.stdout ?? "", new RegExp(`run-id: ${blockedRunId}`))
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    assert.equal(verifyRepos.listExternalRemediations(blockedRunId).length, 1)
+    verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI ambiguous recovery prints attach/discard guidance with concrete run and branch context", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-recovery-guidance-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+    })
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const run = repos.getRun(blockedRunId)!
+    repos.setRunRecovery(blockedRunId, {
+      status: "blocked",
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+      payloadJson: buildSupabaseProvisioningRecoveryPayload({
+        runId: blockedRunId,
+        workspaceId: run.workspace_id,
+        workspaceKey: "alpha",
+        projectRef: "proj_alpha",
+        waveId: "W1",
+        waveNumber: 1,
+        branchRef: "br_selected",
+        failedStep: "validate",
+        failureCause: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+        userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+        guidance: {
+          reason: "branch_not_active_healthy",
+          attachBranchRefs: ["br_selected"],
+        },
+      }),
+    })
+    db.close()
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "resume", blockedRunId],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", /automatic branch reuse because the current branch state is ambiguous/i)
+    assert.match(result.stderr ?? "", new RegExp(`beerengineer run discard-supabase-branch ${blockedRunId}`))
+    assert.match(result.stderr ?? "", new RegExp(`beerengineer run attach-supabase-branch ${blockedRunId} --ref br_selected`))
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI attach-supabase-branch updates the blocked run attachment and recovery payload branch ref", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-attach-branch-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "attach-supabase-branch", blockedRunId, "--ref", "br_selected"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /attached Supabase branch/i)
+    assert.match(result.stdout ?? "", new RegExp(`run-id: ${blockedRunId}`))
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    const run = verifyRepos.getRun(blockedRunId)
+    assert.equal(run?.supabase_branch_ref, "br_selected")
+    assert.match(run?.recovery_payload_json ?? "", /"branchRef":"br_selected"/)
+    verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI discard-supabase-branch clears the blocked run attachment and recovery payload branch ref", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-discard-branch-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase recovery refused automatic branch reuse because the current branch state is ambiguous.",
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "discard-supabase-branch", blockedRunId],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /cleared Supabase branch attachment/i)
+    assert.match(result.stdout ?? "", new RegExp(`run-id: ${blockedRunId}`))
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    const run = verifyRepos.getRun(blockedRunId)
+    assert.equal(run?.supabase_branch_ref, null)
+    assert.doesNotMatch(run?.recovery_payload_json ?? "", /"branchRef":"/)
+    verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI run resume rejects the wrong run target and names the correct blocked run command", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-resume-wrong-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId, wrongRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase provisioning failed.\nResume this exact run after the fix.",
+      extraRun: "completed_with_alternate_recoverable",
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "resume", wrongRunId!, "--remediation-summary", "wrong target"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.notEqual(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", new RegExp(`Run ${wrongRunId} is not recoverable`))
+    assert.match(result.stderr ?? "", new RegExp(`beerengineer run resume ${blockedRunId} --remediation-summary`))
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-3 CLI run resume rejects a non-recoverable run with explicit state-specific failure", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-resume-not-recoverable-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, blockedRunId } = await seedResumableSupabaseProvisioningRunFixture({
+      dir,
+      repoRoot,
+      userMessage: "Supabase provisioning failed.\nResume this exact run after the fix.",
+      extraRun: "completed_nonrecoverable",
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "resume", blockedRunId, "--remediation-summary", "nothing to fix"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.notEqual(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", new RegExp(`Run ${blockedRunId} is not recoverable`))
+    assert.doesNotMatch(result.stderr ?? "", /Unknown command|Invalid transition/)
+    assert.doesNotMatch(result.stderr ?? "", /beerengineer run resume .* --remediation-summary/)
   } finally {
     removeTempDir(dir)
   }

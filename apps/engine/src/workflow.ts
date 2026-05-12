@@ -20,14 +20,20 @@ import type {
 import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
 import { loadCodebaseSnapshot } from "./core/codebaseSnapshot.js"
 import { loadFrontendSnapshot } from "./core/frontendSnapshot.js"
+import { BlockedRunError } from "./core/blockedError.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
+import { getWorkflowIO } from "./core/io.js"
 import { assignPort, isWorktreePortPoolExhaustedError } from "./core/portAllocator.js"
+import { attachOneShotPromptAnswer } from "./core/promptAutoAnswer.js"
+import { readWorkspaceConfigSync } from "./core/workspaces.js"
+import { readImportContextArtifact } from "./core/importContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
 import { mergeGate } from "./stages/mergeGate/index.js"
+import type { QaArtifact } from "./stages/qa/types.js"
 import {
   PROJECT_STAGE_REGISTRY,
   shouldRunProjectStage,
@@ -126,13 +132,6 @@ export type WorkflowLlmOptions = StageLlmOptions
  * the workflow wires provisioning, validation, merge gates, and cleanup.
  * When absent, the workflow runs as before with no Supabase side effects. */
 export type WorkflowSupabaseHook = SupabaseWorkflowHook
-
-class BlockedRunError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "BlockedRunError"
-  }
-}
 
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
@@ -285,6 +284,25 @@ async function loadDesignPrepFreeze(context: WorkflowContext): Promise<DesignPre
   }
 }
 
+function workspaceAutoPromoteOnGreenQaEnabled(workspaceRoot?: string): boolean {
+  if (!workspaceRoot) return true
+  return readWorkspaceConfigSync(workspaceRoot)?.autoPromoteOnGreenQa ?? true
+}
+
+function qaVerdictAllowsAutoPromotion(status: QaArtifact["verdicts"][number]["status"]): boolean {
+  return status === "passed" || status === "not_applicable"
+}
+
+async function shouldAutoPromoteOnGreenQa(context: WorkflowContext): Promise<boolean> {
+  if (!workspaceAutoPromoteOnGreenQaEnabled(context.workspaceRoot)) return false
+  try {
+    const artifact = await loadStageArtifact<QaArtifact>(context, "qa", "qa-report.json")
+    return artifact.findings.length === 0 && artifact.verdicts.every(verdict => qaVerdictAllowsAutoPromotion(verdict.status))
+  } catch {
+    return false
+  }
+}
+
 function normalizedProjectIds(projects: Project[]): string[] {
   return [...projects.map(project => project.id)].sort((left, right) => left.localeCompare(right))
 }
@@ -406,7 +424,14 @@ export async function runWorkflow(item: Item, options?: {
     }
 
     if (!itemResumePlan.skipMergeGate) {
-      await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+      const detachAutoPromote = await shouldAutoPromoteOnGreenQa(context)
+        ? attachOneShotPromptAnswer(getWorkflowIO(), "promote")
+        : () => {}
+      try {
+        await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+      } finally {
+        detachAutoPromote()
+      }
     }
     assertWorkflowNotCancelled()
 
@@ -543,6 +568,7 @@ async function runWorkflowProjects(
   ]
   const projectDesignArtifact = design ? projectDesign(design) : undefined
   const decisions = loadItemDecisions(context)
+  const importContext = await readImportContextArtifact(context) ?? undefined
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
     const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
@@ -552,6 +578,7 @@ async function runWorkflowProjects(
       initialCtx: {
         ...context,
         project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
+        importContext,
         wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
         design: projectDesignArtifact,
         codebase: itemSnapshot,
@@ -606,7 +633,7 @@ function restoreWorkflowExitState(
   }
 }
 
-async function ensureWorkflowGitAdapter(context: WorkflowContext, workspaceRoot?: string) {
+export async function ensureWorkflowGitAdapter(context: WorkflowContext, workspaceRoot?: string) {
   try {
     return createGitAdapter(context)
   } catch (error) {

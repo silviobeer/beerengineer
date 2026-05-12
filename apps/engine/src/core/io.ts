@@ -34,6 +34,7 @@ export type StartupRecoveryReason =
   | "open_prompt"
   | "worker_lease_not_orphaned"
   | "auto_resume_disabled"
+  | "recovery_threshold_exceeded"
   | "auto_resume_failed"
 
 export type WorkflowEvent =
@@ -67,10 +68,21 @@ export type WorkflowEvent =
   | ({ type: "run_blocked"; runId: string; itemId: string; title: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
   | ({
+      type: "dirty_master_allowlist_restore"
+      runId: string
+      itemId: string
+      title: string
+      branch: string
+      paths: string[]
+      status: "completed" | "failed"
+      error?: string
+    } & WorkflowEventMeta)
+  | ({
       type: "startup_recovery"
       runId: string
       outcome: StartupRecoveryOutcome
       reason: StartupRecoveryReason | null
+      heldBackRunIds?: string[]
       error?: string
     } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)

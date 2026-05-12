@@ -3,7 +3,7 @@ import { ask, close } from "../../sim/human.js"
 import { createCliIO } from "../../core/ioCli.js"
 import type { ItemAction, ItemActionResult } from "../../core/itemActions.js"
 import { attachOneShotPromptAnswer } from "../../core/promptAutoAnswer.js"
-import { inspectWorkspaceState } from "../../core/git.js"
+import { inspectWorkspaceState, resolveDirtyMasterAllowlistPatterns } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import {
   checkWorkflowStartGitReadiness,
@@ -17,11 +17,21 @@ import {
 } from "../../core/runService.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
-import { parseSupabaseReadinessRecoveryPayload } from "../../core/supabase/recoveryPayload.js"
+import {
+  attachSupabaseBranchCommand,
+  discardSupabaseBranchCommand,
+  parseSupabaseProvisioningRecoveryPayload,
+  parseSupabaseReadinessRecoveryPayload,
+  runResumeCommand,
+} from "../../core/supabase/recoveryPayload.js"
+import {
+  attachSupabaseBranchToRunRecovery,
+  discardSupabaseBranchFromRunRecovery,
+} from "../../core/supabase/runRecoveryActions.js"
 import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
-import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
+import { deriveRunStatus, resolveItemReference, resolveSelectedWorkspace } from "../common.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../../setup/config.js"
 import type { AppConfig } from "../../setup/types.js"
 
@@ -146,6 +156,84 @@ function printResumeBlockedOutput(
   )
 }
 
+function printEngineRecoveryMessage(message: string): void {
+  console.error(message.replaceAll("\r\n", "\n").trimEnd())
+}
+
+function supabaseProvisioningPayloadForRun(
+  run: Pick<RunRow, "recovery_status" | "recovery_payload_json"> | undefined,
+) {
+  if (run?.recovery_status !== "blocked") return null
+  return parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
+}
+
+function printRunResumeBlockedOutput(
+  runId: string,
+  recovery: { summary: string | null; scope: string | null; scopeRef: string | null },
+): void {
+  const scopeDetail = recovery.scopeRef ? ` (${recovery.scopeRef})` : ""
+  console.error(`\n  Run ${runId} is blocked.`)
+  if (recovery.summary) console.error(`  Reason: ${recovery.summary}`)
+  if (recovery.scope) console.error(`  Scope:  ${recovery.scope}${scopeDetail}`)
+  console.error(`  Resume with: ${runResumeCommand(runId)}`)
+}
+
+function printSupabaseProvisioningRecoveryGuidance(runId: string, payload: NonNullable<ReturnType<typeof supabaseProvisioningPayloadForRun>>): void {
+  if (!payload.guidance) return
+  console.error("")
+  console.error("Supabase branch recovery options:")
+  console.error(`  ${discardSupabaseBranchCommand(runId)}`)
+  for (const branchRef of payload.guidance.attachBranchRefs) {
+    console.error(`  ${attachSupabaseBranchCommand(runId, branchRef)}`)
+  }
+}
+
+function printSupabaseProvisioningItemActionGuidance(
+  runId: string,
+  payload: NonNullable<ReturnType<typeof supabaseProvisioningPayloadForRun>>,
+): number {
+  printSupabaseProvisioningRecoveryGuidance(runId, payload)
+  console.error("")
+  console.error("Use the run-scoped recovery command for this incident:")
+  console.error(`  ${runResumeCommand(runId)}`)
+  console.error("Item actions cannot recover blocked Supabase provisioning runs.")
+  return 75
+}
+
+function printRunResumeSummaryRequired(runId: string): number {
+  console.error("")
+  console.error("Missing --remediation-summary (required for run resume).")
+  console.error(`  Resume with: ${runResumeCommand(runId)}`)
+  return 75
+}
+
+function printRunResumeStillBlocked(runId: string): number {
+  console.error("")
+  console.error(`  Run ${runId} remains blocked after the last recovery attempt.`)
+  console.error(`  Retry with: ${runResumeCommand(runId)}`)
+  return 75
+}
+
+function describeRunRecoveryState(repos: Repos, run: RunRow): string {
+  return deriveRunStatus(run, Boolean(repos.getOpenPrompt(run.id)))
+}
+
+function printRunResumeNotRecoverable(repos: Repos, runId: string): number {
+  const run = repos.getRun(runId)
+  if (!run) {
+    console.error(`  Run not found: ${runId}`)
+    return 1
+  }
+  console.error(`  Run ${runId} is not recoverable from its current state (${describeRunRecoveryState(repos, run)}).`)
+  const recoverable = repos.latestRecoverableRunForItem(run.item_id)
+  const recoverableId = recoverable?.id
+  if (recoverableId && recoverableId !== runId) {
+    console.error("  Resume the blocked run instead:")
+    console.error(`  ${runResumeCommand(recoverableId)}`)
+  }
+  return 2
+}
+
 async function collectResumePayload(
   active: ReturnType<Repos["latestActiveRunForItem"]>,
   resumeFlags: ResumeFlags | undefined,
@@ -177,8 +265,15 @@ async function collectResumePayload(
   }
 }
 
+function latestResumableRunForItem(repos: Repos, itemId: string): RunRow | undefined {
+  return repos.latestActiveRunForItem(itemId) ?? repos.latestRecoverableRunForItem(itemId)
+}
+
 function printDirtyRepoPreflight(rootPath: string, ignoredPaths: string[] = []): number {
-  const inspection = inspectWorkspaceState(rootPath, { ignoredPaths })
+  const inspection = inspectWorkspaceState(rootPath, {
+    ignoredPaths,
+    allowlistPatterns: resolveDirtyMasterAllowlistPatterns(rootPath),
+  })
   if (inspection.kind !== "dirty") return 0
 
   const onBaseBranch = inspection.currentBranch === "main" || inspection.currentBranch === "master"
@@ -317,6 +412,13 @@ function printBlockedResumeIfAny(ctx: CliItemActionContext, runId: string): numb
   const refreshed = ctx.repos.getRun(runId)
   if (refreshed?.recovery_status !== "blocked") return 0
 
+  const provisioning = supabaseProvisioningPayloadForRun(refreshed)
+  if (provisioning) {
+    printEngineRecoveryMessage(provisioning.userMessage)
+    printSupabaseProvisioningItemActionGuidance(runId, provisioning)
+    return 75
+  }
+
   const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, runId, ctx.itemRef, ctx.action)
   if (supabaseBlockedExit !== 0) return supabaseBlockedExit
 
@@ -326,6 +428,15 @@ function printBlockedResumeIfAny(ctx: CliItemActionContext, runId: string): numb
     scopeRef: refreshed.recovery_scope_ref,
   }, ctx.itemRef)
   return 0
+}
+
+function rejectSupabaseProvisioningItemResumeIfAny(ctx: CliItemActionContext): number {
+  if (ctx.action !== "resume_run") return 0
+  const active = latestResumableRunForItem(ctx.repos, ctx.item.id)
+  const provisioning = supabaseProvisioningPayloadForRun(active)
+  if (!active || !provisioning) return 0
+  printEngineRecoveryMessage(provisioning.userMessage)
+  return printSupabaseProvisioningItemActionGuidance(active.id, provisioning)
 }
 
 const handleStartBrainstorm: CliItemActionHandler = async ctx => {
@@ -467,8 +578,10 @@ const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
 }
 
 const handleResumeRun: CliItemActionHandler = async ctx => {
-  const active =
-    ctx.repos.latestActiveRunForItem(ctx.item.id) ?? ctx.repos.latestRecoverableRunForItem(ctx.item.id)
+  const wrongSurfaceExit = rejectSupabaseProvisioningItemResumeIfAny(ctx)
+  if (wrongSurfaceExit !== 0) return wrongSurfaceExit
+
+  const active = latestResumableRunForItem(ctx.repos, ctx.item.id)
   const resumeRunId = active?.id
   const resumePayloadResult = await collectResumePayload(active, ctx.resumeFlags, ctx.itemRef)
   if (resumePayloadResult.kind === "exit") return resumePayloadResult.code
@@ -562,6 +675,51 @@ async function resumeItemActionResult(
     detachPromptAnswer()
     io.close?.()
   }
+}
+
+function printRunResumeBlockedIfAny(repos: Repos, runId: string): void {
+  const refreshed = repos.getRun(runId)
+  if (refreshed?.recovery_status !== "blocked") return
+
+  const provisioning = supabaseProvisioningPayloadForRun(refreshed)
+  if (provisioning) {
+    printEngineRecoveryMessage(provisioning.userMessage)
+    printSupabaseProvisioningRecoveryGuidance(runId, provisioning)
+    printRunResumeStillBlocked(runId)
+    return
+  }
+
+  printRunResumeBlockedOutput(runId, {
+    summary: refreshed.recovery_summary,
+    scope: refreshed.recovery_scope,
+    scopeRef: refreshed.recovery_scope_ref,
+  })
+}
+
+function printPreparedRunResumeFailure(
+  repos: Repos,
+  runId: string,
+  result: FailedPreparedResumeRunResult,
+): number {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return printWorkflowCapabilityBlocker(result.message)
+  }
+  if (result.error === "run_not_found") {
+    console.error(`  Run not found: ${runId}`)
+    return 1
+  }
+  if (result.error === "remediation_required") {
+    return printRunResumeSummaryRequired(runId)
+  }
+  if (result.error === "resume_in_progress") {
+    console.error(`  Run ${runId} already has a resume in progress.`)
+    return 2
+  }
+  if (result.error === "not_resumable") {
+    return printRunResumeNotRecoverable(repos, runId)
+  }
+  console.error(`  ${result.error}`)
+  return 1
 }
 
 async function runDefaultItemAction(
@@ -677,7 +835,12 @@ function reportPreparedImportFailure(prepared: FailedPreparedImportRunResult, it
   if (isWorkflowCapabilityBlockedResult(prepared)) {
     return printWorkflowCapabilityBlocker(prepared.message)
   }
-  if ("code" in prepared && prepared.code === "workflow_git_blocked") {
+  if (
+    "code" in prepared
+    && prepared.code === "workflow_git_blocked"
+    && "message" in prepared
+    && "intent" in prepared
+  ) {
     return printWorkflowGitBlocker(prepared, item?.code ?? item?.id ?? "new")
   }
   console.error(`  Import failed: ${prepared.error}`)
@@ -793,6 +956,115 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
     }
     const handler = CLI_ITEM_ACTION_HANDLERS[action] ?? runDefaultItemAction
     return await handler(ctx)
+  } finally {
+    db.close()
+  }
+}
+
+export async function runRunResumeCommand(runId: string | undefined, resumeFlags?: ResumeFlags): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run resume <run-id> --remediation-summary <text>")
+    return 2
+  }
+
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  const summary = resumeFlags?.summary?.trim()
+  const targetRun = repos.getRun(runId)
+
+  try {
+    const provisioning = supabaseProvisioningPayloadForRun(targetRun)
+    if (!summary) {
+      if (provisioning) {
+        printEngineRecoveryMessage(provisioning.userMessage)
+        printSupabaseProvisioningRecoveryGuidance(runId, provisioning)
+      }
+      return printRunResumeSummaryRequired(runId)
+    }
+
+    const io = createCliIO(repos)
+    try {
+      const prepared = await prepareForegroundResumeRun(repos, io, {
+        runId,
+        summary,
+        branch: resumeFlags?.branch,
+        commit: resumeFlags?.commit,
+        reviewNotes: resumeFlags?.notes,
+        workerOwnerKind: "cli",
+      })
+      if (!prepared.ok) return printPreparedRunResumeFailure(repos, runId, prepared)
+
+      console.log("  run resume applied")
+      console.log(`  run-id: ${prepared.runId}`)
+      console.log(`  remediation-id: ${prepared.remediationId}`)
+      await prepared.start()
+      printRunResumeBlockedIfAny(repos, prepared.runId)
+      return 0
+    } finally {
+      io.close?.()
+    }
+  } finally {
+    db.close()
+  }
+}
+
+function printSupabaseBranchRecoveryMutationError(
+  runId: string,
+  error: "run_not_found" | "not_blocked_supabase_recovery" | "branch_ref_required",
+): number {
+  if (error === "run_not_found") {
+    console.error(`  Run not found: ${runId}`)
+    return 1
+  }
+  if (error === "branch_ref_required") {
+    console.error("  Missing --ref (required for attach-supabase-branch).")
+    return 75
+  }
+  console.error(`  Run ${runId} is not a blocked Supabase provisioning recovery.`)
+  return 75
+}
+
+export async function runAttachSupabaseBranchCommand(
+  runId: string | undefined,
+  branchRef: string | undefined,
+): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run attach-supabase-branch <run-id> --ref <branchRef>")
+    return 2
+  }
+
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  try {
+    const result = attachSupabaseBranchToRunRecovery(repos, { runId, branchRef: branchRef ?? "" })
+    if (!result.ok) return printSupabaseBranchRecoveryMutationError(runId, result.error)
+
+    console.log("  attached Supabase branch")
+    console.log(`  run-id: ${runId}`)
+    console.log(`  branch-ref: ${result.run.supabase_branch_ref}`)
+    console.log(`  Next: ${runResumeCommand(runId)}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+export async function runDiscardSupabaseBranchCommand(runId: string | undefined): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run discard-supabase-branch <run-id>")
+    return 2
+  }
+
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  try {
+    const result = discardSupabaseBranchFromRunRecovery(repos, { runId })
+    if (!result.ok) return printSupabaseBranchRecoveryMutationError(runId, result.error)
+
+    console.log("  cleared Supabase branch attachment")
+    console.log(`  run-id: ${runId}`)
+    console.log(`  Next: ${runResumeCommand(runId)}`)
+    return 0
   } finally {
     db.close()
   }

@@ -371,7 +371,7 @@ test("project-review stage: first run emits findings; after revision with feedba
   }
 })
 
-test("documentation reviewer enforces Known Risks when project-review findings exist", async () => {
+test("documentation reviewer enforces Known Issues when project-review findings exist", async () => {
   const review = new FakeDocumentationReviewAdapter()
   const stateWithFindings = {
     prdDigest: {
@@ -392,7 +392,7 @@ test("documentation reviewer enforces Known Risks when project-review findings e
     },
   } as never
 
-  const artifactWithoutRisks = {
+  const artifactWithoutIssues = {
     project: { id: "P01", name: "P" },
     mode: "generate" as const,
     technicalDoc: { title: "t", summary: "s", sections: [{ heading: "Architecture", content: "" }] },
@@ -400,13 +400,13 @@ test("documentation reviewer enforces Known Risks when project-review findings e
     compactReadme: { title: "r", summary: "s", sections: [] },
     knownIssues: [],
   }
-  assert.equal((await review.review({ artifact: artifactWithoutRisks, state: stateWithFindings })).kind, "revise")
+  assert.equal((await review.review({ artifact: artifactWithoutIssues, state: stateWithFindings })).kind, "revise")
 
-  const artifactWithRisks = {
-    ...artifactWithoutRisks,
-    technicalDoc: { ...artifactWithoutRisks.technicalDoc, sections: [{ heading: "Known Risks", content: "..." }] },
+  const artifactWithIssues = {
+    ...artifactWithoutIssues,
+    technicalDoc: { ...artifactWithoutIssues.technicalDoc, sections: [{ heading: "Known Issues", content: "..." }] },
   }
-  assert.equal((await review.review({ artifact: artifactWithRisks, state: stateWithFindings })).kind, "pass")
+  assert.equal((await review.review({ artifact: artifactWithIssues, state: stateWithFindings })).kind, "pass")
 })
 
 test("documentation grounding preserves authoritative project-review findings", () => {
@@ -446,11 +446,16 @@ test("documentation grounding preserves authoritative project-review findings", 
   assert.match(grounded.featuresDoc.summary, /Project review status: pass_with_risks/)
   assert.match(
     grounded.featuresDoc.sections.find(section => section.heading === "Known Issues")?.content ?? "",
-    /F-01 \(medium, architecture\): architecture doc drift/,
+    /1\. F-01 \(medium, architecture\): architecture doc drift/,
   )
   assert.match(
-    grounded.technicalDoc.sections.find(section => section.heading === "Known Risks")?.content ?? "",
-    /F-03 \(low, test-design\): duplicate test assertions/,
+    grounded.technicalDoc.sections.find(section => section.heading === "Known Issues")?.content ?? "",
+    /3\. F-03 \(low, test-design\): duplicate test assertions/,
+  )
+  assert.equal(
+    grounded.technicalDoc.sections.find(section => section.heading === "Known Risks"),
+    undefined,
+    "grounding must not emit a duplicate Known Risks section",
   )
 })
 

@@ -14,14 +14,18 @@
 | If you need to know… | Open |
 |---|---|
 | Which PROJs/features have shipped, their scope, linked PRDs, and QA status | [`PROJECT.md`](./PROJECT.md) |
-| Cross-project architecture, data model, decisions, dependencies, deployment notes, and gotchas | [`TECHNICAL.md`](./TECHNICAL.md) |
+| Durable architecture decisions and their current status | [`adr/`](./adr/) |
+| Cross-project architecture, data model, dependencies, deployment notes, and gotchas | [`TECHNICAL.md`](./TECHNICAL.md) |
 | Shared UI component registry used by implementation planners | [`components.md`](./components.md) |
 | HTTP API request/response shapes (prose companion to `openapi.json`) | [`api-contract.md`](./api-contract.md) |
 | `MessageEntry` projection, level taxonomy (L0/L1/L2), event-to-level mapping, chattool dispatcher | [`messaging-levels.md`](./messaging-levels.md) |
 
-Both files are consumed by **both** the engine and the UI — that's the
+These docs are consumed by **both** the engine and the UI - that's the
 test for "lives here". If a topic only matters on one side, it belongs in
 that side's docs subtree.
+
+`docs/adr/` is the canonical landing spot for durable architecture
+decisions. `TECHNICAL.md` stays the narrative technical reference.
 
 ### Setup API Entries
 

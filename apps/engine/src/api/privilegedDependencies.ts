@@ -27,7 +27,11 @@ import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult }
 import { readActiveSecretValue } from "../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
 import { runStartupCleanupCatchup } from "../core/supabase/cleanupCatchup.js"
-import { primeCodexSandboxCapabilityDetection } from "../llm/hosted/providers/codexSandboxPolicy.js"
+import {
+  primeCodexSandboxCapabilityDetection,
+  setCodexSandboxCapabilityStore,
+} from "../llm/hosted/providers/codexSandboxPolicy.js"
+import { getWorkerAdmissionController, workerAdmissionStartupLogMessage } from "../core/workerAdmission.js"
 import type { ApiLifecycleHooks, ApiRouteDependencies } from "./entrypointContracts.js"
 
 const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
@@ -76,8 +80,17 @@ export function composeApiPrivilegedDependencies(
 
   const db = initDatabase()
   const repos = new Repos(db)
+  setCodexSandboxCapabilityStore({
+    load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? "unknown",
+    persist: capability => {
+      repos.setCodexSandboxCapabilitySnapshot(capability)
+    },
+  })
+  const admission = getWorkerAdmissionController(repos)
   const itemActions = createItemActionsService(repos)
   const board = createBoardStream(repos, db)
+
+  console.log(workerAdmissionStartupLogMessage(admission.resolution))
 
   seedIfEmpty(db, repos)
 
@@ -166,10 +179,11 @@ export function composeApiPrivilegedDependencies(
           apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
           autoResume: {
             enabled: autoResumeEnabled,
+            recoveryThreshold: admission.resolution.effectiveWorkerCap,
             resumeRun: async run => {
               const result = await autoResumeRunOnStartup(repos, {
                 runId: run.id,
-                summary: "Startup auto-resumed the stale run after confirming no human input is pending.",
+                summary: "Startup auto-resumed the stale run after engine restart.",
                 apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
                 onItemColumnChanged: payload => board.broadcastItemColumnChanged(payload),
               })
@@ -248,6 +262,11 @@ export function composeApiPrivilegedDependencies(
     closeDatabase(): void {
       try {
         board.dispose()
+      } catch {
+        // best-effort cleanup before DB close
+      }
+      try {
+        admission.dispose()
       } catch {
         // best-effort cleanup before DB close
       }

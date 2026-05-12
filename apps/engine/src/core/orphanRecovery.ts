@@ -37,14 +37,21 @@ export type StartupRecoveryOutcome = {
   runId: string
   outcome: StartupRecoveryOutcomeKind
   reason: StartupRecoveryReason | null
+  heldBackRunIds?: string[]
 }
 
 export type StartupAutoResumeEligibility =
   | { eligible: true }
   | { eligible: false; reason: Extract<StartupRecoveryReason, "open_prompt" | "worker_lease_not_orphaned" | "auto_resume_disabled"> }
 
+type StartupRecoveryCandidate = {
+  run: RunRow
+  eligibility: StartupAutoResumeEligibility
+}
+
 type StartupAutoResumeOptions = {
   enabled: boolean
+  recoveryThreshold?: number
   resumeRun: (run: RunRow) => Promise<void>
 }
 
@@ -73,6 +80,11 @@ const STARTUP_RECOVERY_SKIP_MESSAGES: Record<
     "Startup recovery left the stale run on manual recovery because the worker lease is not orphaned.",
   auto_resume_disabled:
     "Startup recovery left the stale run on manual recovery because auto-resume is disabled.",
+}
+
+function normalizedRecoveryThreshold(value: number | undefined): number {
+  if (value == null || !Number.isFinite(value)) return Number.MAX_SAFE_INTEGER
+  return Math.max(1, Math.floor(value))
 }
 
 function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
@@ -149,21 +161,18 @@ export function classifyStartupAutoResumeEligibility(input: {
   hasOpenPrompt: boolean
   autoResumeEnabled: boolean
 }): StartupAutoResumeEligibility {
-  if (input.hasOpenPrompt) {
-    return { eligible: false, reason: "open_prompt" }
-  }
-  if (!input.hasOrphanedWorkerLease) {
-    return { eligible: false, reason: "worker_lease_not_orphaned" }
-  }
-  if (!input.autoResumeEnabled) {
-    return { eligible: false, reason: "auto_resume_disabled" }
-  }
-  return { eligible: true }
+  if (input.hasOrphanedWorkerLease && input.autoResumeEnabled) return { eligible: true }
+  if (input.hasOrphanedWorkerLease) return { eligible: false, reason: "auto_resume_disabled" }
+  return { eligible: false, reason: "worker_lease_not_orphaned" }
 }
 
 function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string): string {
   if (outcome.outcome === "auto_resumed") {
     return "Startup recovery auto-resumed the stale run."
+  }
+  if (outcome.reason === "recovery_threshold_exceeded") {
+    const heldBackRunIds = outcome.heldBackRunIds ?? []
+    return `Startup recovery held back ${heldBackRunIds.length} stale run(s) because the recovery set exceeded the threshold: ${heldBackRunIds.join(", ")}`
   }
   if (
     outcome.reason === "open_prompt" ||
@@ -188,6 +197,7 @@ function appendStartupRecoveryLog(
     data: {
       outcome: outcome.outcome,
       reason: outcome.reason,
+      ...(outcome.heldBackRunIds ? { heldBackRunIds: outcome.heldBackRunIds } : {}),
       ...(error ? { error } : {}),
     },
   })
@@ -206,6 +216,88 @@ function failedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
 
 function resumedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
   return { runId, outcome: "auto_resumed", reason: null }
+}
+
+function thresholdHeldBackStartupRecoveryOutcome(firstRunId: string, runIds: string[]): StartupRecoveryOutcome {
+  return {
+    runId: firstRunId,
+    outcome: "skipped",
+    reason: "recovery_threshold_exceeded",
+    heldBackRunIds: runIds,
+  }
+}
+
+function buildStartupRecoveryCandidates(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string; now: number; autoResumeEnabled: boolean },
+): StartupRecoveryCandidate[] {
+  return listStartupRecoveryCandidates(repos).map(run => {
+    const currentRun = repos.getRun(run.id) ?? run
+    const eligibility = classifyStartupAutoResumeEligibility({
+      hasOrphanedWorkerLease: hasOrphanedWorkerLease(currentRun, { apiWorkerInstanceId: input.apiWorkerInstanceId, now: input.now }),
+      hasOpenPrompt: repos.getOpenPrompt(currentRun.id) != null,
+      autoResumeEnabled: input.autoResumeEnabled,
+    })
+    return { run: currentRun, eligibility }
+  })
+}
+
+async function resolveCandidateOutcomes(
+  repos: Repos,
+  candidates: StartupRecoveryCandidate[],
+  input: { apiWorkerInstanceId: string; now: number },
+  autoResume: StartupAutoResumeOptions,
+): Promise<StartupRecoveryOutcome[]> {
+  const outcomes: StartupRecoveryOutcome[] = []
+  for (const candidate of candidates) {
+    const { outcome, error } = await resolveStartupRecoveryOutcome(
+      repos,
+      repos.getRun(candidate.run.id) ?? candidate.run,
+      input,
+      autoResume,
+    )
+    outcomes.push(outcome)
+    appendStartupRecoveryLog(repos, outcome, error)
+  }
+  return outcomes
+}
+
+function holdBackEligibleCandidates(
+  repos: Repos,
+  candidates: StartupRecoveryCandidate[],
+  eligibleCandidates: Array<StartupRecoveryCandidate & { eligibility: { eligible: true } }>,
+): StartupRecoveryOutcome[] {
+  const heldBackRunIds = eligibleCandidates.map(candidate => candidate.run.id)
+  const holdbackOutcome = thresholdHeldBackStartupRecoveryOutcome(eligibleCandidates[0].run.id, heldBackRunIds)
+  const outcomes: StartupRecoveryOutcome[] = [holdbackOutcome]
+  appendStartupRecoveryLog(repos, holdbackOutcome)
+
+  for (const candidate of candidates) {
+    if (candidate.eligibility.eligible) continue
+    const outcome = skippedStartupRecoveryOutcome(candidate.run.id, candidate.eligibility.reason)
+    outcomes.push(outcome)
+    appendStartupRecoveryLog(repos, outcome)
+  }
+  return outcomes
+}
+
+async function resolveStartupRecoveryPass(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string; now: number },
+  autoResume: StartupAutoResumeOptions,
+): Promise<StartupRecoveryOutcome[]> {
+  const candidates = buildStartupRecoveryCandidates(repos, {
+    apiWorkerInstanceId: input.apiWorkerInstanceId,
+    now: input.now,
+    autoResumeEnabled: autoResume.enabled,
+  })
+  const eligibleCandidates = candidates.filter(
+    (candidate): candidate is StartupRecoveryCandidate & { eligibility: { eligible: true } } => candidate.eligibility.eligible,
+  )
+  if (eligibleCandidates.length > normalizedRecoveryThreshold(autoResume.recoveryThreshold)) {
+    return holdBackEligibleCandidates(repos, candidates, eligibleCandidates)
+  }
+  return resolveCandidateOutcomes(repos, candidates, input, autoResume)
 }
 
 async function resolveStartupRecoveryOutcome(
@@ -245,16 +337,11 @@ export async function recoverLostWorkerRuns(
   }
 
   if (input.autoResume) {
-    for (const run of listStartupRecoveryCandidates(repos)) {
-      const { outcome, error } = await resolveStartupRecoveryOutcome(
-        repos,
-        repos.getRun(run.id) ?? run,
-        { apiWorkerInstanceId: input.apiWorkerInstanceId, now },
-        input.autoResume,
-      )
-      outcomes.push(outcome)
-      appendStartupRecoveryLog(repos, outcome, error)
-    }
+    outcomes.push(...await resolveStartupRecoveryPass(
+      repos,
+      { apiWorkerInstanceId: input.apiWorkerInstanceId, now },
+      input.autoResume,
+    ))
   }
 
   if (recoveredRunIds.length > 0) {
