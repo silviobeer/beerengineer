@@ -10,6 +10,7 @@ export type CanonicalMessageType =
   | "dirty_master_allowlist_restore"
   | "startup_recovery"
   | "run_resumed"
+  | "run_recovery_action"
   | "plan_regenerated"
   | "phase_started"
   | "phase_completed"
@@ -30,6 +31,7 @@ export type CanonicalMessageType =
   | "wireframes_ready"
   | "design_ready"
   | "external_remediation_recorded"
+  | "run_recovery_action"
   | "item_column_changed"
   | "presentation"
   | "wave_serialized"
@@ -64,6 +66,7 @@ const SIMPLE_EVENT_TYPES = [
   "run_blocked",
   "dirty_master_allowlist_restore",
   "run_resumed",
+  "run_recovery_action",
   "plan_regenerated",
   "external_remediation_recorded",
   "stage_started",
@@ -99,6 +102,7 @@ const SIMPLE_LEVELS_BY_EVENT: Record<SimpleEventType, LevelInfo> = {
   run_blocked: { level: 2, force: true, type: "run_blocked" },
   dirty_master_allowlist_restore: { level: 1, force: false, type: "dirty_master_allowlist_restore" },
   run_resumed: { level: 2, force: false, type: "run_resumed" },
+  run_recovery_action: { level: 1, force: false, type: "run_recovery_action" },
   plan_regenerated: { level: 2, force: false, type: "plan_regenerated" },
   external_remediation_recorded: { level: 2, force: false, type: "external_remediation_recorded" },
   stage_started: { level: 1, force: false, type: "phase_started" },

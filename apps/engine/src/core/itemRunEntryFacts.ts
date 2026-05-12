@@ -31,6 +31,7 @@ export const MESSAGES_ENTRY_FACT_FRESHNESS: ItemRunEntryFactsFreshness = {
     "run_failed",
     "run_blocked",
     "run_resumed",
+    "run_recovery_action",
     "prompt_requested",
     "loop_iteration",
     "project_created",
