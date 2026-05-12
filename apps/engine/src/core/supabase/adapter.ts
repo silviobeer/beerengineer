@@ -286,8 +286,7 @@ async function inspectPersistedRecoverableBranch(input: {
   failureReason: "wrong_name" | "missing" | "unhealthy" | "unverifiable" | null
 }> {
   if (!input.branchRef) return { reusableBranch: null, fallbackFailure: null, failureReason: null }
-  const getBranch = input.client.getBranch
-  if (getBranch == null) {
+  if (input.client.getBranch == null) {
     return {
       reusableBranch: null,
       fallbackFailure: recoveryReuseFailure(
@@ -299,7 +298,7 @@ async function inspectPersistedRecoverableBranch(input: {
   }
 
   try {
-    const branch = await getBranch(input.projectRef, input.branchRef)
+    const branch = await input.client.getBranch(input.projectRef, input.branchRef)
     const actualName = nonEmptyString(branch.name)
     if (actualName && actualName !== input.expectedName) {
       return {
