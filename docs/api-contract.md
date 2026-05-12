@@ -102,6 +102,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
+  - Retained-diagnosis specialization: `409 { error: "operator_decision_required", code: "operator_decision_required", message, decision }` when the run is blocked by a retained diagnosis branch. `decision` is `{ kind: "operator_decision_required", reason: "retained_diagnosis_branch", nextActions: ["retry-retained", "clear-and-fresh"], branchRef }`. This conflict is side-effect free: the engine does not create a remediation row or start recovery work until an explicit operator action is chosen.
 - `POST /runs/:id/replan`
   - Request: `{ reason }`
   - Response: `{ runId, status }`
@@ -109,7 +110,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - `409 { error: "replan_plan_missing", message }` when the run has not yet produced a persisted plan.
   - `409 { error: "replan_run_active", currentStatus, workerHeartbeatAt, hint }` when the run is still active; `hint` is the pause-first guidance and `workerHeartbeatAt` is an ISO 8601 UTC timestamp or `null`.
 
-`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text.
+`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text. `GET /runs/:id/recovery` also exposes `decision: RunRecoveryDecision | null`; retained-diagnosis runs set `decision.reason = "retained_diagnosis_branch"`, enumerate both operator choices in `decision.nextActions`, and set `resumable = false` until one of those choices is taken.
 
 ### Conversation (run-scoped)
 
