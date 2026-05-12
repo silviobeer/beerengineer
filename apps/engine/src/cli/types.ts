@@ -8,6 +8,10 @@ export type ResumeFlags = {
   yes?: boolean
 }
 
+export type ReplanFlags = {
+  reason?: string
+}
+
 export type Command =
   | { kind: "help" }
   | { kind: "start-engine" }
@@ -79,6 +83,7 @@ export type Command =
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "run-get"; runId?: string; json?: boolean }
   | { kind: "run-resume"; runId?: string; resume?: ResumeFlags }
+  | { kind: "run-replan"; runId?: string; replan?: ReplanFlags }
   | { kind: "run-attach-supabase-branch"; runId?: string; branchRef?: string }
   | { kind: "run-discard-supabase-branch"; runId?: string }
   | { kind: "run-open"; runId?: string }

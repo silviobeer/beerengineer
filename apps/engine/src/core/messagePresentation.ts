@@ -138,6 +138,7 @@ const SIMPLE_PRESENTATIONS: Partial<Record<MessageEntry["type"], (entry: Message
   log: entry => ({ icon: "📎", label: "log", detail: payloadString(entry.payload.message) }),
   artifact_written: entry => ({ icon: "📝", label: "artifact", detail: payloadString(entry.payload.label) }),
   external_remediation_recorded: entry => ({ icon: "🩹", label: "remediation", detail: payloadString(entry.payload.summary) }),
+  plan_regenerated: entry => ({ icon: "🧭", label: "plan regenerated", detail: payloadString(entry.payload.reason) }),
   item_column_changed: entry => ({
     icon: "📍",
     label: "item",

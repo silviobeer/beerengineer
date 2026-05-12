@@ -49,6 +49,7 @@ import {
   runDiscardSupabaseBranchCommand,
   runItemAction,
   runItemImportPrepared,
+  runRunReplanCommand,
   runRunResumeCommand,
 } from "./cli/commands/itemActions.js"
 import { runManagedInstallCommand } from "./cli/commands/install.js"
@@ -60,7 +61,7 @@ export { parseArgs } from "./cli/parse.js"
 export { resolveItemReference, runDoctor } from "./cli/common.js"
 export { resolveUiLaunchUrl, resolveUiWorkspacePath, startEngine, startUi } from "./cli/ui.js"
 export { runItemAction } from "./cli/commands/itemActions.js"
-export type { ResumeFlags } from "./cli/types.js"
+export type { ReplanFlags, ResumeFlags } from "./cli/types.js"
 
 async function runNotificationsTestCommand(channel: "telegram"): Promise<number> {
   const config = loadEffectiveConfig()
@@ -135,6 +136,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),
   "run-resume": cmd => runRunResumeCommand(cmd.runId, cmd.resume),
+  "run-replan": cmd => runRunReplanCommand(cmd.runId, cmd.replan),
   "run-attach-supabase-branch": cmd => runAttachSupabaseBranchCommand(cmd.runId, cmd.branchRef),
   "run-discard-supabase-branch": cmd => runDiscardSupabaseBranchCommand(cmd.runId),
   "run-open": cmd => runRunOpenCommand(cmd.runId),
