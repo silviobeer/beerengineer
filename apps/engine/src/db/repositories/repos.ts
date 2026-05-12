@@ -25,6 +25,14 @@ const now = () => Date.now()
 
 type RowId = { id: string }
 type LogScope = { runId: string } | { workspaceId: string | null }
+type PromptResolverRunState = Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref">
+type PendingPromptWithStageKey = PendingPromptRow & { prompt_stage_key: string | null }
+type OpenPromptContextWithRunState = OpenPromptContextRow & {
+  prompt_stage_key: string | null
+  run_recovery_status: RunRow["recovery_status"]
+  run_recovery_scope: RunRow["recovery_scope"]
+  run_recovery_scope_ref: RunRow["recovery_scope_ref"]
+}
 
 export class Repos {
   private readonly latestTelegramDeliverySql = `SELECT * FROM notification_deliveries
@@ -1202,11 +1210,48 @@ export class Repos {
     return this.getPendingPrompt(id)
   }
 
+  private mergeGatePromptStillActionable(run: PromptResolverRunState): boolean {
+    if (run.recovery_status === "blocked") {
+      return run.recovery_scope === "stage" && run.recovery_scope_ref === "merge-gate"
+    }
+    return run.status === "running" && run.current_stage === "merge-gate"
+  }
+
+  private promptIsObsoleteForRun(run: PromptResolverRunState, promptStageKey: string | null): boolean {
+    return promptStageKey === "merge-gate" && !this.mergeGatePromptStillActionable(run)
+  }
+
+  private selectActivePrompt<T extends { prompt_stage_key: string | null }>(
+    run: PromptResolverRunState,
+    prompts: T[],
+  ): T | undefined {
+    return prompts.find(prompt => !this.promptIsObsoleteForRun(run, prompt.prompt_stage_key))
+  }
+
   getOpenPrompt(runId: string): PendingPromptRow | undefined {
-    return this.getOne(
-      "SELECT * FROM pending_prompts WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at DESC LIMIT 1",
-      runId
+    const run = this.getRun(runId)
+    if (!run) return undefined
+    const prompts = this.getAll<PendingPromptWithStageKey>(
+      `SELECT p.*, sr.stage_key AS prompt_stage_key
+         FROM pending_prompts p
+         LEFT JOIN stage_runs sr ON sr.id = p.stage_run_id
+        WHERE p.run_id = ? AND p.answered_at IS NULL
+        ORDER BY p.created_at DESC`,
+      runId,
     )
+    const prompt = this.selectActivePrompt(run, prompts)
+    return prompt
+      ? {
+          id: prompt.id,
+          run_id: prompt.run_id,
+          stage_run_id: prompt.stage_run_id,
+          prompt: prompt.prompt,
+          actions_json: prompt.actions_json,
+          answer: prompt.answer,
+          created_at: prompt.created_at,
+          answered_at: prompt.answered_at,
+        }
+      : undefined
   }
 
   listOpenPrompts(opts: { workspaceId?: string } = {}): OpenPromptContextRow[] {
@@ -1219,14 +1264,53 @@ export class Repos {
                         i.title AS item_title,
                         r.title AS run_title,
                         r.status AS run_status,
-                        r.current_stage AS current_stage
+                        r.current_stage AS current_stage,
+                        r.recovery_status AS run_recovery_status,
+                        r.recovery_scope AS run_recovery_scope,
+                        r.recovery_scope_ref AS run_recovery_scope_ref,
+                        sr.stage_key AS prompt_stage_key
                    FROM pending_prompts p
                    JOIN runs r ON r.id = p.run_id
                    JOIN items i ON i.id = r.item_id
                    JOIN workspaces w ON w.id = r.workspace_id
+              LEFT JOIN stage_runs sr ON sr.id = p.stage_run_id
                   WHERE p.answered_at IS NULL`
-    return opts.workspaceId
-      ? this.getAll(`${sql} AND r.workspace_id = ? ORDER BY p.created_at ASC`, opts.workspaceId)
-      : this.getAll(`${sql} ORDER BY p.created_at ASC`)
+    const rows = (opts.workspaceId
+      ? this.getAll<OpenPromptContextWithRunState>(`${sql} AND r.workspace_id = ? ORDER BY p.created_at DESC`, opts.workspaceId)
+      : this.getAll<OpenPromptContextWithRunState>(`${sql} ORDER BY p.created_at DESC`))
+
+    const activeByRun = new Map<string, OpenPromptContextRow>()
+    for (const row of rows) {
+      if (activeByRun.has(row.run_id)) continue
+      if (this.promptIsObsoleteForRun({
+        status: row.run_status,
+        current_stage: row.current_stage,
+        recovery_status: row.run_recovery_status,
+        recovery_scope: row.run_recovery_scope,
+        recovery_scope_ref: row.run_recovery_scope_ref,
+      }, row.prompt_stage_key)) {
+        continue
+      }
+      activeByRun.set(row.run_id, {
+        id: row.id,
+        run_id: row.run_id,
+        stage_run_id: row.stage_run_id,
+        prompt: row.prompt,
+        actions_json: row.actions_json,
+        answer: row.answer,
+        created_at: row.created_at,
+        answered_at: row.answered_at,
+        workspace_id: row.workspace_id,
+        workspace_key: row.workspace_key,
+        workspace_name: row.workspace_name,
+        item_id: row.item_id,
+        item_code: row.item_code,
+        item_title: row.item_title,
+        run_title: row.run_title,
+        run_status: row.run_status,
+        current_stage: row.current_stage,
+      })
+    }
+    return [...activeByRun.values()].sort((a, b) => a.created_at - b.created_at)
   }
 }
