@@ -1617,7 +1617,7 @@
           "Runs"
         ],
         "summary": "Canonical recovery mutation surface.",
-        "description": "Single canonical recovery-action family. Named recovery and skip actions stay on this route as reserved setup scaffolding until later waves implement them; the initial setup surface only supports narrow latest-state clear actions on the run projection.",
+        "description": "Single canonical recovery-action family. `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are the implemented path-changing actions for blocked Supabase provisioning recovery. `resume`, `replan`, `retry_supabase_readiness`, and `skip_current_stage` remain reserved on the same route.",
         "security": [
           {
             "csrfToken": []
@@ -1656,6 +1656,16 @@
           },
           "404": {
             "description": "Run not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryActionRejection"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Recovery action is incompatible with the run's current recovery state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4455,6 +4465,34 @@
             "type": "string",
             "nullable": true
           },
+          "recoveryStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "fresh_path_recovery",
+              "retained_path_recovery",
+              null
+            ]
+          },
+          "supabaseBranchLifecycleState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "availableActions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "recover_fresh_branch",
+                "retry_retained",
+                "clear_and_fresh"
+              ]
+            }
+          },
           "recovery_user_message": {
             "type": [
               "string",
@@ -4486,11 +4524,14 @@
               "replan",
               "retry_supabase_readiness",
               "skip_current_stage",
+              "recover_fresh_branch",
+              "retry_retained",
+              "clear_and_fresh",
               "clear_recovery_payload",
               "clear_supabase_branch_ref",
               "clear_supabase_branch_lifecycle_state"
             ],
-            "description": "Single canonical recovery-action family. Named recovery and skip actions stay on this route as reserved setup scaffolding until later waves implement them. The clear_* actions are implemented as narrow latest-state writes on the run row."
+            "description": "Single canonical recovery-action family. `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` change recovery path semantics. The clear_* actions are implemented as narrow latest-state writes on the run row. `resume`, `replan`, `retry_supabase_readiness`, and `skip_current_stage` remain reserved on this route."
           },
           "summary": {
             "type": "string"
@@ -4511,6 +4552,109 @@
       },
       "RecoveryActionResult": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "latestState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "recover_fresh_branch",
+                  "retry_retained",
+                  "clear_and_fresh"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "accepted"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery",
+                  "retained_path_recovery"
+                ]
+              },
+              "supabaseBranchLifecycleState": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery",
+                  "retained_path_recovery"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "reason",
+              "latestState",
+              "recoveryStatus",
+              "supabaseBranchLifecycleState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear_and_fresh"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "noop"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "already_on_fresh_path"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery"
+                ]
+              },
+              "supabaseBranchLifecycleState": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "required": [
@@ -4637,7 +4781,8 @@
               "recovery_action_required",
               "unsupported_recovery_action",
               "run_not_found",
-              "recovery_action_reserved"
+              "recovery_action_reserved",
+              "recovery_action_ineligible"
             ]
           },
           "code": {
@@ -4645,7 +4790,8 @@
             "enum": [
               "bad_request",
               "not_found",
-              "not_implemented"
+              "not_implemented",
+              "invalid_transition"
             ]
           },
           "action": {
@@ -4655,6 +4801,9 @@
               "replan",
               "retry_supabase_readiness",
               "skip_current_stage",
+              "recover_fresh_branch",
+              "retry_retained",
+              "clear_and_fresh",
               "clear_recovery_payload",
               "clear_supabase_branch_ref",
               "clear_supabase_branch_lifecycle_state"
@@ -4666,7 +4815,8 @@
               "action_required",
               "unsupported_action",
               "action_not_implemented",
-              "run_not_found"
+              "run_not_found",
+              "incompatible_recovery_state"
             ]
           },
           "message": {

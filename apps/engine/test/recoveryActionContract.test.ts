@@ -156,6 +156,9 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
     "replan",
     "retry_supabase_readiness",
     "skip_current_stage",
+    "recover_fresh_branch",
+    "retry_retained",
+    "clear_and_fresh",
     "clear_recovery_payload",
     "clear_supabase_branch_ref",
     "clear_supabase_branch_lifecycle_state",
@@ -168,8 +171,11 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   assert.ok(rejectionReasons.includes("action_required"))
   assert.ok(rejectionReasons.includes("unsupported_action"))
   assert.ok(rejectionReasons.includes("action_not_implemented"))
+  assert.ok(rejectionReasons.includes("incompatible_recovery_state"))
 
   assert.match(docs, /Canonical recovery mutation surface for named recovery, skip, and narrow clear actions\./)
+  assert.match(docs, /The implemented named path-changing actions are `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh`\./)
+  assert.match(docs, /the contract-defined post-action values are `fresh_path_recovery` and `retained_path_recovery`\./)
   assert.match(docs, /Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear\./)
-  assert.match(docs, /Later waves extend the same route with specific machine-readable rejection reasons instead of introducing a second mutation surface\./)
+  assert.match(docs, /Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged\./)
 })
