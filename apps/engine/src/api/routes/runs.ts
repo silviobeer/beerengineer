@@ -11,12 +11,14 @@ import { buildConversation, recordUserMessage } from "../../core/conversation.js
 import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
 import { projectStageLogRow } from "../../core/messagingProjection.js"
+import { readWorkspaceConfigSync } from "../../core/workspaces/configFile.js"
 import {
   answerRunPromptInProcess,
   clearAndFreshRunInProcess,
   isClearAndFreshConflictResult,
   isRetryRetainedConflictResult,
   isResumeOperatorDecisionResult,
+  isUnsupportedHarnessSelectionResult,
   isWorkflowCapabilityBlockedResult,
   replanRunInProcess,
   retryRetainedRunInProcess,
@@ -25,10 +27,12 @@ import {
   type ReplanRunResult,
 } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
+import { resolveHarness } from "../../llm/registry.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { recoveryUserMessageForRun } from "../../core/recoveryUserMessage.js"
 import { retainedDiagnosisRecoveryDecision } from "../../core/supabase/recoveryDecision.js"
+import type { HarnessRole } from "../../types/workspace.js"
 
 function contentTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
@@ -117,7 +121,45 @@ export function handleGetRun(repos: Repos, res: ServerResponse, runId: string): 
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
   const conv = buildConversation(repos, runId)
-  json(res, 200, { ...run, recovery_user_message: recoveryUserMessageForRun(run), openPrompt: conv?.openPrompt ?? null })
+  json(res, 200, {
+    ...run,
+    recovery_user_message: recoveryUserMessageForRun(run),
+    openPrompt: conv?.openPrompt ?? null,
+    execution_harness_selections: executionHarnessSelectionsForRun(repos, run.id),
+  })
+}
+
+function executionHarnessSelectionsForRun(repos: Repos, runId: string): Array<{
+  role: HarnessRole
+  harness: string
+  runtime: string
+  provider: string
+  model: string | null
+}> | null {
+  const run = repos.getRun(runId)
+  if (!run) return null
+  const workspace = repos.getWorkspace(run.workspace_id)
+  const rootPath = workspace?.root_path?.trim()
+  if (!rootPath) return null
+  const workspaceConfig = readWorkspaceConfigSync(rootPath)
+  if (!workspaceConfig) return null
+  const llm = {
+    workspaceRoot: rootPath,
+    harnessProfile: workspaceConfig.harnessProfile,
+    runtimePolicy: workspaceConfig.runtimePolicy,
+  }
+  const roles: HarnessRole[] = ["coder", "reviewer", "merge-resolver"]
+  return roles.flatMap(role => {
+    const resolved = resolveHarness({ ...llm, role, stage: "execution" })
+    if (resolved.kind === "fake") return []
+    return [{
+      role,
+      harness: resolved.harness,
+      runtime: resolved.runtime,
+      provider: resolved.provider,
+      model: resolved.model ?? null,
+    }]
+  })
 }
 
 export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: string): void {
@@ -456,6 +498,14 @@ export async function handleCreateRun(
     onItemColumnChanged,
   })
   if (!result.ok) {
+    if (isUnsupportedHarnessSelectionResult(result)) {
+      return json(res, result.status, {
+        error: result.error,
+        code: result.code,
+        message: result.message,
+        role: result.role,
+      })
+    }
     return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
       ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
       : { error: result.error })

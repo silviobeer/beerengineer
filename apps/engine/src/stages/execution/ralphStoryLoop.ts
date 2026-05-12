@@ -3,7 +3,7 @@ import { commitAll } from "../../core/git.js"
 import { runCycledLoop, type CycleOutcome } from "../../core/iterationLoop.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { executionCoderPolicy, resolveHarness } from "../../llm/registry.js"
+import { emitHarnessResolution, executionCoderPolicy, resolveHarness } from "../../llm/registry.js"
 import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
 import type { IterationContext } from "../../llm/hosted/promptEnvelope.js"
 import { llm6bFix, llm6bImplement } from "../../sim/llm.js"
@@ -214,6 +214,7 @@ async function executeLlmIteration(
     role: "coder",
     stage: "execution",
   })
+  emitHarnessResolution("execution", "coder", harness, executionCoderPolicy(ctx.llm.runtimePolicy))
   const coderResult = await runCoderHarness({
     harness,
     runtimePolicy: executionCoderPolicy(ctx.llm.runtimePolicy),

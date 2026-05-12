@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { commitAll } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { executionCoderPolicy, resolveHarness, type RunLlmConfig } from "../../llm/registry.js"
+import { emitHarnessResolution, executionCoderPolicy, resolveHarness, type RunLlmConfig } from "../../llm/registry.js"
 import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
 import type {
   ScreenOwnerMap,
@@ -181,14 +181,16 @@ async function runSetupAttemptWithLlm(input: {
   implementation: StoryImplementationArtifact
   storyContext: StoryExecutionContext
 }): Promise<{ changedFiles: string[]; notes: string[]; summary: string }> {
+  const harness = resolveHarness({
+    workspaceRoot: input.executionLlm.workspaceRoot,
+    harnessProfile: input.executionLlm.harnessProfile,
+    runtimePolicy: input.executionLlm.runtimePolicy,
+    role: "coder",
+    stage: "execution",
+  })
+  emitHarnessResolution("execution", "coder", harness, executionCoderPolicy(input.executionLlm.runtimePolicy))
   const coderResult = await runCoderHarness({
-    harness: resolveHarness({
-      workspaceRoot: input.executionLlm.workspaceRoot,
-      harnessProfile: input.executionLlm.harnessProfile,
-      runtimePolicy: input.executionLlm.runtimePolicy,
-      role: "coder",
-      stage: "execution",
-    }),
+    harness,
     runtimePolicy: executionCoderPolicy(input.executionLlm.runtimePolicy),
     baselinePath: input.baselinePath,
     storyContext: input.storyContext,

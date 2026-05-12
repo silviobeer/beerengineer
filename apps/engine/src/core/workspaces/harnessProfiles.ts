@@ -13,6 +13,12 @@ type PresetEntry = {
 
 const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
 
+type UnsupportedHarnessSelection = {
+  code: "unsupported_harness_selection"
+  detail: string
+  role: HarnessRole
+}
+
 function pairsFromExecutionOverrides(
   execution: ExecutionStageHarnessOverrides | undefined,
 ): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
@@ -103,8 +109,53 @@ function appendUnknownModelWarnings(profile: HarnessProfile, warnings: string[])
   }
 }
 
+function unsupportedExecutionOpenCodeSelection(
+  role: HarnessRole,
+  surface: string,
+): UnsupportedHarnessSelection {
+  return {
+    code: "unsupported_harness_selection",
+    role,
+    detail:
+      `OpenCode (opencode:cli) is only supported for execution-role selections. ` +
+      `Rejected role "${role}" on ${surface}. ` +
+      `Use self.stageOverrides.execution.${role} with runtime "cli" instead.`,
+  }
+}
+
+export function validateExecutionRoleOpenCodeSelection(profile: HarnessProfile): { ok: true } | { ok: false; error: UnsupportedHarnessSelection } {
+  switch (profile.mode) {
+    case "opencode":
+      return { ok: false, error: unsupportedExecutionOpenCodeSelection("coder", 'harnessProfile.mode="opencode"') }
+    case "opencode-china":
+    case "opencode-euro":
+      return { ok: false, error: unsupportedExecutionOpenCodeSelection("coder", `harnessProfile.mode="${profile.mode}"`) }
+    case "self":
+      if (profile.roles.coder.harness === "opencode") {
+        return { ok: false, error: unsupportedExecutionOpenCodeSelection("coder", "harnessProfile.roles.coder") }
+      }
+      if (profile.roles.reviewer.harness === "opencode") {
+        return { ok: false, error: unsupportedExecutionOpenCodeSelection("reviewer", "harnessProfile.roles.reviewer") }
+      }
+      return { ok: true }
+    default:
+      return { ok: true }
+  }
+}
+
 export function validateHarnessProfile(profile: HarnessProfile, appReport: SetupReport): ValidationResult {
   const warnings: string[] = []
+  const opencodeScopeValidation = validateExecutionRoleOpenCodeSelection(profile)
+  if (!opencodeScopeValidation.ok) {
+    return {
+      ok: false,
+      warnings,
+      error: {
+        code: opencodeScopeValidation.error.code,
+        detail: opencodeScopeValidation.error.detail,
+      },
+    }
+  }
   const pairs = rolePairsForProfile(profile)
   const hardRejects = pairs.filter(p => p.harness === "opencode" && p.runtime === "sdk")
   if (hardRejects.length > 0) {
