@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { createServer } from "node:net"
 import { dirname, join, sep } from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -112,8 +113,19 @@ function selectedTests(mode) {
   throw new Error(`Unknown test mode: ${mode}`)
 }
 
+function applyTestSelectionFilter(files) {
+  const raw = process.env.BEERENGINEER_TEST_SELECTION
+  if (!raw) return files
+  const selected = new Set(
+    raw.split(",")
+      .map(value => value.trim())
+      .filter(Boolean),
+  )
+  return files.filter(file => selected.has(file))
+}
+
 const mode = process.argv[2] ?? "all"
-const files = selectedTests(mode)
+const files = applyTestSelectionFilter(selectedTests(mode))
 const nodeArgs = ["--test", "--import", "tsx"]
 const telegramOverrideEnvKeys = [
   "BEERENGINEER_TELEGRAM_ENABLED",
@@ -129,17 +141,36 @@ function testEnvBase() {
   for (const key of telegramOverrideEnvKeys) {
     delete env[key]
   }
+  delete env.NODE_TEST_CONTEXT
   env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM = "1"
   return env
 }
 
-function isolatedTestEnv() {
+async function allocateEnginePort() {
+  return await new Promise((resolve, reject) => {
+    const server = createServer()
+    server.unref()
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("failed to allocate engine test port")))
+        return
+      }
+      server.close(error => error ? reject(error) : resolve(address.port))
+    })
+  })
+}
+
+async function isolatedTestEnv() {
   const env = testEnvBase()
   if (process.env.BEERENGINEER_TEST_USE_REAL_CONFIG === "1") return env
 
   const dir = mkdtempSync(join(tmpdir(), "be2-engine-tests-"))
   const dataDir = join(dir, "data")
   const configPath = join(dir, "config.json")
+  const xdgStateHome = join(dir, "state")
+  const enginePort = await allocateEnginePort()
 
   writeFileSync(
     configPath,
@@ -147,7 +178,7 @@ function isolatedTestEnv() {
       schemaVersion: 1,
       dataDir,
       allowedRoots: [repoRoot],
-      enginePort: 4100,
+      enginePort,
       llm: {
         provider: "anthropic",
         model: "claude-opus-4-7",
@@ -170,6 +201,7 @@ function isolatedTestEnv() {
   return {
     ...env,
     BEERENGINEER_CONFIG_PATH: configPath,
+    XDG_STATE_HOME: xdgStateHome,
   }
 }
 
@@ -191,7 +223,7 @@ for (const f of files) console.log(`# selected: ${f}`)
 
 const result = spawnSync(process.execPath, [...nodeArgs, ...files], {
   cwd: engineRoot,
-  env: isolatedTestEnv(),
+  env: await isolatedTestEnv(),
   stdio: "inherit",
 })
 
