@@ -547,7 +547,7 @@ export function registerApiRoutes(
     if (await handlePreCsrfRoutes(context, deps)) return
 
     if (!requireCsrfToken(req, deps.apiToken)) {
-      json(res, 403, { error: "csrf_token_required" })
+      json(res, 403, { error: "forbidden", code: "non_local_mutation_forbidden" })
       return
     }
 

@@ -181,9 +181,14 @@ Alternatively, start the HTTP API and drive from another tool:
 ```bash
 npm run start:api                        # listens on :4100
 curl -X POST http://localhost:4100/runs \
-  -H 'x-beerengineer-token: <token>' \
+  -H 'content-type: application/json' \
   -d '{"title":"My feature","description":"…"}'
 ```
+
+For the supported localhost flow, the engine accepts loopback requests
+without token management. Legacy callers may still send
+`x-beerengineer-token`, but new local setup/start usage does not require
+reading, exporting, or copying one.
 
 ## Usage (most common commands)
 
@@ -290,13 +295,12 @@ the recommended operator path — use `beerengineer update` for managed hosts.
 
 - Config file: `$XDG_CONFIG_HOME/beerengineer-nodejs/config.json`
 - Data dir: `$XDG_DATA_HOME/beerengineer-nodejs/` (SQLite + WAL, plus app-level state)
-- API token file: `$XDG_STATE_HOME/beerengineer/api.token`
 - Per-workspace config: `<workspace>/.beerengineer/workspace.json`
 - Per-workspace run/worktree artefacts: `<workspace>/.beerengineer/`
 
 Common env vars:
 
-- `BEERENGINEER_API_TOKEN` — override the generated CSRF token
+- `BEERENGINEER_API_TOKEN` — optional legacy compatibility token for non-loopback callers that still send `x-beerengineer-token`
 - `BEERENGINEER_UI_ORIGIN` — allowed CORS origin
 - `HOST`, `PORT` — API bind (default `127.0.0.1:4100`)
 - `ANTHROPIC_API_KEY` — required when any role uses `claude:sdk`
