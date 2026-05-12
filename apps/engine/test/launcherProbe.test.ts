@@ -31,6 +31,11 @@ if (process.env.BEERENGINEER_TEST_LAUNCHER_PROBE === "1") {
       xdgStateHome: process.env.XDG_STATE_HOME ?? null,
       tokenPath: resolveApiTokenFilePath(),
       pidPath: resolveEnginePidFilePath(),
+      inheritedDataDir: process.env.BEERENGINEER_DATA_DIR ?? null,
+      inheritedEnginePort: process.env.BEERENGINEER_ENGINE_PORT ?? null,
+      inheritedApiTokenFile: process.env.BEERENGINEER_API_TOKEN_FILE ?? null,
+      inheritedPidFile: process.env.BEERENGINEER_ENGINE_PID_FILE ?? null,
+      inheritedPort: process.env.PORT ?? null,
     }
     console.log(`LAUNCHER_PROBE:${JSON.stringify({ event: "ready", ...payload })}`)
 

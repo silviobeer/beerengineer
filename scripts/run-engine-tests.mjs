@@ -135,10 +135,22 @@ const telegramOverrideEnvKeys = [
   "BEERENGINEER_TELEGRAM_INBOUND_ENABLED",
   "BEERENGINEER_TELEGRAM_WEBHOOK_SECRET_ENV",
 ]
+const invocationIsolationEnvKeys = [
+  "BEERENGINEER_API_TOKEN_FILE",
+  "BEERENGINEER_CONFIG_PATH",
+  "BEERENGINEER_DATA_DIR",
+  "BEERENGINEER_ENGINE_PID_FILE",
+  "BEERENGINEER_ENGINE_PORT",
+  "PORT",
+  "XDG_STATE_HOME",
+]
 
 function testEnvBase() {
   const env = { ...process.env }
   for (const key of telegramOverrideEnvKeys) {
+    delete env[key]
+  }
+  for (const key of invocationIsolationEnvKeys) {
     delete env[key]
   }
   delete env.NODE_TEST_CONTEXT

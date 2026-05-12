@@ -1,5 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -10,49 +12,65 @@ const engineRoot = resolve(testDir, "..")
 const repoRoot = resolve(engineRoot, "..", "..")
 const probeFile = "test/launcherProbe.test.ts"
 const command = ["test", "--workspace=@beerengineer/engine"]
+const inheritedOverrideRoot = mkdtempSync(resolve(tmpdir(), "be2-launcher-shared-overrides-"))
+const inheritedSharedEnv = {
+  BEERENGINEER_API_TOKEN_FILE: resolve(inheritedOverrideRoot, "shared", "api.token"),
+  BEERENGINEER_DATA_DIR: resolve(inheritedOverrideRoot, "shared", "data"),
+  BEERENGINEER_ENGINE_PID_FILE: resolve(inheritedOverrideRoot, "shared", "engine.pid"),
+  BEERENGINEER_ENGINE_PORT: "4100",
+  PORT: "4100",
+  XDG_STATE_HOME: resolve(inheritedOverrideRoot, "shared", "state"),
+}
 
 test("documented engine test command stays isolated across parallel, rerun, and interrupted invocations", async () => {
-  const baseline = await runLauncherCommand("baseline")
+  const baseline = await runLauncherCommand("baseline", {}, { extraEnv: inheritedSharedEnv })
   assert.equal(baseline.code, 0, describeResult(baseline))
   assert.equal(baseline.probe.ready.length, 1, describeResult(baseline))
+  assertInheritedOverridesCleared(baseline)
 
   const parallel = await Promise.all([
-    runLauncherCommand("parallel-a"),
-    runLauncherCommand("parallel-b"),
-    runLauncherCommand("parallel-c"),
+    runLauncherCommand("parallel-a", {}, { extraEnv: inheritedSharedEnv }),
+    runLauncherCommand("parallel-b", {}, { extraEnv: inheritedSharedEnv }),
+    runLauncherCommand("parallel-c", {}, { extraEnv: inheritedSharedEnv }),
   ])
   for (const result of parallel) {
     assert.equal(result.code, baseline.code, describeResult(result))
     assert.equal(result.probe.ready.length, 1, describeResult(result))
     assert.equal(result.probe.complete.length, 1, describeResult(result))
+    assertInheritedOverridesCleared(result)
   }
   assertUniqueInvocationState(parallel)
 
-  const rerun = await runLauncherCommand("rerun")
+  const rerun = await runLauncherCommand("rerun", {}, { extraEnv: inheritedSharedEnv })
   assert.equal(rerun.code, baseline.code, describeResult(rerun))
   assert.equal(rerun.probe.ready.length, 1, describeResult(rerun))
+  assertInheritedOverridesCleared(rerun)
 
-  const interruptedA = runLauncherCommand("interrupt-a", { holdMs: 10_000 }, { waitForReady: true })
-  const interruptedB = runLauncherCommand("interrupt-b", { holdMs: 10_000 }, { waitForReady: true })
+  const interruptedA = runLauncherCommand("interrupt-a", { holdMs: 10_000 }, { waitForReady: true, extraEnv: inheritedSharedEnv })
+  const interruptedB = runLauncherCommand("interrupt-b", { holdMs: 10_000 }, { waitForReady: true, extraEnv: inheritedSharedEnv })
   await Promise.all([interruptedA.ready, interruptedB.ready])
   interruptedA.proc.kill("SIGINT")
   const [killed, survivor] = await Promise.all([interruptedA.result, interruptedB.result])
   assert.notEqual(killed.code, baseline.code, describeResult(killed))
   assert.equal(survivor.code, baseline.code, describeResult(survivor))
+  assertInheritedOverridesCleared(survivor)
 
-  const afterInterrupt = await runLauncherCommand("after-interrupt")
+  const afterInterrupt = await runLauncherCommand("after-interrupt", {}, { extraEnv: inheritedSharedEnv })
   assert.equal(afterInterrupt.code, baseline.code, describeResult(afterInterrupt))
+  assertInheritedOverridesCleared(afterInterrupt)
 
-  const terminatedA = runLauncherCommand("terminate-a", { holdMs: 10_000 }, { waitForReady: true })
-  const terminatedB = runLauncherCommand("terminate-b", { holdMs: 10_000 }, { waitForReady: true })
+  const terminatedA = runLauncherCommand("terminate-a", { holdMs: 10_000 }, { waitForReady: true, extraEnv: inheritedSharedEnv })
+  const terminatedB = runLauncherCommand("terminate-b", { holdMs: 10_000 }, { waitForReady: true, extraEnv: inheritedSharedEnv })
   await Promise.all([terminatedA.ready, terminatedB.ready])
   terminatedA.proc.kill("SIGKILL")
   const [terminated, survivedCrash] = await Promise.all([terminatedA.result, terminatedB.result])
   assert.notEqual(terminated.code, baseline.code, describeResult(terminated))
   assert.equal(survivedCrash.code, baseline.code, describeResult(survivedCrash))
+  assertInheritedOverridesCleared(survivedCrash)
 
-  const afterTerminate = await runLauncherCommand("after-terminate")
+  const afterTerminate = await runLauncherCommand("after-terminate", {}, { extraEnv: inheritedSharedEnv })
   assert.equal(afterTerminate.code, baseline.code, describeResult(afterTerminate))
+  assertInheritedOverridesCleared(afterTerminate)
 }, 60_000)
 
 type ProbeEvent = {
@@ -64,6 +82,11 @@ type ProbeEvent = {
   xdgStateHome: string | null
   tokenPath: string
   pidPath: string
+  inheritedDataDir: string | null
+  inheritedEnginePort: string | null
+  inheritedApiTokenFile: string | null
+  inheritedPidFile: string | null
+  inheritedPort: string | null
 }
 
 type CommandResult = {
@@ -95,10 +118,20 @@ function describeResult(result: CommandResult): string {
   ].join("\n")
 }
 
+function assertInheritedOverridesCleared(result: CommandResult): void {
+  for (const event of result.probe.ready) {
+    assert.equal(event.inheritedDataDir, null, describeResult(result))
+    assert.equal(event.inheritedEnginePort, null, describeResult(result))
+    assert.equal(event.inheritedApiTokenFile, null, describeResult(result))
+    assert.equal(event.inheritedPidFile, null, describeResult(result))
+    assert.equal(event.inheritedPort, null, describeResult(result))
+  }
+}
+
 function runLauncherCommand(
   label: string,
   opts: { holdMs?: number } = {},
-  control: { waitForReady?: boolean } = {},
+  control: { waitForReady?: boolean; extraEnv?: NodeJS.ProcessEnv } = {},
 ):
   | Promise<CommandResult>
   | { proc: ChildProcess; ready: Promise<void>; result: Promise<CommandResult> } {
@@ -106,6 +139,7 @@ function runLauncherCommand(
     cwd: repoRoot,
     env: {
       ...process.env,
+      ...control.extraEnv,
       BEERENGINEER_TEST_SELECTION: probeFile,
       BEERENGINEER_TEST_LAUNCHER_PROBE: "1",
       BEERENGINEER_TEST_LAUNCHER_LABEL: label,
