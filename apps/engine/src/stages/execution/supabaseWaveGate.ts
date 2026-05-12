@@ -174,12 +174,11 @@ async function writeWaveHandoff(input: {
   | { ok: true; handoffPath: string }
   | { ok: false; error: string; details?: unknown }
 > {
-  const missingDependencies = [
-    !input.handoffClient ? "handoffClient" : null,
-    !input.workspaceRoot ? "workspaceRoot" : null,
-    !input.runId ? "runId" : null,
-    !input.projectRef ? "projectRef" : null,
-  ].filter((value): value is string => value !== null)
+  const missingDependencies: string[] = []
+  if (input.handoffClient == null) missingDependencies.push("handoffClient")
+  if (input.workspaceRoot == null || input.workspaceRoot === "") missingDependencies.push("workspaceRoot")
+  if (input.runId == null || input.runId === "") missingDependencies.push("runId")
+  if (input.projectRef == null || input.projectRef === "") missingDependencies.push("projectRef")
 
   if (missingDependencies.length > 0) {
     return {
