@@ -23,11 +23,10 @@ export function retainedDiagnosisRecoveryDecision(
   if (run.recovery_status !== "blocked") return null
   if (run.supabase_branch_lifecycle_state !== "retained-for-diagnosis") return null
   const payload = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
-  if (!payload) return null
   return {
     kind: "operator_decision_required",
     reason: RETAINED_DIAGNOSIS_DECISION_REASON,
     nextActions: [...RETAINED_DIAGNOSIS_DECISION_NEXT_ACTIONS],
-    branchRef: payload.branchRef ?? run.supabase_branch_ref ?? null,
+    branchRef: payload?.branchRef ?? run.supabase_branch_ref ?? null,
   }
 }

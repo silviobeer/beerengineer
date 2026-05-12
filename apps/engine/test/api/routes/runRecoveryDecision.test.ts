@@ -169,6 +169,52 @@ test("REQ-1 AC-1.3/AC-1.4: recovery read-model mirrors the retained diagnosis de
   }
 })
 
+test("REQ-1 AC-1.1/AC-1.3: retained diagnosis still returns the operator decision when the provisioning payload is malformed", async () => {
+  const fx = setupFixture()
+  try {
+    fx.repos.setRunSupabaseBranch(fx.run.id, {
+      ref: "br_retained",
+      name: "wave-1",
+      lifecycleState: "retained-for-diagnosis",
+    })
+    fx.repos.updateRun(fx.run.id, {
+      status: "blocked",
+      current_stage: "execution",
+      recovery_status: "blocked",
+      recovery_scope: "run",
+      recovery_scope_ref: null,
+      recovery_summary: "Supabase provisioning failed during validation.",
+      recovery_payload_json: "{not json",
+    })
+    await writeRecoveryRecord(fx.ctx, {
+      status: "blocked",
+      cause: "stage_error",
+      scope: { type: "run", runId: fx.run.id },
+      summary: "Supabase provisioning failed during validation.",
+      detail: "seeded retained diagnosis recovery with malformed payload",
+      evidencePaths: [layout.runDir(fx.ctx)],
+    })
+
+    const { res, state } = captureRes()
+    await handleResumeRun(fx.repos, jsonReq({ summary: "Try resume" }), res, fx.run.id)
+
+    assert.equal(state.status, 409)
+    assert.deepEqual(parseBody(state), {
+      error: "operator_decision_required",
+      code: "operator_decision_required",
+      message: "Run requires an explicit operator decision before recovery can continue.",
+      decision: {
+        kind: "operator_decision_required",
+        reason: "retained_diagnosis_branch",
+        nextActions: ["retry-retained", "clear-and-fresh"],
+        branchRef: "br_retained",
+      },
+    })
+  } finally {
+    fx.cleanup()
+  }
+})
+
 test("REQ-1 AC-1.1: retained diagnosis conflict is specialized and does not replace existing generic resume blockers", async () => {
   const retained = setupFixture()
   const generic = setupFixture()
