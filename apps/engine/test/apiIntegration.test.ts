@@ -1,9 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { delimiter, join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 
 import { initDatabase } from "../src/db/connection.js"
@@ -298,6 +298,54 @@ function stopServer(proc: ChildProcess): Promise<void> {
 
 function tmpDbPath(): string {
   return join(mkdtempSync(join(tmpdir(), "be2-api-")), "db.sqlite")
+}
+
+function writeFakeCli(binDir: string, name: string): void {
+  if (process.platform === "win32") {
+    const path = join(binDir, `${name}.cmd`)
+    writeFileSync(
+      path,
+      `@echo off
+if "%~1"=="--version" (
+  echo ${name} 1.0.0
+  exit /b 0
+)
+if "%~1"=="auth" if "%~2"=="status" (
+  echo authenticated
+  exit /b 0
+)
+if "%~1"=="login" if "%~2"=="status" (
+  echo logged in
+  exit /b 0
+)
+echo ${name}
+`,
+      "utf8",
+    )
+    return
+  }
+
+  const path = join(binDir, name)
+  writeFileSync(
+    path,
+    `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "${name} 1.0.0"
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo "authenticated"
+  exit 0
+fi
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo "logged in"
+  exit 0
+fi
+echo "${name}"
+`,
+    "utf8",
+  )
+  chmodSync(path, 0o755)
 }
 
 function seedStaleRunningRun(
@@ -922,6 +970,193 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
 
     const deleteRes = await fetch(`${base}/workspaces/api-demo`, { method: "DELETE", headers: authHeaders() })
     assert.equal(deleteRes.status, 200)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("workspace HTTP add accepts execution-only opencode overrides and rejects unsupported OpenCode override variants", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-api-opencode-"))
+  const configPath = join(dir, "config.json")
+  const allowedRoot = join(dir, "projects")
+  const workspacePath = join(allowedRoot, "api-opencode")
+  const invalidSdkPath = join(allowedRoot, "api-opencode-sdk")
+  const malformedPath = join(allowedRoot, "api-opencode-malformed")
+  const binDir = join(dir, "bin")
+  mkdirSync(allowedRoot, { recursive: true })
+  mkdirSync(binDir, { recursive: true })
+  writeFakeCli(binDir, "claude")
+  writeFakeCli(binDir, "opencode")
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+    ANTHROPIC_API_KEY: "anthropic-test",
+    OPENCODE_API_KEY: "opencode-test",
+  })
+  try {
+    await waitForHealth(base)
+
+    const addRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: workspacePath,
+        key: "api-opencode",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+              reviewer: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+              "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(addRes.status, 200)
+
+    const getRes = await fetch(`${base}/workspaces/api-opencode`)
+    assert.equal(getRes.status, 200)
+    const gotten = await getRes.json() as {
+      harnessProfile: {
+        mode: string
+        roles: {
+          coder: { harness: string; runtime?: string }
+          reviewer: { harness: string; runtime?: string }
+        }
+        stageOverrides?: {
+          execution?: {
+            coder?: { harness: string; runtime?: string }
+            reviewer?: { harness: string; runtime?: string }
+            "merge-resolver"?: { harness: string; runtime?: string }
+          }
+        }
+      }
+    }
+    assert.equal(gotten.harnessProfile.mode, "self")
+    assert.equal(gotten.harnessProfile.roles.coder.harness, "claude")
+    assert.equal(gotten.harnessProfile.roles.reviewer.harness, "claude")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.coder?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.coder?.runtime, "cli")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.reviewer?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.["merge-resolver"]?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.["merge-resolver"]?.runtime, "cli")
+
+    const invalidSdkRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: invalidSdkPath,
+        key: "api-opencode-sdk",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "sdk" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(invalidSdkRes.status, 409)
+    const invalidSdkBody = await invalidSdkRes.json() as { error: string; detail: string }
+    assert.equal(invalidSdkBody.error, "profile_references_unavailable_runtime")
+    assert.match(invalidSdkBody.detail, /opencode:sdk/)
+
+    const malformedRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: malformedPath,
+        key: "api-opencode-malformed",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "bogus" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(malformedRes.status, 400)
+    const malformedBody = await malformedRes.json() as { error: string; detail: string }
+    assert.equal(malformedBody.error, "invalid_harness_profile")
+    assert.match(malformedBody.detail, /runtime/)
+
+    const outOfScopeStageRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: join(allowedRoot, "api-opencode-planning"),
+        key: "api-opencode-planning",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            planning: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(outOfScopeStageRes.status, 400)
+    const outOfScopeStageBody = await outOfScopeStageRes.json() as { error: string; detail: string }
+    assert.equal(outOfScopeStageBody.error, "invalid_harness_profile")
+    assert.match(outOfScopeStageBody.detail, /execution/)
+
+    const listRes = await fetch(`${base}/workspaces`)
+    assert.equal(listRes.status, 200)
+    const list = await listRes.json() as { workspaces: Array<{ key: string }> }
+    assert.ok(list.workspaces.some(workspace => workspace.key === "api-opencode"))
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-sdk"), false)
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-malformed"), false)
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-planning"), false)
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
