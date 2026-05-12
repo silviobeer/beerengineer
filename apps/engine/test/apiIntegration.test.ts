@@ -161,6 +161,7 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
 
   const resumeConflict = openapi.paths["/runs/{id}/resume"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const retryRetainedConflict = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const retryRetainedSuccess = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
   const retryConflict = openapi.paths["/runs/{id}/supabase-readiness/retry"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const gitRepairConflict = openapi.paths["/setup/git-identity/repair"]?.post?.responses?.["409"]
   const workspaceDeleteConflict = openapi.paths["/workspaces/{key}"]?.delete?.responses?.["409"]
@@ -168,6 +169,8 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.match(JSON.stringify(resumeConflict), /ResumeOperatorDecisionConflict/)
   assert.ok(retryRetainedConflict)
   assert.match(JSON.stringify(retryRetainedConflict), /RetryRetainedConflict/)
+  assert.ok(retryRetainedSuccess)
+  assert.match(JSON.stringify(retryRetainedSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
   assert.ok(retryConflict)
   assert.match(JSON.stringify(retryConflict), /ResumeOperatorDecisionConflict/)
   assert.equal(JSON.stringify(gitRepairConflict).includes("ResumeOperatorDecisionConflict"), false)

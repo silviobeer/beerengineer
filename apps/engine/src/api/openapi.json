@@ -1647,7 +1647,10 @@
                       "type": "string"
                     },
                     "recoveryStatus": {
-                      "type": "object"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [

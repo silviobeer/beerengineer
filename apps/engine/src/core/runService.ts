@@ -687,6 +687,7 @@ export function isRetryRetainedConflictResult(
 }
 
 const RETRY_RETAINED_REMEDIATION_SUMMARY = "Operator retried the retained diagnosis branch."
+const RETRY_RETAINED_PRECONDITION_ERROR = "retry_retained_precondition_failed"
 
 function retryRetainedCurrentState(run: RunRow): RetryRetainedCurrentState {
   return {
@@ -705,6 +706,10 @@ function retryRetainedConflict(run: RunRow): Extract<RetryRetainedRunResult, { o
     message: "retry-retained is only available while the run is retained for diagnosis.",
     currentState: retryRetainedCurrentState(run),
   }
+}
+
+function throwRetryRetainedPreconditionError(): never {
+  throw new Error(RETRY_RETAINED_PRECONDITION_ERROR)
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -1446,6 +1451,7 @@ export async function prepareForegroundResumeRun(
     resumeRunImpl?: PerformResumeImpl
     persistItemDecision?: boolean
     bypassRetainedDiagnosisDecision?: boolean
+    verifyBeforeRemediation?: (run: RunRow) => void
   },
 ): Promise<PreparedForegroundResumeRunResult> {
   const summary = input.summary.trim()
@@ -1491,6 +1497,10 @@ export async function prepareForegroundResumeRun(
   let scopeRef: string | null = null
   if (scope.type === "stage") scopeRef = scope.stageId
   else if (scope.type === "story") scopeRef = `${scope.waveNumber}/${scope.storyId}`
+
+  const runBeforeRemediation = repos.getRun(input.runId)
+  if (!runBeforeRemediation) return { ok: false, status: 404, error: "run_not_found" }
+  input.verifyBeforeRemediation?.(runBeforeRemediation)
 
   const remediation: ExternalRemediationRow = repos.createExternalRemediation({
     runId: input.runId,
@@ -1595,21 +1605,35 @@ export async function prepareForegroundRetryRetainedRun(
   if (readiness.kind !== "ready") return retryRetainedConflict(readiness.run)
   if (!retainedDiagnosisRecoveryDecision(readiness.run)) return retryRetainedConflict(readiness.run)
 
-  const prepared = await prepareForegroundResumeRun(repos, io, {
-    runId: input.runId,
-    summary: RETRY_RETAINED_REMEDIATION_SUMMARY,
-    workerOwnerKind: input.workerOwnerKind,
-    workerInstanceId: input.workerInstanceId,
-    workerLeaseClock: input.workerLeaseClock,
-    workerLeaseScheduler: input.workerLeaseScheduler,
-    onItemColumnChanged: input.onItemColumnChanged,
-    supabaseAdapterFactory: input.supabaseAdapterFactory,
-    capabilityResolver: input.capabilityResolver,
-    admissionController: input.admissionController,
-    resumeRunImpl: input.resumeRunImpl,
-    persistItemDecision: false,
-    bypassRetainedDiagnosisDecision: true,
-  })
+  let prepared: PreparedForegroundResumeRunResult
+  try {
+    prepared = await prepareForegroundResumeRun(repos, io, {
+      runId: input.runId,
+      summary: RETRY_RETAINED_REMEDIATION_SUMMARY,
+      workerOwnerKind: input.workerOwnerKind,
+      workerInstanceId: input.workerInstanceId,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: input.supabaseAdapterFactory,
+      capabilityResolver: input.capabilityResolver,
+      admissionController: input.admissionController,
+      resumeRunImpl: input.resumeRunImpl,
+      persistItemDecision: false,
+      bypassRetainedDiagnosisDecision: true,
+      verifyBeforeRemediation: run => {
+        if (!retainedDiagnosisRecoveryDecision(run)) throwRetryRetainedPreconditionError()
+      },
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === RETRY_RETAINED_PRECONDITION_ERROR) {
+      const currentRun = repos.getRun(input.runId)
+      return currentRun
+        ? retryRetainedConflict(currentRun)
+        : { ok: false, status: 404, error: "run_not_found" }
+    }
+    throw error
+  }
 
   if (prepared.ok && repos.getRun(input.runId)?.status === "blocked") {
     repos.updateRun(input.runId, { status: "queued" })

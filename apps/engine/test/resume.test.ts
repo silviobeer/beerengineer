@@ -12,7 +12,7 @@ import { Repos } from "../src/db/repositories.js"
 import { runWorkflow } from "../src/workflow.ts"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
-import { retryRetainedRunInProcess } from "../src/core/runService.js"
+import { prepareForegroundRetryRetainedRun, retryRetainedRunInProcess } from "../src/core/runService.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { buildWorkflowResumeInput, loadResumeReadiness, performResume } from "../src/core/resume.js"
@@ -683,6 +683,93 @@ test("REQ-2 AC-2.4: retryRetainedRunInProcess returns the authoritative current 
       })
       assert.equal(repos.listExternalRemediations(run.id).length, 0)
       assert.equal(repos.listLogsForRun(run.id).some(log => log.event_type === "run_resumed"), false)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("REQ-2 AC-2.4: retryRetainedRunInProcess re-checks retained eligibility before creating remediation side effects", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Retained Retry Precondition", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `retained-retry-precondition-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `retained-retry-precondition-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      repos.setRunSupabaseBranch(run.id, {
+        ref: "br_retained",
+        name: "wave-1",
+        lifecycleState: "retained-for-diagnosis",
+      })
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: "execution",
+        recovery_status: "blocked",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Supabase provisioning failed during validation.",
+        recovery_payload_json: buildSupabaseProvisioningRecoveryPayload({
+          runId: run.id,
+          workspaceId: ws.id,
+          workspaceKey: ws.key,
+          projectRef: "proj_test",
+          waveId: "W1",
+          waveNumber: 1,
+          branchRef: "br_retained",
+          failedStep: "validate",
+          failureCause: "Validation failed",
+          userMessage: "Supabase provisioning failed. Operator recovery action is required.",
+        }),
+      })
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Supabase provisioning failed during validation.",
+        detail: "seeded retained diagnosis recovery",
+        evidencePaths: [layout.runDir(ctx)],
+      })
+
+      const prepared = await prepareForegroundRetryRetainedRun(repos, makeWorkflowIO().io, {
+        runId: run.id,
+        capabilityResolver: () => {
+          repos.clearRunSupabaseBranch(run.id)
+          repos.updateRun(run.id, {
+            status: "failed",
+            recovery_status: "failed",
+            recovery_summary: "Run has already moved on.",
+            recovery_payload_json: null,
+          })
+          return { supabaseAdapterFactory: null }
+        },
+      })
+
+      assert.deepEqual(prepared, {
+        ok: false,
+        status: 409,
+        error: "retry_retained_conflict",
+        code: "retry_retained_conflict",
+        message: "retry-retained is only available while the run is retained for diagnosis.",
+        currentState: {
+          status: "failed",
+          recoveryStatus: "failed",
+          supabaseBranchLifecycleState: null,
+        },
+      })
+      assert.equal(repos.listExternalRemediations(run.id).length, 0)
     } finally {
       db.close()
     }
