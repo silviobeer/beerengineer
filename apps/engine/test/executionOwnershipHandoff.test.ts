@@ -229,3 +229,86 @@ test("execution handoff claimant rejects ineligible blocked variants without cla
     }
   }
 })
+
+test("execution handoff claimant restores the blocked CLI handoff when resume dispatch is rejected", async () => {
+  const { repos, workspace, close } = tempRepos("be2-execution-handoff-rejected-resume-")
+  try {
+    const seeded = seedRun(repos, workspace.id, {
+      title: "resume-rejected",
+      currentStage: "planning",
+      claimLeaseAs: "cli",
+    })
+    const remediation = repos.createExternalRemediation({
+      runId: seeded.runId,
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Resume the blocked execution handoff.",
+      source: "api",
+    })
+    queueExecutionOwnershipHandoffResume(repos, seeded.runId, remediation.id)
+
+    const before = repos.getRun(seeded.runId)
+    const claimed = await claimExecutionOwnershipHandoffs(repos, {
+      apiWorkerInstanceId: "api-worker-test",
+      resumeRun: async () => ({ ok: false }),
+    })
+
+    const after = repos.getRun(seeded.runId)
+    const payload = parseExecutionOwnershipHandoffRecoveryPayload(after?.recovery_payload_json)
+
+    assert.deepEqual(claimed.claimedRunIds, [])
+    assert.equal(after?.owner, before?.owner)
+    assert.equal(after?.worker_owner_kind, before?.worker_owner_kind)
+    assert.equal(after?.worker_instance_id, before?.worker_instance_id)
+    assert.equal(after?.worker_started_at, before?.worker_started_at)
+    assert.equal(after?.worker_heartbeat_at, before?.worker_heartbeat_at)
+    assert.equal(payload?.pendingResumeRemediationId, remediation.id)
+    assert.equal(payload?.lastAttemptedResumeRemediationId, null)
+  } finally {
+    close()
+  }
+})
+
+test("execution handoff claimant restores the blocked CLI handoff when resume dispatch throws", async () => {
+  const { repos, workspace, close } = tempRepos("be2-execution-handoff-thrown-resume-")
+  try {
+    const seeded = seedRun(repos, workspace.id, {
+      title: "resume-thrown",
+      currentStage: "execution",
+      claimLeaseAs: "cli",
+    })
+    const remediation = repos.createExternalRemediation({
+      runId: seeded.runId,
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Resume the blocked execution handoff.",
+      source: "api",
+    })
+    queueExecutionOwnershipHandoffResume(repos, seeded.runId, remediation.id)
+
+    const before = repos.getRun(seeded.runId)
+
+    await assert.rejects(
+      claimExecutionOwnershipHandoffs(repos, {
+        apiWorkerInstanceId: "api-worker-test",
+        resumeRun: async () => {
+          throw new Error("resume dispatch failed")
+        },
+      }),
+      /resume dispatch failed/,
+    )
+
+    const after = repos.getRun(seeded.runId)
+    const payload = parseExecutionOwnershipHandoffRecoveryPayload(after?.recovery_payload_json)
+
+    assert.equal(after?.owner, before?.owner)
+    assert.equal(after?.worker_owner_kind, before?.worker_owner_kind)
+    assert.equal(after?.worker_instance_id, before?.worker_instance_id)
+    assert.equal(after?.worker_started_at, before?.worker_started_at)
+    assert.equal(after?.worker_heartbeat_at, before?.worker_heartbeat_at)
+    assert.equal(payload?.pendingResumeRemediationId, remediation.id)
+    assert.equal(payload?.lastAttemptedResumeRemediationId, null)
+  } finally {
+    close()
+  }
+})

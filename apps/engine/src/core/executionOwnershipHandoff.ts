@@ -122,6 +122,19 @@ function consumeExecutionOwnershipHandoffResume(
   })
 }
 
+function restoreExecutionOwnershipHandoffClaim(
+  repos: Repos,
+  run: HandoffCandidate,
+): void {
+  repos.restoreBlockedExecutionHandoffClaim(run.id, {
+    owner: run.owner,
+    workerInstanceId: run.worker_instance_id,
+    workerOwnerKind: run.worker_owner_kind,
+    workerStartedAt: run.worker_started_at,
+    workerHeartbeatAt: run.worker_heartbeat_at,
+  })
+}
+
 export function isExecutionOwnershipHandoffRun(run: HandoffCandidate | undefined): boolean {
   return run?.status === "blocked"
     && run.worker_owner_kind === "cli"
@@ -158,16 +171,26 @@ export async function claimExecutionOwnershipHandoffs(
       startedAt: input.workerLeaseClock?.() ?? Date.now(),
     })
     if (!claimed) continue
+    let resumed: ExecutionOwnershipHandoffResumeResult
+    try {
+      resumed = await input.resumeRun(repos, {
+        runId: run.id,
+        remediationId: remediation.id,
+        summary: remediation.summary,
+        apiWorkerInstanceId: input.apiWorkerInstanceId,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        onItemColumnChanged: input.onItemColumnChanged,
+      })
+    } catch (error) {
+      restoreExecutionOwnershipHandoffClaim(repos, run)
+      throw error
+    }
+    if (!resumed.ok) {
+      restoreExecutionOwnershipHandoffClaim(repos, run)
+      continue
+    }
     consumeExecutionOwnershipHandoffResume(repos, run.id, remediation.id)
-    const resumed = await input.resumeRun(repos, {
-      runId: run.id,
-      remediationId: remediation.id,
-      summary: remediation.summary,
-      apiWorkerInstanceId: input.apiWorkerInstanceId,
-      workerLeaseClock: input.workerLeaseClock,
-      workerLeaseScheduler: input.workerLeaseScheduler,
-      onItemColumnChanged: input.onItemColumnChanged,
-    })
     if (resumed.ok) claimedRunIds.push(run.id)
   }
 
