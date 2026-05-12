@@ -1611,6 +1611,56 @@
             "$ref": "#/components/responses/NotFound"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Canonical recovery mutation surface.",
+        "description": "Setup scaffolding for recovery mutations. Named actions are reserved on this route; the initial setup surface only supports narrow latest-state clear actions on the run projection.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryMutationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Latest-state recovery projection updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryMutationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "501": {
+            "description": "Named recovery action reserved but not yet implemented on the canonical recovery surface.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/runs/{id}/resume": {
@@ -4405,6 +4455,97 @@
             "type": "array",
             "items": {
               "type": "object"
+            }
+          }
+        }
+      },
+      "RecoveryMutationRequest": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "resume",
+              "replan",
+              "retry_supabase_readiness",
+              "clear_recovery_payload",
+              "clear_supabase_branch_ref",
+              "clear_supabase_branch_lifecycle_state"
+            ],
+            "description": "Named actions are reserved on this route during setup. The clear_* actions are implemented as narrow latest-state SQLite writes on the run row."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "reviewNotes": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "RecoveryMutationResult": {
+        "type": "object",
+        "required": [
+          "ok",
+          "runId",
+          "action",
+          "latestState"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "resume",
+              "replan",
+              "retry_supabase_readiness",
+              "clear_recovery_payload",
+              "clear_supabase_branch_ref",
+              "clear_supabase_branch_lifecycle_state"
+            ]
+          },
+          "latestState": {
+            "type": "object",
+            "required": [
+              "recoveryPayloadJson",
+              "supabaseBranchRef",
+              "supabaseBranchLifecycleState"
+            ],
+            "properties": {
+              "recoveryPayloadJson": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "supabaseBranchRef": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "supabaseBranchLifecycleState": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         }
