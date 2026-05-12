@@ -51,6 +51,7 @@ import {
   runItemImportPrepared,
   runRunReplanCommand,
   runRunResumeCommand,
+  runSkipCurrentStageCommand,
 } from "./cli/commands/itemActions.js"
 import { runManagedInstallCommand } from "./cli/commands/install.js"
 import { runUpdateCommand } from "./cli/commands/update.js"
@@ -135,6 +136,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   "run-list": cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),
+  "run-skip-current-stage": cmd => runSkipCurrentStageCommand(cmd.runId),
   "run-resume": cmd => runRunResumeCommand(cmd.runId, cmd.resume),
   "run-replan": cmd => runRunReplanCommand(cmd.runId, cmd.replan),
   "run-attach-supabase-branch": cmd => runAttachSupabaseBranchCommand(cmd.runId, cmd.branchRef),

@@ -1580,10 +1580,10 @@
         "tags": [
           "Runs"
         ],
-        "summary": "Recovery detail for a blocked/failed run.",
+        "summary": "Recovery detail and currently available recovery actions for a run.",
         "responses": {
           "200": {
-            "description": "Recovery detail or `null`.",
+            "description": "Recovery detail or `null` when no persisted recovery or current-stage action facts are available.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1617,7 +1617,7 @@
           "Runs"
         ],
         "summary": "Canonical recovery mutation surface.",
-        "description": "Single canonical recovery-action family. `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are the implemented path-changing actions for blocked Supabase provisioning recovery. `resume`, `replan`, `retry_supabase_readiness`, and `skip_current_stage` remain reserved on the same route.",
+        "description": "Single canonical recovery-action family. `skip_current_stage`, `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are implemented on this route. `resume`, `replan`, and `retry_supabase_readiness` remain reserved here.",
         "security": [
           {
             "csrfToken": []
@@ -4487,6 +4487,7 @@
             "items": {
               "type": "string",
               "enum": [
+                "skip_current_stage",
                 "recover_fresh_branch",
                 "retry_retained",
                 "clear_and_fresh"
@@ -4531,7 +4532,7 @@
               "clear_supabase_branch_ref",
               "clear_supabase_branch_lifecycle_state"
             ],
-            "description": "Single canonical recovery-action family. `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` change recovery path semantics. The clear_* actions are implemented as narrow latest-state writes on the run row. `resume`, `replan`, `retry_supabase_readiness`, and `skip_current_stage` remain reserved on this route."
+            "description": "Single canonical recovery-action family. `skip_current_stage`, `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are implemented actions. The clear_* actions are narrow latest-state writes on the run row. `resume`, `replan`, and `retry_supabase_readiness` remain reserved on this route."
           },
           "summary": {
             "type": "string"
@@ -4552,6 +4553,64 @@
       },
       "RecoveryActionResult": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "latestState",
+              "currentStage",
+              "stageStatus",
+              "runStatus",
+              "recoveryStatus"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "skip_current_stage"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "accepted"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "currentStage": {
+                "type": "string"
+              },
+              "stageStatus": {
+                "type": "string",
+                "enum": [
+                  "skipped"
+                ]
+              },
+              "runStatus": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "required": [
@@ -4818,7 +4877,11 @@
               "unsupported_action",
               "action_not_implemented",
               "run_not_found",
-              "incompatible_recovery_state"
+              "incompatible_recovery_state",
+              "no_current_stage",
+              "current_stage_not_active",
+              "current_stage_terminal",
+              "current_stage_already_skipped"
             ]
           },
           "message": {

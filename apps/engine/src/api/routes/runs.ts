@@ -221,8 +221,8 @@ export async function handlePostMessage(
 export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: string): void {
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run_not_found", code: "not_found" })
-  if (!run.recovery_status) return json(res, 200, { recovery: null })
-  const surface = projectRunRecoverySurface(run)
+  if (!run.recovery_status && !run.current_stage) return json(res, 200, { recovery: null })
+  const surface = projectRunRecoverySurface(repos, run)
   json(res, 200, {
     recovery: {
       status: run.recovery_status,

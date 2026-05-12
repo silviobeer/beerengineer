@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { spawn, spawnSync } from "node:child_process"
+import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 import { initDatabase } from "../src/db/connection.js"
@@ -24,6 +24,49 @@ function makeStubBin(dir: string, name: string, body: string): void {
   const path = join(dir, name)
   writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`, "utf8")
   chmodSync(path, 0o755)
+}
+
+const TEST_API_TOKEN = "test-token"
+
+async function waitForHealth(base: string, timeoutMs = 10000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${base}/health`)
+      if (res.ok) return
+    } catch {}
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`server at ${base} did not become healthy in time`)
+}
+
+function startEngineServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string; port: number } {
+  const port = 4900 + Math.floor(Math.random() * 100)
+  const host = "127.0.0.1"
+  const serverPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "api", "server.ts")
+  const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
+    env: {
+      ...process.env,
+      ...env,
+      HOST: host,
+      PORT: String(port),
+      BEERENGINEER_SEED: "0",
+      BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  proc.stdout.on("data", () => {})
+  proc.stderr.on("data", () => {})
+  return { proc, base: `http://${host}:${port}`, port }
+}
+
+function stopEngineServer(proc: ChildProcess): Promise<void> {
+  return new Promise(resolvePromise => {
+    if (proc.exitCode !== null) return resolvePromise()
+    proc.once("exit", () => resolvePromise())
+    proc.kill("SIGTERM")
+    setTimeout(() => proc.kill("SIGKILL"), 1500).unref?.()
+  })
 }
 
 test("parseArgs recognizes help, doctor, start ui, workflow, item action, and unknown commands", () => {
@@ -78,6 +121,7 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["start"]), { kind: "start-engine" })
   assert.deepEqual(parseArgs(["notifications", "test", "telegram"]), { kind: "notifications-test", channel: "telegram" })
   assert.deepEqual(parseArgs(["workspace", "preview", "/tmp/demo", "--json"]), { kind: "workspace-preview", path: "/tmp/demo", json: true })
+  assert.deepEqual(parseArgs(["run", "skip-current-stage", "run-123"]), { kind: "run-skip-current-stage", runId: "run-123" })
   assert.deepEqual(parseArgs(["workspace", "add", "--path", "/tmp/demo", "--profile", "fast", "--sonar", "--no-git", "--no-interactive"]), {
     kind: "workspace-add",
     json: false,
@@ -170,6 +214,124 @@ test("PROJ-3-PRD-5 AC-3 help text describes workspace capability command groups"
   assert.match(lines.join("\n"), /workspace git status/)
   assert.match(lines.join("\n"), /workspace coderabbit status <key> \[--json\]/)
   assert.match(lines.join("\n"), /workspace capability readiness/)
+})
+
+test("REQ-2 TC-REQ-2-05 public CLI skip-current-stage preserves the canonical recovery outcome", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-skip-stage-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "workflow.sqlite")
+  const configPath = join(dir, "config.json")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  let dbClosed = false
+
+  try {
+    writeFileSync(configPath, JSON.stringify({
+      schemaVersion: 1,
+      dataDir: dir,
+      allowedRoots: ["/tmp"],
+      enginePort: 4100,
+      publicBaseUrl: "http://127.0.0.1:3100",
+      llm: {
+        provider: "anthropic",
+        model: "claude-opus-4-7",
+        apiKeyRef: "ANTHROPIC_API_KEY",
+        defaultHarnessProfile: { mode: "claude-first" },
+      },
+      vcs: { github: { enabled: false } },
+      browser: { enabled: false },
+    }), "utf8")
+
+    const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: workspace.id, code: "ITEM-0700", title: "Skip current stage", description: "skip" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title, owner: "api", status: "running" })
+    repos.updateRun(run.id, {
+      status: "running",
+      current_stage: "execution",
+      recovery_status: null,
+      recovery_scope: null,
+      recovery_scope_ref: null,
+      recovery_summary: null,
+      recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(run.id, {
+      workerInstanceId: "cli-worker",
+      workerOwnerKind: "cli",
+      startedAt: Date.now(),
+    })
+    repos.createStageRun({ runId: run.id, stageKey: "execution" })
+    db.close()
+    dbClosed = true
+
+    const server = startEngineServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+    try {
+      await waitForHealth(server.base)
+      writeFileSync(configPath, JSON.stringify({
+        schemaVersion: 1,
+        dataDir: dir,
+        allowedRoots: ["/tmp"],
+        enginePort: server.port,
+        publicBaseUrl: "http://127.0.0.1:3100",
+        llm: {
+          provider: "anthropic",
+          model: "claude-opus-4-7",
+          apiKeyRef: "ANTHROPIC_API_KEY",
+          defaultHarnessProfile: { mode: "claude-first" },
+        },
+        vcs: { github: { enabled: false } },
+        browser: { enabled: false },
+      }), "utf8")
+
+      const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolvePromise, reject) => {
+        const child = spawn(process.execPath, [binPath, "run", "skip-current-stage", run.id], {
+          cwd: engineRoot,
+          env: {
+            ...process.env,
+            BEERENGINEER_CONFIG_PATH: configPath,
+            BEERENGINEER_UI_DB_PATH: dbPath,
+            BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+            BEERENGINEER_ENGINE_PORT: String(server.port),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        })
+        let stdout = ""
+        let stderr = ""
+        child.stdout.on("data", chunk => { stdout += chunk.toString("utf8") })
+        child.stderr.on("data", chunk => { stderr += chunk.toString("utf8") })
+        child.on("error", reject)
+        child.on("exit", code => resolvePromise({ code, stdout, stderr }))
+      })
+
+      assert.equal(result.code, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+      assert.match(result.stdout, /current stage skipped/)
+
+      const recoveryResponse = await fetch(`${server.base}/runs/${run.id}/recovery`)
+      const recoveryBody = await recoveryResponse.json() as {
+        recovery: { status: string; scope: string; scopeRef: string; availableActions: string[] }
+      }
+      assert.equal(recoveryBody.recovery.status, "blocked")
+      assert.equal(recoveryBody.recovery.scope, "stage")
+      assert.equal(recoveryBody.recovery.scopeRef, "execution")
+      assert.deepEqual(recoveryBody.recovery.availableActions, [])
+
+      const treeResponse = await fetch(`${server.base}/runs/${run.id}/tree`)
+      const treeBody = await treeResponse.json() as {
+        run: { current_stage: string | null; status: string; recovery_status: string | null }
+        stageRuns: Array<{ stage_key: string; status: string }>
+      }
+      assert.equal(treeBody.run.current_stage, "execution")
+      assert.equal(treeBody.run.status, "blocked")
+      assert.equal(treeBody.run.recovery_status, "blocked")
+      assert.deepEqual(treeBody.stageRuns.map(stageRun => [stageRun.stage_key, stageRun.status]), [["execution", "skipped"]])
+    } finally {
+      await stopEngineServer(server.proc)
+    }
+  } finally {
+    if (!dbClosed) db.close()
+    removeTempDir(dir)
+  }
 })
 
 test("doctor --json reports blocked status when the app config is uninitialized", async () => {

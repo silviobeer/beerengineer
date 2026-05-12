@@ -803,7 +803,7 @@ export class Repos {
       .run(sessions.stageAgentSessionId, sessions.reviewerSessionId, now(), id)
   }
 
-  completeStageRun(id: string, status: "completed" | "failed", errorMessage?: string | null): void {
+  completeStageRun(id: string, status: "completed" | "failed" | "skipped", errorMessage?: string | null): void {
     const timestamp = now()
     this.run("UPDATE stage_runs SET status = ?, completed_at = ?, error_message = ?, updated_at = ? WHERE id = ?", status, timestamp, errorMessage ?? null, timestamp, id)
   }

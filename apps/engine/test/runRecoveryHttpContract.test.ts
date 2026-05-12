@@ -134,8 +134,114 @@ function seedRecoveryFixtures(dbPath: string): { freshRunId: string; retainedRun
   }
 }
 
+function seedSkipFixtures(dbPath: string): {
+  eligibleRunId: string
+  noCurrentRunId: string
+  terminalRunId: string
+  skippedRunId: string
+} {
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  try {
+    const eligible = createRunFixture(repos, {
+      title: "Eligible skip run",
+      recoverySummary: "Eligible for skip-current-stage.",
+    })
+    repos.updateRun(eligible.run.id, {
+      status: "running",
+      current_stage: "execution",
+      recovery_status: null,
+      recovery_scope: null,
+      recovery_scope_ref: null,
+      recovery_summary: null,
+      recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(eligible.run.id, {
+      workerInstanceId: "cli-worker-eligible",
+      workerOwnerKind: "cli",
+      startedAt: Date.now(),
+    })
+    repos.createStageRun({ runId: eligible.run.id, stageKey: "execution" })
+
+    const noCurrent = createRunFixture(repos, {
+      title: "No current stage",
+      recoverySummary: "No current stage available.",
+    })
+    repos.updateRun(noCurrent.run.id, {
+      status: "running",
+      current_stage: null,
+      recovery_status: null,
+      recovery_scope: null,
+      recovery_scope_ref: null,
+      recovery_summary: null,
+      recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(noCurrent.run.id, {
+      workerInstanceId: "cli-worker-no-current",
+      workerOwnerKind: "cli",
+      startedAt: Date.now(),
+    })
+
+    const terminal = createRunFixture(repos, {
+      title: "Terminal stage",
+      recoverySummary: "Current stage already completed.",
+    })
+    repos.updateRun(terminal.run.id, {
+      status: "running",
+      current_stage: "requirements",
+      recovery_status: null,
+      recovery_scope: null,
+      recovery_scope_ref: null,
+      recovery_summary: null,
+      recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(terminal.run.id, {
+      workerInstanceId: "cli-worker-terminal",
+      workerOwnerKind: "cli",
+      startedAt: Date.now(),
+    })
+    const terminalStage = repos.createStageRun({ runId: terminal.run.id, stageKey: "requirements" })
+    repos.completeStageRun(terminalStage.id, "completed")
+
+    const skipped = createRunFixture(repos, {
+      title: "Already skipped",
+      recoverySummary: "Current stage already skipped.",
+    })
+    repos.updateRun(skipped.run.id, {
+      status: "blocked",
+      current_stage: "architecture",
+      recovery_status: "blocked",
+      recovery_scope: "stage",
+      recovery_scope_ref: "architecture",
+      recovery_summary: "Current stage 'architecture' was skipped. Manual review is required before continuing.",
+      recovery_payload_json: null,
+    })
+    const skippedStage = repos.createStageRun({ runId: skipped.run.id, stageKey: "architecture" })
+    repos.completeStageRun(skippedStage.id, "skipped")
+
+    return {
+      eligibleRunId: eligible.run.id,
+      noCurrentRunId: noCurrent.run.id,
+      terminalRunId: terminal.run.id,
+      skippedRunId: skipped.run.id,
+    }
+  } finally {
+    db.close()
+  }
+}
+
 async function getRecovery(base: string, runId: string): Promise<unknown> {
   const response = await fetch(`${base}/runs/${runId}/recovery`)
+  return await response.json()
+}
+
+async function getRun(base: string, runId: string): Promise<unknown> {
+  const response = await fetch(`${base}/runs/${runId}`)
+  return await response.json()
+}
+
+async function getRunTree(base: string, runId: string): Promise<unknown> {
+  const response = await fetch(`${base}/runs/${runId}/tree`)
   return await response.json()
 }
 
@@ -347,6 +453,168 @@ test("REQ-1 edge cases: unknown, malformed, and missing run requests reject with
     })
 
     assert.equal(JSON.stringify(await getRecovery(base, freshRunId)), before)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 TC-REQ-2-01: recovery read surface offers skip_current_stage only for an active unskipped current stage", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const fixture = seedSkipFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    const eligible = await getRecovery(base, fixture.eligibleRunId) as { recovery: { availableActions: string[] } }
+    const noCurrent = await getRecovery(base, fixture.noCurrentRunId) as { recovery: null }
+    const terminal = await getRecovery(base, fixture.terminalRunId) as { recovery: { availableActions: string[] } }
+    const skipped = await getRecovery(base, fixture.skippedRunId) as { recovery: { availableActions: string[] } }
+
+    assert.deepEqual(eligible.recovery.availableActions, ["skip_current_stage"])
+    assert.equal(noCurrent.recovery, null)
+    assert.deepEqual(terminal.recovery.availableActions, [])
+    assert.deepEqual(skipped.recovery.availableActions, [])
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 TC-REQ-2-02/03/06: accepted skip_current_stage records the skip, blocks the run, and does not auto-advance", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const fixture = seedSkipFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    const accepted = await postRecovery(base, fixture.eligibleRunId, { action: "skip_current_stage" })
+    assert.equal(accepted.status, 200)
+    assert.deepEqual(accepted.json, {
+      ok: true,
+      runId: fixture.eligibleRunId,
+      action: "skip_current_stage",
+      outcome: "accepted",
+      latestState: {
+        recoveryPayloadJson: null,
+        supabaseBranchRef: null,
+        supabaseBranchLifecycleState: null,
+      },
+      currentStage: "execution",
+      stageStatus: "skipped",
+      runStatus: "blocked",
+      recoveryStatus: "blocked",
+    })
+
+    const recoveryRead = await getRecovery(base, fixture.eligibleRunId) as {
+      recovery: { status: string; scope: string; scopeRef: string; summary: string; availableActions: string[] }
+    }
+    assert.equal(recoveryRead.recovery.status, "blocked")
+    assert.equal(recoveryRead.recovery.scope, "stage")
+    assert.equal(recoveryRead.recovery.scopeRef, "execution")
+    assert.match(recoveryRead.recovery.summary, /manual review/i)
+    assert.deepEqual(recoveryRead.recovery.availableActions, [])
+
+    const runRead = await getRun(base, fixture.eligibleRunId) as { status: string; current_stage: string | null; recovery_status: string | null }
+    assert.equal(runRead.status, "blocked")
+    assert.equal(runRead.current_stage, "execution")
+    assert.equal(runRead.recovery_status, "blocked")
+
+    const treeRead = await getRunTree(base, fixture.eligibleRunId) as {
+      run: { current_stage: string | null }
+      stageRuns: Array<{ stage_key: string; status: string }>
+    }
+    assert.equal(treeRead.run.current_stage, "execution")
+    assert.deepEqual(treeRead.stageRuns.map(stageRun => [stageRun.stage_key, stageRun.status]), [["execution", "skipped"]])
+
+    const second = await postRecovery(base, fixture.eligibleRunId, { action: "skip_current_stage" })
+    assert.equal(second.status, 409)
+    assert.deepEqual(second.json, {
+      ok: false,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_already_skipped",
+      message: "Skip current stage is unavailable because the current stage is already recorded as skipped.",
+    })
+    assert.deepEqual((await getRunTree(base, fixture.eligibleRunId) as { stageRuns: Array<{ stage_key: string; status: string }> }).stageRuns.map(stageRun => [stageRun.stage_key, stageRun.status]), [["execution", "skipped"]])
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 TC-REQ-2-04: ineligible skip_current_stage requests reject with specific reasons and no state changes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const fixture = seedSkipFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    const noCurrentBefore = JSON.stringify({
+      recovery: await getRecovery(base, fixture.noCurrentRunId),
+      tree: await getRunTree(base, fixture.noCurrentRunId),
+    })
+    const terminalBefore = JSON.stringify({
+      recovery: await getRecovery(base, fixture.terminalRunId),
+      tree: await getRunTree(base, fixture.terminalRunId),
+    })
+    const skippedBefore = JSON.stringify({
+      recovery: await getRecovery(base, fixture.skippedRunId),
+      tree: await getRunTree(base, fixture.skippedRunId),
+    })
+
+    const noCurrent = await postRecovery(base, fixture.noCurrentRunId, { action: "skip_current_stage" })
+    assert.equal(noCurrent.status, 409)
+    assert.deepEqual(noCurrent.json, {
+      ok: false,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "no_current_stage",
+      message: "Skip current stage is unavailable because the run has no current stage.",
+    })
+
+    const terminal = await postRecovery(base, fixture.terminalRunId, { action: "skip_current_stage" })
+    assert.equal(terminal.status, 409)
+    assert.deepEqual(terminal.json, {
+      ok: false,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_terminal",
+      message: "Skip current stage is unavailable because the current stage is already terminal.",
+    })
+
+    const skipped = await postRecovery(base, fixture.skippedRunId, { action: "skip_current_stage" })
+    assert.equal(skipped.status, 409)
+    assert.deepEqual(skipped.json, {
+      ok: false,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_already_skipped",
+      message: "Skip current stage is unavailable because the current stage is already recorded as skipped.",
+    })
+
+    assert.equal(JSON.stringify({
+      recovery: await getRecovery(base, fixture.noCurrentRunId),
+      tree: await getRunTree(base, fixture.noCurrentRunId),
+    }), noCurrentBefore)
+    assert.equal(JSON.stringify({
+      recovery: await getRecovery(base, fixture.terminalRunId),
+      tree: await getRunTree(base, fixture.terminalRunId),
+    }), terminalBefore)
+    assert.equal(JSON.stringify({
+      recovery: await getRecovery(base, fixture.skippedRunId),
+      tree: await getRunTree(base, fixture.skippedRunId),
+    }), skippedBefore)
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
