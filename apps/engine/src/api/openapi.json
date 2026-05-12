@@ -4513,43 +4513,63 @@
         }
       },
       "RecoveryActionRequest": {
-        "type": "object",
-        "required": [
-          "action"
-        ],
-        "properties": {
-          "action": {
-            "type": "string",
-            "enum": [
-              "resume",
-              "replan",
-              "retry_supabase_readiness",
-              "skip_current_stage",
-              "recover_fresh_branch",
-              "retry_retained",
-              "clear_and_fresh",
-              "clear_recovery_payload",
-              "clear_supabase_branch_ref",
-              "clear_supabase_branch_lifecycle_state"
+        "description": "Single canonical recovery-action family. Clear actions accept only `{ action }`; the other implemented and reserved actions keep their documented parameters.",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "action"
             ],
-            "description": "Single canonical recovery-action family. `skip_current_stage`, `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are implemented actions. The clear_* actions are narrow latest-state writes on the run row. `resume`, `replan`, and `retry_supabase_readiness` remain reserved on this route."
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear_recovery_payload",
+                  "clear_supabase_branch_ref",
+                  "clear_supabase_branch_lifecycle_state"
+                ],
+                "description": "Narrow latest-state clear actions on the run row. These requests accept only `{ action }`."
+              }
+            }
           },
-          "summary": {
-            "type": "string"
-          },
-          "branch": {
-            "type": "string"
-          },
-          "commit": {
-            "type": "string"
-          },
-          "reviewNotes": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "resume",
+                  "replan",
+                  "retry_supabase_readiness",
+                  "skip_current_stage",
+                  "recover_fresh_branch",
+                  "retry_retained",
+                  "clear_and_fresh"
+                ],
+                "description": "Single canonical recovery-action family. `skip_current_stage`, `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are implemented actions. `resume`, `replan`, and `retry_supabase_readiness` remain reserved on this route."
+              },
+              "summary": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "reviewNotes": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
           }
-        }
+        ]
       },
       "RecoveryActionResult": {
         "oneOf": [
@@ -4841,6 +4861,7 @@
             "enum": [
               "recovery_action_required",
               "unsupported_recovery_action",
+              "recovery_action_invalid_request",
               "run_not_found",
               "recovery_action_reserved",
               "recovery_action_ineligible"
@@ -4875,6 +4896,7 @@
             "enum": [
               "action_required",
               "unsupported_action",
+              "unexpected_fields",
               "action_not_implemented",
               "run_not_found",
               "incompatible_recovery_state",
@@ -4887,6 +4909,12 @@
           },
           "message": {
             "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

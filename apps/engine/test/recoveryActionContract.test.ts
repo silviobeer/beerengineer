@@ -238,11 +238,14 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   const document = loadOpenApi()
   const schemas = document.components?.schemas ?? {}
   const request = schemas.RecoveryActionRequest as {
-    properties?: {
-      action?: {
-        enum?: string[]
+    oneOf?: Array<{
+      additionalProperties?: boolean
+      properties?: {
+        action?: {
+          enum?: string[]
+        }
       }
-    }
+    }>
   }
   const result = schemas.RecoveryActionResult as {
     oneOf?: Array<{
@@ -255,7 +258,17 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   }
   const docs = readFileSync(new URL("../../../docs/api-contract.md", import.meta.url), "utf8")
 
-  assert.deepEqual(request.properties?.action?.enum, [
+  const requestVariants = request.oneOf ?? []
+  const clearRequest = requestVariants.find(option => option.properties?.action?.enum?.includes("clear_recovery_payload"))
+  const generalRequest = requestVariants.find(option => option.properties?.action?.enum?.includes("resume"))
+
+  assert.deepEqual(clearRequest?.properties?.action?.enum, [
+    "clear_recovery_payload",
+    "clear_supabase_branch_ref",
+    "clear_supabase_branch_lifecycle_state",
+  ])
+  assert.equal(clearRequest?.additionalProperties, false)
+  assert.deepEqual(generalRequest?.properties?.action?.enum, [
     "resume",
     "replan",
     "retry_supabase_readiness",
@@ -263,17 +276,17 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
     "recover_fresh_branch",
     "retry_retained",
     "clear_and_fresh",
-    "clear_recovery_payload",
-    "clear_supabase_branch_ref",
-    "clear_supabase_branch_lifecycle_state",
   ])
 
   const outcomes = result.oneOf?.flatMap(option => option.properties?.outcome?.enum ?? []) ?? []
   assert.ok(outcomes.includes("accepted"))
   assert.ok(outcomes.includes("noop"))
+  const rejectionErrors = rejection.properties?.error?.enum ?? []
+  assert.ok(rejectionErrors.includes("recovery_action_invalid_request"))
   const rejectionReasons = rejection.properties?.reason?.enum ?? []
   assert.ok(rejectionReasons.includes("action_required"))
   assert.ok(rejectionReasons.includes("unsupported_action"))
+  assert.ok(rejectionReasons.includes("unexpected_fields"))
   assert.ok(rejectionReasons.includes("action_not_implemented"))
   assert.ok(rejectionReasons.includes("incompatible_recovery_state"))
   assert.ok(rejectionReasons.includes("no_current_stage"))
@@ -288,5 +301,6 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   assert.match(docs, /The implemented named path-changing actions are `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh`\./)
   assert.match(docs, /the contract-defined post-action values are `fresh_path_recovery` and `retained_path_recovery`\./)
   assert.match(docs, /Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear\./)
+  assert.match(docs, /Implemented clear actions accept only `\{ action \}`; extra mutation fields or attempts to clear additional fields in the same request are rejected with `400 bad_request`, `reason: "unexpected_fields"`, and no state change\./)
   assert.match(docs, /Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged\./)
 })

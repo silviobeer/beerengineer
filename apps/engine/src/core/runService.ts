@@ -248,6 +248,16 @@ type RecoveryActionRejectedResult =
     }
   | {
       ok: false
+      status: 400
+      error: "recovery_action_invalid_request"
+      code: "bad_request"
+      action: NarrowRunRecoveryClearAction
+      reason: "unexpected_fields"
+      message: string
+      fields: string[]
+    }
+  | {
+      ok: false
       status: 404
       error: "run_not_found"
       code: "not_found"
@@ -1601,6 +1611,15 @@ function isNarrowRunRecoveryClearAction(action: string): action is NarrowRunReco
   return NARROW_RUN_RECOVERY_CLEAR_ACTIONS.includes(action as NarrowRunRecoveryClearAction)
 }
 
+function unexpectedRecoveryActionFields(
+  input: { runId: string } & RunRecoveryActionRequest,
+  allowedKeys: string[],
+): string[] {
+  return Object.keys(input)
+    .filter(key => !allowedKeys.includes(key))
+    .sort((left, right) => left.localeCompare(right))
+}
+
 export function mutateRunRecoveryActionInProcess(
   repos: Repos,
   input: { runId: string } & RunRecoveryActionRequest,
@@ -1781,6 +1800,20 @@ export function mutateRunRecoveryActionInProcess(
       action,
       reason: "unsupported_action",
       message: "Unsupported recovery action.",
+    }
+  }
+
+  const unexpectedFields = unexpectedRecoveryActionFields(input, ["runId", "action"])
+  if (unexpectedFields.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: "recovery_action_invalid_request",
+      code: "bad_request",
+      action,
+      reason: "unexpected_fields",
+      message: "This recovery action accepts only the action field.",
+      fields: unexpectedFields,
     }
   }
 
