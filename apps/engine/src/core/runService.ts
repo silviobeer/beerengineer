@@ -27,6 +27,7 @@ import type { AppConfig } from "../setup/types.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
+import { retainedDiagnosisRecoveryDecision, type RunRecoveryDecision } from "./supabase/recoveryDecision.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 import { inspectWorkerLease } from "./workerLease.js"
 
@@ -107,6 +108,14 @@ export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "operator_decision_required"
+      code: "operator_decision_required"
+      message: string
+      decision: RunRecoveryDecision
+    }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type ReplanRunResult =
@@ -129,6 +138,14 @@ export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "operator_decision_required"
+      code: "operator_decision_required"
+      message: string
+      decision: RunRecoveryDecision
+    }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedImportRunResult =
@@ -621,6 +638,12 @@ export function isWorkflowCapabilityBlockedResult(
   result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
 ): result is WorkflowCapabilityOwnershipBlockedResult | WorkflowCapabilityBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_capability_blocked"
+}
+
+export function isResumeOperatorDecisionResult(
+  result: ResumeRunResult | PreparedForegroundResumeRunResult,
+): result is Extract<ResumeRunResult, { ok: false; error: "operator_decision_required" }> {
+  return !result.ok && result.error === "operator_decision_required"
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -1338,6 +1361,17 @@ export async function prepareForegroundResumeRun(
   if (readiness.kind === "no_recovery") return { ok: false, status: 409, error: "not_resumable" }
   if (readiness.kind === "not_resumable") {
     return { ok: false, status: 409, error: readiness.reason }
+  }
+  const decision = retainedDiagnosisRecoveryDecision(readiness.run)
+  if (decision) {
+    return {
+      ok: false,
+      status: 409,
+      error: "operator_decision_required",
+      code: "operator_decision_required",
+      message: "Run requires an explicit operator decision before recovery can continue.",
+      decision,
+    }
   }
   const workspace = repos.getWorkspace(readiness.run.workspace_id)
   const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
