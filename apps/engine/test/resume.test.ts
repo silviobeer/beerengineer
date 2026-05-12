@@ -21,6 +21,7 @@ import {
   buildSupabaseProvisioningRecoveryPayload,
   buildSupabaseReadinessRecoveryPayload,
 } from "../src/core/supabase/recoveryPayload.js"
+import { retainedDiagnosisRecoveryDecision } from "../src/core/supabase/recoveryDecision.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
 import { defaultAppConfig, writeConfigFile } from "../src/setup/config.js"
 import type { StoryImplementationArtifact } from "../src/types.js"
@@ -608,6 +609,8 @@ test("REQ-2 AC-2.2/AC-2.3: retryRetainedRunInProcess starts recovery on the reta
       })
 
       assert.equal(result.ok, true)
+      assert.equal(repos.getRun(run.id)?.status, "queued")
+      assert.equal(retainedDiagnosisRecoveryDecision(repos.getRun(run.id)!), null)
       for (let i = 0; i < 50; i++) {
         if (repos.getRun(run.id)?.status === "completed") break
         await new Promise(resolve => setTimeout(resolve, 10))

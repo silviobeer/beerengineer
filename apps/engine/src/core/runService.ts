@@ -1595,7 +1595,7 @@ export async function prepareForegroundRetryRetainedRun(
   if (readiness.kind !== "ready") return retryRetainedConflict(readiness.run)
   if (!retainedDiagnosisRecoveryDecision(readiness.run)) return retryRetainedConflict(readiness.run)
 
-  return await prepareForegroundResumeRun(repos, io, {
+  const prepared = await prepareForegroundResumeRun(repos, io, {
     runId: input.runId,
     summary: RETRY_RETAINED_REMEDIATION_SUMMARY,
     workerOwnerKind: input.workerOwnerKind,
@@ -1610,6 +1610,12 @@ export async function prepareForegroundRetryRetainedRun(
     persistItemDecision: false,
     bypassRetainedDiagnosisDecision: true,
   })
+
+  if (prepared.ok && repos.getRun(input.runId)?.status === "blocked") {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  return prepared
 }
 
 // Re-export the event type for convenience.
