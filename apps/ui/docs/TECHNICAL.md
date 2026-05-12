@@ -137,17 +137,22 @@ Mapping happens once in `SSEContext.tsx`:
 `ItemMessages.tsx` sidesteps the context for its own EventSource because it
 needs full debug (level 0) and addEventListener wiring per canonical event.
 
-## Mutations & CSRF
+## Mutations & proxy admission
 
 All mutations pass through `app/api/**/route.ts` route handlers — the
 browser never talks to the engine directly for writes. Each handler:
 
-1. Reads the API token from `$XDG_STATE_HOME/beerengineer/api.token`
-   (or `BEERENGINEER_API_TOKEN` if set) via `lib/engineProxy.ts`.
-2. Forwards the request to the engine with `x-beerengineer-token`.
+1. Validates `Origin` / `Referer` against the current UI host in
+   `lib/engine/proxy.ts`.
+2. Forwards the JSON request to the loopback engine without requiring
+   `x-beerengineer-token` for the standard localhost path.
 3. Translates non-2xx responses into a typed error envelope the UI surfaces.
 
-This keeps the token off the client bundle and keeps CORS off the
+Legacy `x-beerengineer-token` / `BEERENGINEER_API_TOKEN` compatibility
+still exists at the engine boundary for older or non-loopback callers,
+but the first-party UI no longer depends on token discovery.
+
+This keeps CORS off the
 critical path.
 
 ## Theming
@@ -200,7 +205,8 @@ are scheduled for removal once the few remaining test references in
 - **Run-scoped vs workspace-scoped SSE.** The board uses workspace SSE;
   the messages view opens its own run-scoped EventSource because levels
   differ. Don't try to multiplex both through one stream.
-- **Token on disk, not in env.** `BEERENGINEER_API_TOKEN` is the override;
-  the canonical source is the file at `$XDG_STATE_HOME/beerengineer/api.token`
-  written by `beerengineer setup`. Production-style deployments are out of
-  scope (this is a local operator console).
+- **Loopback trust boundary.** Standard localhost UI usage does not read
+  or manage a beerengineer_ API token. Any remaining
+  `BEERENGINEER_API_TOKEN` / `x-beerengineer-token` usage is legacy
+  compatibility for older or non-loopback callers. Production-style
+  deployments are out of scope (this is a local operator console).
