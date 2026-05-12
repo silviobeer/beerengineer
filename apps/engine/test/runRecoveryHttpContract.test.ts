@@ -14,6 +14,31 @@ const TEST_API_TOKEN = "test-token"
 const TEST_API_WORKER_INSTANCE_ID = "test-api-worker"
 const FRESH_PATH_RECOVERY = "fresh_path_recovery"
 const RETAINED_PATH_RECOVERY = "retained_path_recovery"
+const CLEAR_ACTION_CASES = [
+  {
+    action: "clear_recovery_payload",
+    targetKey: "recovery_payload_json",
+    siblingAttemptKey: "supabaseBranchRef",
+  },
+  {
+    action: "clear_supabase_branch_ref",
+    targetKey: "supabase_branch_ref",
+    siblingAttemptKey: "supabaseBranchLifecycleState",
+  },
+  {
+    action: "clear_supabase_branch_lifecycle_state",
+    targetKey: "supabase_branch_lifecycle_state",
+    siblingAttemptKey: "recoveryPayloadJson",
+  },
+] as const
+
+type ClearActionCase = (typeof CLEAR_ACTION_CASES)[number]
+type ClearAction = ClearActionCase["action"]
+type SupportedRecoveryState = {
+  recovery_payload_json: string | null
+  supabase_branch_ref: string | null
+  supabase_branch_lifecycle_state: string | null
+}
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   return { "x-beerengineer-token": TEST_API_TOKEN, ...(extra ?? {}) }
@@ -274,6 +299,54 @@ function seedSkipFixtures(dbPath: string): {
   }
 }
 
+function seedClearFixtures(dbPath: string): {
+  populatedRunIds: Record<ClearAction, string>
+  alreadyClearRunIds: Record<ClearAction, string>
+} {
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    const populatedRunIds = {} as Record<ClearAction, string>
+    const alreadyClearRunIds = {} as Record<ClearAction, string>
+
+    for (const testCase of CLEAR_ACTION_CASES) {
+      const populated = createRunFixture(repos, {
+        title: `${testCase.action} populated`,
+        recoverySummary: `${testCase.action} populated fixture`,
+      })
+      repos.setRunRecoveryPayloadJson(populated.run.id, JSON.stringify({ fixture: testCase.action, value: "payload" }))
+      repos.setRunRecoverySupabaseBranchRef(populated.run.id, `br_${testCase.action}`)
+      repos.setRunRecoverySupabaseLifecycleState(populated.run.id, `lifecycle_${testCase.action}`)
+      populatedRunIds[testCase.action] = populated.run.id
+
+      const alreadyClear = createRunFixture(repos, {
+        title: `${testCase.action} already clear`,
+        recoverySummary: `${testCase.action} already clear fixture`,
+      })
+      repos.setRunRecoveryPayloadJson(alreadyClear.run.id, JSON.stringify({ fixture: testCase.action, value: "payload" }))
+      repos.setRunRecoverySupabaseBranchRef(alreadyClear.run.id, `br_${testCase.action}_noop`)
+      repos.setRunRecoverySupabaseLifecycleState(alreadyClear.run.id, `lifecycle_${testCase.action}_noop`)
+      switch (testCase.targetKey) {
+        case "recovery_payload_json":
+          repos.setRunRecoveryPayloadJson(alreadyClear.run.id, null)
+          break
+        case "supabase_branch_ref":
+          repos.setRunRecoverySupabaseBranchRef(alreadyClear.run.id, null)
+          break
+        case "supabase_branch_lifecycle_state":
+          repos.setRunRecoverySupabaseLifecycleState(alreadyClear.run.id, null)
+          break
+      }
+      alreadyClearRunIds[testCase.action] = alreadyClear.run.id
+    }
+
+    return { populatedRunIds, alreadyClearRunIds }
+  } finally {
+    db.close()
+  }
+}
+
 async function getRecovery(base: string, runId: string): Promise<unknown> {
   const response = await fetch(`${base}/runs/${runId}/recovery`)
   return await response.json()
@@ -282,6 +355,15 @@ async function getRecovery(base: string, runId: string): Promise<unknown> {
 async function getRun(base: string, runId: string): Promise<unknown> {
   const response = await fetch(`${base}/runs/${runId}`)
   return await response.json()
+}
+
+async function getSupportedRecoveryState(base: string, runId: string): Promise<SupportedRecoveryState> {
+  const run = await getRun(base, runId) as SupportedRecoveryState
+  return {
+    recovery_payload_json: run.recovery_payload_json,
+    supabase_branch_ref: run.supabase_branch_ref,
+    supabase_branch_lifecycle_state: run.supabase_branch_lifecycle_state,
+  }
 }
 
 async function getRunTree(base: string, runId: string): Promise<unknown> {
@@ -710,6 +792,154 @@ test("REQ-2 TC-REQ-2-04: ineligible skip_current_stage requests reject with spec
       recovery: await getRecovery(base, fixture.skippedRunId),
       tree: await getRunTree(base, fixture.skippedRunId),
     }), skippedBefore)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-3 TC-REQ3-01/02: each clear action exists as its own HTTP action and mutates only the targeted stuck field", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-clear-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const fixture = seedClearFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    for (const testCase of CLEAR_ACTION_CASES) {
+      const runId = fixture.populatedRunIds[testCase.action]
+      const before = await getSupportedRecoveryState(base, runId)
+
+      const accepted = await postRecovery(base, runId, { action: testCase.action })
+      assert.equal(accepted.status, 200)
+      assert.deepEqual(accepted.json, {
+        ok: true,
+        runId,
+        action: testCase.action,
+        outcome: "accepted",
+        latestState: {
+          recoveryPayloadJson: testCase.targetKey === "recovery_payload_json" ? null : before.recovery_payload_json,
+          supabaseBranchRef: testCase.targetKey === "supabase_branch_ref" ? null : before.supabase_branch_ref,
+          supabaseBranchLifecycleState: testCase.targetKey === "supabase_branch_lifecycle_state" ? null : before.supabase_branch_lifecycle_state,
+        },
+      })
+
+      const after = await getSupportedRecoveryState(base, runId)
+      assert.equal(after[testCase.targetKey], null)
+
+      for (const key of Object.keys(before) as Array<keyof SupportedRecoveryState>) {
+        if (key === testCase.targetKey) continue
+        assert.equal(after[key], before[key], `${testCase.action} should not rewrite ${key}`)
+      }
+    }
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-3 TC-REQ3-03/04: clear actions are idempotent both after a successful clear and when the targeted field already starts empty", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-clear-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const fixture = seedClearFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    for (const testCase of CLEAR_ACTION_CASES) {
+      const populatedRunId = fixture.populatedRunIds[testCase.action]
+      const first = await postRecovery(base, populatedRunId, { action: testCase.action })
+      assert.equal(first.status, 200)
+      const afterFirst = await getSupportedRecoveryState(base, populatedRunId)
+
+      const second = await postRecovery(base, populatedRunId, { action: testCase.action })
+      assert.equal(second.status, 200)
+      assert.deepEqual(second.json, {
+        ok: true,
+        runId: populatedRunId,
+        action: testCase.action,
+        outcome: "noop",
+        reason: "already_clear",
+        latestState: {
+          recoveryPayloadJson: afterFirst.recovery_payload_json,
+          supabaseBranchRef: afterFirst.supabase_branch_ref,
+          supabaseBranchLifecycleState: afterFirst.supabase_branch_lifecycle_state,
+        },
+      })
+      assert.deepEqual(await getSupportedRecoveryState(base, populatedRunId), afterFirst)
+
+      const alreadyClearRunId = fixture.alreadyClearRunIds[testCase.action]
+      const beforeNoop = await getSupportedRecoveryState(base, alreadyClearRunId)
+      const firstNoop = await postRecovery(base, alreadyClearRunId, { action: testCase.action })
+      assert.equal(firstNoop.status, 200)
+      assert.deepEqual(firstNoop.json, {
+        ok: true,
+        runId: alreadyClearRunId,
+        action: testCase.action,
+        outcome: "noop",
+        reason: "already_clear",
+        latestState: {
+          recoveryPayloadJson: beforeNoop.recovery_payload_json,
+          supabaseBranchRef: beforeNoop.supabase_branch_ref,
+          supabaseBranchLifecycleState: beforeNoop.supabase_branch_lifecycle_state,
+        },
+      })
+      assert.deepEqual(await getSupportedRecoveryState(base, alreadyClearRunId), beforeNoop)
+    }
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-3 TC-REQ3-05/06: clear actions reject extra mutation fields and multi-field clear attempts without changing state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-clear-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const fixture = seedClearFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    for (const testCase of CLEAR_ACTION_CASES) {
+      const runId = fixture.populatedRunIds[testCase.action]
+
+      const beforeExtraField = await getSupportedRecoveryState(base, runId)
+      const extraField = await postRecovery(base, runId, {
+        action: testCase.action,
+        summary: "unexpected",
+      })
+      assert.equal(extraField.status, 400)
+      assert.deepEqual(extraField.json, {
+        ok: false,
+        error: "recovery_action_invalid_request",
+        code: "bad_request",
+        action: testCase.action,
+        reason: "unexpected_fields",
+        message: "This recovery action accepts only the action field.",
+        fields: ["summary"],
+      })
+      assert.deepEqual(await getSupportedRecoveryState(base, runId), beforeExtraField)
+
+      const beforeSiblingAttempt = await getSupportedRecoveryState(base, runId)
+      const siblingAttempt = await postRecovery(base, runId, {
+        action: testCase.action,
+        [testCase.siblingAttemptKey]: null,
+      })
+      assert.equal(siblingAttempt.status, 400)
+      assert.deepEqual(siblingAttempt.json, {
+        ok: false,
+        error: "recovery_action_invalid_request",
+        code: "bad_request",
+        action: testCase.action,
+        reason: "unexpected_fields",
+        message: "This recovery action accepts only the action field.",
+        fields: [testCase.siblingAttemptKey],
+      })
+      assert.deepEqual(await getSupportedRecoveryState(base, runId), beforeSiblingAttempt)
+    }
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
