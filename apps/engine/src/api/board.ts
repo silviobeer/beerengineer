@@ -86,19 +86,12 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
     if (!latestRuns.has(run.item_id)) latestRuns.set(run.item_id, run)
   }
 
-  const openPromptsByRun = new Map<string, BoardOpenPrompt>()
-  const promptRows = db
-    .prepare(
-      `SELECT p.run_id, p.actions_json
-       FROM pending_prompts p
-       JOIN runs r ON r.id = p.run_id
-       WHERE p.answered_at IS NULL
-         AND r.workspace_id = ?`
-    )
-    .all(workspace.id) as Array<{ run_id: string; actions_json: string | null }>
-  for (const row of promptRows) {
-    if (!openPromptsByRun.has(row.run_id)) openPromptsByRun.set(row.run_id, row)
-  }
+  const openPromptsByRun = new Map<string, BoardOpenPrompt>(
+    repos.listOpenPrompts({ workspaceId: workspace.id }).map(prompt => [
+      prompt.run_id,
+      { run_id: prompt.run_id, actions_json: prompt.actions_json },
+    ]),
+  )
 
   return {
     workspaceKey: workspace.key,
