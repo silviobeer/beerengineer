@@ -649,7 +649,10 @@ export class Repos {
          AND recovery_status = 'blocked'
          AND recovery_scope = 'stage'
          AND recovery_scope_ref = 'execution'
-         AND COALESCE(worker_owner_kind, owner) = 'cli'`,
+         AND worker_owner_kind = 'cli'
+         AND worker_instance_id IS NOT NULL
+         AND worker_started_at IS NOT NULL
+         AND worker_heartbeat_at IS NOT NULL`,
     ).run(
       input.workerInstanceId,
       input.startedAt,
