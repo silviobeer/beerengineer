@@ -949,7 +949,9 @@ test("REQ-3 AC-3.5/AC-3.6: clear-and-fresh warns on cleanup failure and re-check
         runId: run.id,
         supabaseAdapterFactory: () => ({
           adapter: {
-            destroyBranch: async () => ({ ok: false, context: { message: "provider rejected cleanup" } }),
+            destroyBranch: async () => {
+              throw new Error("provider rejected cleanup")
+            },
           } as never,
         }),
         resumeRunImpl: async input => {

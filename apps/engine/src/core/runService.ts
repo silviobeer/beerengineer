@@ -31,6 +31,7 @@ import { recordSupabaseLifecycle } from "./supabase/lifecycleEvents.js"
 import { updateSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 import { retainedDiagnosisRecoveryDecision, type RunRecoveryDecision } from "./supabase/recoveryDecision.js"
 import { discardSupabaseBranchFromRunRecovery } from "./supabase/runRecoveryActions.js"
+import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 import { inspectWorkerLease } from "./workerLease.js"
 
@@ -766,11 +767,21 @@ function throwClearAndFreshPreconditionError(): never {
   throw new Error(CLEAR_AND_FRESH_PRECONDITION_ERROR)
 }
 
+function cleanupFailureReason(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value
+  if (value instanceof Error && value.message.trim()) return value.message
+  if (value && typeof value === "object") {
+    const row = value as { message?: unknown; error?: unknown }
+    if (typeof row.message === "string" && row.message.trim()) return row.message
+    if (typeof row.error === "string" && row.error.trim()) return row.error
+  }
+  return "Destroy failed"
+}
+
 async function runClearAndFreshBeforeResume(
   repos: Repos,
   runId: string,
-  resumeInput: PerformResumeInput,
-  resumeRunImpl: PerformResumeImpl,
+  supabaseHook?: SupabaseWorkflowHook,
 ): Promise<void> {
   const run = repos.getRun(runId)
   if (!run) throwClearAndFreshPreconditionError()
@@ -779,11 +790,11 @@ async function runClearAndFreshBeforeResume(
     branchRef: null,
     operatorAction: "discard",
   })
-  const discarded = discardSupabaseBranchFromRunRecovery(repos, { runId })
-  if (!discarded.ok) throwClearAndFreshPreconditionError()
-  if (!payload) {
+  if (payload == null) {
     throwClearAndFreshPreconditionError()
   }
+  const discarded = discardSupabaseBranchFromRunRecovery(repos, { runId })
+  if (!discarded.ok) throwClearAndFreshPreconditionError()
   repos.setRunRecovery(runId, {
     status: run.recovery_status,
     scope: run.recovery_scope,
@@ -792,7 +803,7 @@ async function runClearAndFreshBeforeResume(
     payloadJson: payload,
   })
 
-  if (branchRef && resumeInput.supabaseHook) {
+  if (branchRef && supabaseHook) {
     recordSupabaseLifecycle({
       repos,
       runId,
@@ -800,32 +811,41 @@ async function runClearAndFreshBeforeResume(
       step: "cleanup",
       status: "in_progress",
     })
-    const cleanup = await resumeInput.supabaseHook.adapter.destroyBranch({
-      workspaceId: resumeInput.supabaseHook.workspaceId,
-      projectRef: resumeInput.supabaseHook.projectRef,
-      branchRef,
-    })
-    if (!cleanup.ok) {
+    try {
+      const cleanup = await supabaseHook.adapter.destroyBranch({
+        workspaceId: supabaseHook.workspaceId,
+        projectRef: supabaseHook.projectRef,
+        branchRef,
+      })
+      if (cleanup.ok) {
+        recordSupabaseLifecycle({
+          repos,
+          runId,
+          branchRef,
+          step: "cleanup",
+          status: "passed",
+        })
+      } else {
+        recordSupabaseLifecycle({
+          repos,
+          runId,
+          branchRef,
+          step: "cleanup",
+          status: "retained",
+          reason: cleanupFailureReason(cleanup.context),
+        })
+      }
+    } catch (error) {
       recordSupabaseLifecycle({
         repos,
         runId,
         branchRef,
         step: "cleanup",
         status: "retained",
-        reason: String(cleanup.context?.message ?? cleanup.context?.error ?? "Destroy failed"),
-      })
-    } else {
-      recordSupabaseLifecycle({
-        repos,
-        runId,
-        branchRef,
-        step: "cleanup",
-        status: "passed",
+        reason: cleanupFailureReason(error),
       })
     }
   }
-
-  await resumeRunImpl(resumeInput)
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -1817,9 +1837,30 @@ export async function prepareForegroundClearAndFreshRun(
   }
   if (readiness.kind !== "ready") return clearAndFreshConflict(readiness.run)
   if (!retainedDiagnosisRecoveryDecision(readiness.run)) return clearAndFreshConflict(readiness.run)
+  const workspace = repos.getWorkspace(readiness.run.workspace_id)
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
+  const runAfterCapabilityCheck = repos.getRun(input.runId)
+  if (!runAfterCapabilityCheck) return { ok: false, status: 404, error: "run_not_found" }
+  if (retainedDiagnosisRecoveryDecision(runAfterCapabilityCheck) == null) {
+    return clearAndFreshConflict(runAfterCapabilityCheck)
+  }
+  const supabaseHook = buildSupabaseWorkflowHook(
+    repos,
+    readiness.run.workspace_id,
+    workspace,
+    capabilitiesResult.supabaseAdapterFactory,
+  )
 
   let prepared: PreparedForegroundResumeRunResult
   try {
+    await runClearAndFreshBeforeResume(repos, input.runId, supabaseHook)
     prepared = await prepareForegroundResumeRun(repos, io, {
       runId: input.runId,
       summary: CLEAR_AND_FRESH_REMEDIATION_SUMMARY,
@@ -1828,22 +1869,11 @@ export async function prepareForegroundClearAndFreshRun(
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       onItemColumnChanged: input.onItemColumnChanged,
-      supabaseAdapterFactory: input.supabaseAdapterFactory,
-      capabilityResolver: input.capabilityResolver,
+      capabilityResolver: () => capabilitiesResult,
       admissionController: input.admissionController,
-      resumeRunImpl: async resumeInput => {
-        await runClearAndFreshBeforeResume(
-          repos,
-          input.runId,
-          resumeInput,
-          input.resumeRunImpl ?? performResume,
-        )
-      },
+      resumeRunImpl: input.resumeRunImpl,
       persistItemDecision: false,
       bypassRetainedDiagnosisDecision: true,
-      verifyBeforeRemediation: run => {
-        if (!retainedDiagnosisRecoveryDecision(run)) throwClearAndFreshPreconditionError()
-      },
     })
   } catch (error) {
     if (error instanceof Error && error.message === CLEAR_AND_FRESH_PRECONDITION_ERROR) {

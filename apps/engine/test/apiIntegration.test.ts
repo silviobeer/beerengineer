@@ -162,8 +162,10 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   const resumeConflict = openapi.paths["/runs/{id}/resume"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const retryRetainedConflict = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const retryRetainedSuccess = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
+  const clearAndFreshBadRequest = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["400"]?.content?.["application/json"]?.schema
   const clearAndFreshConflict = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const clearAndFreshSuccess = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
+  const clearAndFreshUnavailable = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["503"]?.content?.["application/json"]?.schema
   const retryConflict = openapi.paths["/runs/{id}/supabase-readiness/retry"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const gitRepairConflict = openapi.paths["/setup/git-identity/repair"]?.post?.responses?.["409"]
   const workspaceDeleteConflict = openapi.paths["/workspaces/{key}"]?.delete?.responses?.["409"]
@@ -173,10 +175,14 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.match(JSON.stringify(retryRetainedConflict), /RetryRetainedConflict/)
   assert.ok(retryRetainedSuccess)
   assert.match(JSON.stringify(retryRetainedSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
+  assert.ok(clearAndFreshBadRequest)
+  assert.match(JSON.stringify(clearAndFreshBadRequest), /WorkflowCapabilityBlockedError/)
   assert.ok(clearAndFreshConflict)
   assert.match(JSON.stringify(clearAndFreshConflict), /ClearAndFreshConflict/)
   assert.ok(clearAndFreshSuccess)
   assert.match(JSON.stringify(clearAndFreshSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
+  assert.ok(clearAndFreshUnavailable)
+  assert.match(JSON.stringify(clearAndFreshUnavailable), /WorkflowCapabilityBlockedError/)
   assert.ok(retryConflict)
   assert.match(JSON.stringify(retryConflict), /ResumeOperatorDecisionConflict/)
   assert.equal(JSON.stringify(gitRepairConflict).includes("ResumeOperatorDecisionConflict"), false)
@@ -186,6 +192,7 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.ok(openapi.components.schemas.RunRecoveryDecision)
   assert.ok(openapi.components.schemas.RetryRetainedConflict)
   assert.ok(openapi.components.schemas.ClearAndFreshConflict)
+  assert.ok(openapi.components.schemas.WorkflowCapabilityBlockedError)
   assert.match(contract, /operator_decision_required/)
   assert.match(contract, /retained_diagnosis_branch/)
   assert.match(contract, /retry-retained/)

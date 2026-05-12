@@ -1737,6 +1737,23 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "400": {
+            "description": "Bad Request — capability blocked or missing readiness.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowCapabilityBlockedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict — the run is no longer eligible for clear-and-fresh or another resume blocker applies.",
             "content": {
@@ -1748,6 +1765,23 @@
                     },
                     {
                       "$ref": "#/components/schemas/ClearAndFreshConflict"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable — capability not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowCapabilityBlockedError"
                     }
                   ]
                 }
@@ -4664,6 +4698,35 @@
           },
           "currentState": {
             "$ref": "#/components/schemas/RetryRetainedConflictCurrentState"
+          }
+        }
+      },
+      "WorkflowCapabilityBlockedError": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "workflow_capability_blocked"
+          },
+          "code": {
+            "type": "string",
+            "const": "workflow_capability_blocked"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "incomplete_config",
+              "blocked_readiness",
+              "gate_blocked"
+            ]
           }
         }
       },
