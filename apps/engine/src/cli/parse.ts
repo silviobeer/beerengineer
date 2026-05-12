@@ -37,6 +37,7 @@ function parseRunSubcommand(context: ParseArgsContext): Command | null {
   if (second === "list") return { kind: "run-list", workspaceKey, json, all, compact }
   if (second === "get") return { kind: "run-get", runId: argv[2], json }
   if (second === "skip-current-stage") return { kind: "run-skip-current-stage", runId: argv[2] }
+  if (second === "recovery") return { kind: "run-recovery-action", runId: argv[2], action: argv[3] }
   if (second === "resume") {
     const resume = resolveResumeFlags(argv)
     return Object.keys(resume).length === 0
@@ -382,6 +383,10 @@ export function printHelp(): void {
     "    beerengineer run list [--all] [--compact]            List runs",
     "    beerengineer run get <run-id> [--json]               Show one run",
     "    beerengineer run skip-current-stage <run-id>         Skip the active current stage and block for manual review",
+    "    beerengineer run recovery <run-id> <action>          Call the canonical recovery HTTP action",
+    "                                                         Actions: skip_current_stage recover_fresh_branch retry_retained",
+    "                                                                  clear_and_fresh clear_recovery_payload",
+    "                                                                  clear_supabase_branch_ref clear_supabase_branch_lifecycle_state",
     "    beerengineer run resume <run-id>                     Resume one blocked run",
     "                                                         Flags: --remediation-summary <text> [--branch <name>] [--commit <sha>] [--notes <text>] [--yes]",
     "    beerengineer run replan <run-id>                     Regenerate the active plan on the same run",
