@@ -17,6 +17,7 @@ import {
   handleGetRun,
   handleGetRunTree,
   handleGetRecovery,
+  handleMutateRecovery,
   handleSupabaseReadinessRetry,
   handlePostMessage,
   handleListRuns,
@@ -156,6 +157,7 @@ const RUN_ROUTE_DEFINITIONS = [
   { pattern: /^\/runs\/([^/]+)\/replan$/, method: "POST", surfacePath: "/runs/{id}/replan" },
   { pattern: /^\/runs\/([^/]+)\/supabase-readiness\/retry$/, method: "POST", surfacePath: "/runs/{id}/supabase-readiness/retry" },
   { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", surfacePath: "/runs/{id}/recovery" },
+  { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "POST", surfacePath: "/runs/{id}/recovery" },
 ] as const satisfies readonly RouteMatcherDefinition[]
 
 const SUPABASE_ACTION_ROUTE_DEFINITIONS = [
@@ -361,6 +363,7 @@ function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Ar
     { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleReplanRun(deps.repos, context.req, context.res, runId) },
     { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
     { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleMutateRecovery(deps.repos, context.req, context.res, runId) },
   ]
 }
 

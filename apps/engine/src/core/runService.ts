@@ -16,7 +16,7 @@ import { defaultImportContextGenerator, writeImportContextArtifact, type ImportC
 import { layout } from "./workspaceLayout.js"
 import { requireWorkflowContextForRun, resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import { isExecutionOwnershipHandoffRun, queueExecutionOwnershipHandoffResume } from "./executionOwnershipHandoff.js"
-import type { Repos, ItemRow, RunRow, ExternalRemediationRow, WorkspaceRow } from "../db/repositories.js"
+import type { Repos, ItemRow, RunRow, ExternalRemediationRow, StageRunRow, WorkspaceRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
@@ -28,7 +28,11 @@ import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
-import { inspectWorkerLease } from "./workerLease.js"
+import { inspectWorkerLease, STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
+import {
+  parseSupabaseProvisioningRecoveryPayload,
+  updateSupabaseProvisioningRecoveryPayload,
+} from "./supabase/recoveryPayload.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -124,6 +128,178 @@ export type ReplanRunResult =
     }
   | { ok: false; status: 422; error: "reason_required"; message: string }
   | { ok: false; status: 500; error: string; message: string }
+
+export const RESERVED_RUN_RECOVERY_ACTIONS = [
+  "resume",
+  "replan",
+  "retry_supabase_readiness",
+] as const
+
+export const IMPLEMENTED_RUN_RECOVERY_ACTIONS = [
+  "skip_current_stage",
+  "recover_fresh_branch",
+  "retry_retained",
+  "clear_and_fresh",
+] as const
+
+export const NARROW_RUN_RECOVERY_CLEAR_ACTIONS = [
+  "clear_recovery_payload",
+  "clear_supabase_branch_ref",
+  "clear_supabase_branch_lifecycle_state",
+] as const
+
+export type ReservedRunRecoveryAction = (typeof RESERVED_RUN_RECOVERY_ACTIONS)[number]
+export type ImplementedRunRecoveryAction = (typeof IMPLEMENTED_RUN_RECOVERY_ACTIONS)[number]
+export type NarrowRunRecoveryClearAction = (typeof NARROW_RUN_RECOVERY_CLEAR_ACTIONS)[number]
+export type RunRecoveryAction = ReservedRunRecoveryAction | ImplementedRunRecoveryAction | NarrowRunRecoveryClearAction
+export type RunRecoveryActionRequest = {
+  action?: string
+  summary?: string
+  branch?: string
+  commit?: string
+  reviewNotes?: string
+  reason?: string
+}
+
+type RecoveryLatestState = {
+  recoveryPayloadJson: string | null
+  supabaseBranchRef: string | null
+  supabaseBranchLifecycleState: string | null
+}
+
+export const FRESH_PATH_RECOVERY_STATUS = "fresh_path_recovery"
+export const RETAINED_PATH_RECOVERY_STATUS = "retained_path_recovery"
+
+export type RecoveryPathStatus =
+  | typeof FRESH_PATH_RECOVERY_STATUS
+  | typeof RETAINED_PATH_RECOVERY_STATUS
+
+export type SkipCurrentStageEligibilityReason =
+  | "no_current_stage"
+  | "current_stage_not_active"
+  | "current_stage_terminal"
+  | "current_stage_already_skipped"
+  | "current_stage_worker_active"
+
+export type RunRecoverySurfaceProjection = {
+  recoveryStatus: RecoveryPathStatus | null
+  supabaseBranchLifecycleState: RecoveryPathStatus | string | null
+  availableActions: ImplementedRunRecoveryAction[]
+}
+
+type RecoveryClearAcceptedResult = {
+  ok: true
+  runId: string
+  action: NarrowRunRecoveryClearAction
+  outcome: "accepted"
+  latestState: RecoveryLatestState
+}
+
+type RecoveryClearNoopResult = {
+  ok: true
+  runId: string
+  action: NarrowRunRecoveryClearAction
+  outcome: "noop"
+  reason: "already_clear"
+  latestState: RecoveryLatestState
+}
+
+type RecoveryNamedAcceptedResult = {
+  ok: true
+  runId: string
+  action: ImplementedRunRecoveryAction
+  outcome: "accepted"
+  latestState: RecoveryLatestState
+  recoveryStatus?: RecoveryPathStatus | "blocked"
+  supabaseBranchLifecycleState?: RecoveryPathStatus
+  currentStage?: string
+  stageStatus?: "skipped"
+  runStatus?: "blocked"
+}
+
+type RecoveryNamedNoopResult = {
+  ok: true
+  runId: string
+  action: "clear_and_fresh"
+  outcome: "noop"
+  reason: "already_on_fresh_path"
+  latestState: RecoveryLatestState
+  recoveryStatus: typeof FRESH_PATH_RECOVERY_STATUS
+  supabaseBranchLifecycleState: typeof FRESH_PATH_RECOVERY_STATUS
+}
+
+type RecoveryActionRejectedResult =
+  | {
+      ok: false
+      status: 400
+      error: "recovery_action_required"
+      code: "bad_request"
+      reason: "action_required"
+      message: string
+    }
+  | {
+      ok: false
+      status: 400
+      error: "unsupported_recovery_action"
+      code: "bad_request"
+      action: string
+      reason: "unsupported_action"
+      message: string
+    }
+  | {
+      ok: false
+      status: 400
+      error: "recovery_action_invalid_request"
+      code: "bad_request"
+      action: NarrowRunRecoveryClearAction
+      reason: "unexpected_fields"
+      message: string
+      fields: string[]
+    }
+  | {
+      ok: false
+      status: 404
+      error: "run_not_found"
+      code: "not_found"
+      reason: "run_not_found"
+      message: string
+    }
+  | {
+      ok: false
+      status: 501
+      error: "recovery_action_reserved"
+      code: "not_implemented"
+      action: ReservedRunRecoveryAction
+      reason: "action_not_implemented"
+      message: string
+    }
+  | {
+      ok: false
+      status: 409
+      error: "recovery_action_ineligible"
+      code: "invalid_transition"
+      action: ImplementedRunRecoveryAction
+      reason:
+        | "incompatible_recovery_state"
+        | SkipCurrentStageEligibilityReason
+      message: string
+    }
+
+export type RunRecoveryActionResult =
+  | RecoveryClearAcceptedResult
+  | RecoveryClearNoopResult
+  | RecoveryNamedAcceptedResult
+  | RecoveryNamedNoopResult
+  | RecoveryActionRejectedResult
+
+type LoggedRecoveryActionResult =
+  | RecoveryClearAcceptedResult
+  | RecoveryClearNoopResult
+  | RecoveryNamedAcceptedResult
+  | RecoveryNamedNoopResult
+
+const ACTIVE_STAGE_RUN_STATUSES = new Set(["pending", "running"])
+const TERMINAL_STAGE_RUN_STATUSES = new Set(["completed", "failed", "skipped"])
 
 export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
@@ -1269,6 +1445,420 @@ export async function replanRunInProcess(
     detach()
     io.close?.()
   }
+}
+
+function recoveryLatestState(run: Pick<RunRow, "recovery_payload_json" | "supabase_branch_ref" | "supabase_branch_lifecycle_state">): RecoveryLatestState {
+  return {
+    recoveryPayloadJson: run.recovery_payload_json,
+    supabaseBranchRef: run.supabase_branch_ref,
+    supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+  }
+}
+
+function appendRunRecoveryActionLog(
+  repos: Repos,
+  result: LoggedRecoveryActionResult,
+): void {
+  repos.appendLog({
+    runId: result.runId,
+    eventType: "run_recovery_action",
+    message: result.action,
+    data: {
+      action: result.action,
+      outcome: result.outcome,
+      reason: "reason" in result ? result.reason : undefined,
+      latestState: result.latestState,
+      recoveryStatus: "recoveryStatus" in result ? result.recoveryStatus : undefined,
+      supabaseBranchLifecycleState: "supabaseBranchLifecycleState" in result ? result.supabaseBranchLifecycleState : undefined,
+    },
+  })
+}
+
+function latestStageRunForCurrentStage(
+  repos: Repos,
+  run: Pick<RunRow, "id" | "current_stage">,
+): StageRunRow | null {
+  const currentStage = run.current_stage?.trim()
+  if (!currentStage) return null
+  return repos
+    .listStageRunsForRun(run.id)
+    .filter(stageRun => stageRun.stage_key === currentStage)
+    .at(-1) ?? null
+}
+
+function skipCurrentStageEligibility(
+  repos: Repos,
+  run: Pick<RunRow, "id" | "status" | "current_stage">,
+): (
+    | { eligible: true; currentStage: string; stageRun: StageRunRow | null }
+    | { eligible: false; reason: SkipCurrentStageEligibilityReason }
+  ) {
+  const currentStage = run.current_stage?.trim() ?? ""
+  if (!currentStage) return { eligible: false, reason: "no_current_stage" }
+
+  const stageRun = latestStageRunForCurrentStage(repos, run)
+  if (stageRun?.status === "skipped") {
+    return { eligible: false, reason: "current_stage_already_skipped" }
+  }
+  if (stageRun && TERMINAL_STAGE_RUN_STATUSES.has(stageRun.status)) {
+    return { eligible: false, reason: "current_stage_terminal" }
+  }
+  if (run.status !== "running") {
+    return { eligible: false, reason: "current_stage_not_active" }
+  }
+  if (stageRun && !ACTIVE_STAGE_RUN_STATUSES.has(stageRun.status)) {
+    return { eligible: false, reason: "current_stage_not_active" }
+  }
+  const lease = inspectWorkerLease(repos, run.id)
+  if (lease && Date.now() - lease.heartbeatAt < STALE_WORKER_HEARTBEAT_MS) {
+    return { eligible: false, reason: "current_stage_worker_active" }
+  }
+  return { eligible: true, currentStage, stageRun }
+}
+
+function skipCurrentStageRejection(
+  action: Extract<ImplementedRunRecoveryAction, "skip_current_stage">,
+  reason: SkipCurrentStageEligibilityReason,
+): RecoveryActionRejectedResult {
+  const message =
+    reason === "no_current_stage"
+      ? "Skip current stage is unavailable because the run has no current stage."
+      : reason === "current_stage_not_active"
+        ? "Skip current stage is unavailable because the current stage is not active."
+        : reason === "current_stage_worker_active"
+          ? "Skip current stage is unavailable because a worker still holds the active stage lease."
+        : reason === "current_stage_terminal"
+          ? "Skip current stage is unavailable because the current stage is already terminal."
+          : "Skip current stage is unavailable because the current stage is already recorded as skipped."
+  return {
+    ok: false,
+    status: 409,
+    error: "recovery_action_ineligible",
+    code: "invalid_transition",
+    action,
+    reason,
+    message,
+  }
+}
+
+export function projectRunRecoverySurface(
+  repos: Repos,
+  run: Pick<RunRow, "id" | "status" | "current_stage" | "recovery_status" | "recovery_payload_json" | "supabase_branch_ref" | "supabase_branch_lifecycle_state">,
+): RunRecoverySurfaceProjection {
+  const availableActions: ImplementedRunRecoveryAction[] = []
+  if (skipCurrentStageEligibility(repos, run).eligible) {
+    availableActions.push("skip_current_stage")
+  }
+
+  const payload = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
+  if (!payload) {
+    return {
+      recoveryStatus: null,
+      supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+      availableActions,
+    }
+  }
+
+  if (payload.operatorAction === "discard") {
+    return {
+      recoveryStatus: FRESH_PATH_RECOVERY_STATUS,
+      supabaseBranchLifecycleState: FRESH_PATH_RECOVERY_STATUS,
+      availableActions,
+    }
+  }
+
+  if (payload.operatorAction === "attach") {
+    return {
+      recoveryStatus: RETAINED_PATH_RECOVERY_STATUS,
+      supabaseBranchLifecycleState: RETAINED_PATH_RECOVERY_STATUS,
+      availableActions,
+    }
+  }
+
+  if (run.recovery_status !== "blocked") {
+    return {
+      recoveryStatus: null,
+      supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+      availableActions,
+    }
+  }
+
+  const retainedBranchRef = payload.branchRef ?? run.supabase_branch_ref
+  if (run.supabase_branch_lifecycle_state === "retained-for-diagnosis" && retainedBranchRef) {
+    return {
+      recoveryStatus: null,
+      supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+      availableActions: [...availableActions, "retry_retained", "clear_and_fresh"],
+    }
+  }
+
+  return {
+    recoveryStatus: null,
+    supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+    availableActions: [...availableActions, "recover_fresh_branch"],
+  }
+}
+
+function isReservedRunRecoveryAction(action: string): action is ReservedRunRecoveryAction {
+  return RESERVED_RUN_RECOVERY_ACTIONS.includes(action as ReservedRunRecoveryAction)
+}
+
+function isImplementedRunRecoveryAction(action: string): action is ImplementedRunRecoveryAction {
+  return IMPLEMENTED_RUN_RECOVERY_ACTIONS.includes(action as ImplementedRunRecoveryAction)
+}
+
+function isNarrowRunRecoveryClearAction(action: string): action is NarrowRunRecoveryClearAction {
+  return NARROW_RUN_RECOVERY_CLEAR_ACTIONS.includes(action as NarrowRunRecoveryClearAction)
+}
+
+function unexpectedRecoveryActionFields(
+  input: { runId: string } & RunRecoveryActionRequest,
+  allowedKeys: string[],
+): string[] {
+  return Object.keys(input)
+    .filter(key => !allowedKeys.includes(key))
+    .sort((left, right) => left.localeCompare(right))
+}
+
+export function mutateRunRecoveryActionInProcess(
+  repos: Repos,
+  input: { runId: string } & RunRecoveryActionRequest,
+): RunRecoveryActionResult {
+  const run = repos.getRun(input.runId)
+  if (!run) {
+    return {
+      ok: false,
+      status: 404,
+      error: "run_not_found",
+      code: "not_found",
+      reason: "run_not_found",
+      message: `Run not found: ${input.runId}`,
+    }
+  }
+
+  const action = typeof input.action === "string" ? input.action.trim() : ""
+  if (!action) {
+    return {
+      ok: false,
+      status: 400,
+      error: "recovery_action_required",
+      code: "bad_request",
+      reason: "action_required",
+      message: "Recovery action is required.",
+    }
+  }
+
+  if (isReservedRunRecoveryAction(action)) {
+    return {
+      ok: false,
+      status: 501,
+      error: "recovery_action_reserved",
+      code: "not_implemented",
+      action,
+      reason: "action_not_implemented",
+      message: "Named recovery actions are reserved on POST /runs/:id/recovery and will be wired by later stories.",
+    }
+  }
+
+  if (isImplementedRunRecoveryAction(action)) {
+    const surface = projectRunRecoverySurface(repos, run)
+    if (action === "skip_current_stage") {
+      const eligibility = skipCurrentStageEligibility(repos, run)
+      if (!eligibility.eligible) return skipCurrentStageRejection(action, eligibility.reason)
+
+      const stageRun = eligibility.stageRun ?? repos.createStageRun({ runId: run.id, stageKey: eligibility.currentStage })
+      repos.completeStageRun(stageRun.id, "skipped")
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: eligibility.currentStage,
+        recovery_status: "blocked",
+        recovery_scope: "stage",
+        recovery_scope_ref: eligibility.currentStage,
+        recovery_summary: `Current stage '${eligibility.currentStage}' was skipped. Manual review is required before continuing.`,
+        recovery_payload_json: run.recovery_payload_json,
+      })
+
+      const next = repos.getRun(run.id) ?? run
+      const result: RecoveryNamedAcceptedResult = {
+        ok: true,
+        runId: run.id,
+        action,
+        outcome: "accepted",
+        latestState: recoveryLatestState(next),
+        currentStage: eligibility.currentStage,
+        stageStatus: "skipped",
+        runStatus: "blocked",
+        recoveryStatus: "blocked",
+      }
+      appendRunRecoveryActionLog(repos, result)
+      return result
+    }
+
+    if (action === "clear_and_fresh" && surface.recoveryStatus === FRESH_PATH_RECOVERY_STATUS) {
+      const result: RecoveryNamedNoopResult = {
+        ok: true,
+        runId: run.id,
+        action,
+        outcome: "noop",
+        reason: "already_on_fresh_path",
+        latestState: recoveryLatestState(run),
+        recoveryStatus: FRESH_PATH_RECOVERY_STATUS,
+        supabaseBranchLifecycleState: FRESH_PATH_RECOVERY_STATUS,
+      }
+      appendRunRecoveryActionLog(repos, result)
+      return result
+    }
+
+    if (!surface.availableActions.includes(action)) {
+      return {
+        ok: false,
+        status: 409,
+        error: "recovery_action_ineligible",
+        code: "invalid_transition",
+        action,
+        reason: "incompatible_recovery_state",
+        message: "Recovery action is not available for this run.",
+      }
+    }
+
+    const payload = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
+    if (!payload) {
+      return {
+        ok: false,
+        status: 409,
+        error: "recovery_action_ineligible",
+        code: "invalid_transition",
+        action,
+        reason: "incompatible_recovery_state",
+        message: "Recovery action is not available for this run.",
+      }
+    }
+
+    switch (action) {
+      case "recover_fresh_branch":
+        repos.setRunRecoveryPayloadJson(
+          run.id,
+          updateSupabaseProvisioningRecoveryPayload(run.recovery_payload_json, {
+            branchRef: null,
+            operatorAction: "discard",
+          }) ?? run.recovery_payload_json,
+        )
+        break
+      case "retry_retained":
+        if (!(run.supabase_branch_ref ?? payload.branchRef)) {
+          return {
+            ok: false,
+            status: 409,
+            error: "recovery_action_ineligible",
+            code: "invalid_transition",
+            action,
+            reason: "incompatible_recovery_state",
+            message: "Recovery action is not available for this run.",
+          }
+        }
+        repos.setRunRecoveryPayloadJson(
+          run.id,
+          updateSupabaseProvisioningRecoveryPayload(run.recovery_payload_json, {
+            branchRef: run.supabase_branch_ref ?? payload.branchRef ?? null,
+            operatorAction: "attach",
+          }) ?? run.recovery_payload_json,
+        )
+        break
+      case "clear_and_fresh":
+        repos.setRunRecoverySupabaseBranchRef(run.id, null)
+        repos.setRunRecoveryPayloadJson(
+          run.id,
+          updateSupabaseProvisioningRecoveryPayload(run.recovery_payload_json, {
+            branchRef: null,
+            operatorAction: "discard",
+          }) ?? run.recovery_payload_json,
+        )
+        break
+    }
+
+    const next = repos.getRun(run.id) ?? run
+    const projected = projectRunRecoverySurface(repos, next)
+    const result: RecoveryNamedAcceptedResult = {
+      ok: true,
+      runId: run.id,
+      action,
+      outcome: "accepted",
+      latestState: recoveryLatestState(next),
+      recoveryStatus: projected.recoveryStatus as RecoveryPathStatus,
+      supabaseBranchLifecycleState: projected.supabaseBranchLifecycleState as RecoveryPathStatus,
+    }
+    appendRunRecoveryActionLog(repos, result)
+    return result
+  }
+
+  if (!isNarrowRunRecoveryClearAction(action)) {
+    return {
+      ok: false,
+      status: 400,
+      error: "unsupported_recovery_action",
+      code: "bad_request",
+      action,
+      reason: "unsupported_action",
+      message: "Unsupported recovery action.",
+    }
+  }
+
+  const unexpectedFields = unexpectedRecoveryActionFields(input, ["runId", "action"])
+  if (unexpectedFields.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: "recovery_action_invalid_request",
+      code: "bad_request",
+      action,
+      reason: "unexpected_fields",
+      message: "This recovery action accepts only the action field.",
+      fields: unexpectedFields,
+    }
+  }
+
+  const before = recoveryLatestState(run)
+  const currentValue =
+    action === "clear_recovery_payload"
+      ? before.recoveryPayloadJson
+      : action === "clear_supabase_branch_ref"
+        ? before.supabaseBranchRef
+        : before.supabaseBranchLifecycleState
+
+  if (currentValue == null) {
+    const result: RecoveryClearNoopResult = {
+      ok: true,
+      runId: run.id,
+      action,
+      outcome: "noop",
+      reason: "already_clear",
+      latestState: before,
+    }
+    appendRunRecoveryActionLog(repos, result)
+    return result
+  }
+
+  switch (action) {
+    case "clear_recovery_payload":
+      repos.setRunRecoveryPayloadJson(run.id, null)
+      break
+    case "clear_supabase_branch_ref":
+      repos.setRunRecoverySupabaseBranchRef(run.id, null)
+      break
+    case "clear_supabase_branch_lifecycle_state":
+      repos.setRunRecoverySupabaseLifecycleState(run.id, null)
+      break
+  }
+
+  const result: RecoveryClearAcceptedResult = {
+    ok: true,
+    runId: run.id,
+    action,
+    outcome: "accepted",
+    latestState: recoveryLatestState(repos.getRun(run.id) ?? run),
+  }
+  appendRunRecoveryActionLog(repos, result)
+  return result
 }
 
 export async function autoResumeRunOnStartup(

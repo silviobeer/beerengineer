@@ -138,6 +138,15 @@ const SIMPLE_PRESENTATIONS: Partial<Record<MessageEntry["type"], (entry: Message
   log: entry => ({ icon: "📎", label: "log", detail: payloadString(entry.payload.message) }),
   artifact_written: entry => ({ icon: "📝", label: "artifact", detail: payloadString(entry.payload.label) }),
   external_remediation_recorded: entry => ({ icon: "🩹", label: "remediation", detail: payloadString(entry.payload.summary) }),
+  run_recovery_action: entry => ({
+    icon: entry.payload.outcome === "noop" ? "∅" : "🛠",
+    label: "recovery action",
+    detail: [
+      payloadString(entry.payload.action),
+      entry.payload.outcome === "noop" ? "noop" : "accepted",
+      typeof entry.payload.reason === "string" ? entry.payload.reason : undefined,
+    ].filter(Boolean).join(" / "),
+  }),
   plan_regenerated: entry => ({ icon: "🧭", label: "plan regenerated", detail: payloadString(entry.payload.reason) }),
   item_column_changed: entry => ({
     icon: "📍",

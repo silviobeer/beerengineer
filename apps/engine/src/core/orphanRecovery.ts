@@ -255,6 +255,7 @@ async function resolveCandidateOutcomes(
       repos.getRun(candidate.run.id) ?? candidate.run,
       input,
       autoResume,
+      candidate.eligibility,
     )
     outcomes.push(outcome)
     appendStartupRecoveryLog(repos, outcome, error)
@@ -291,13 +292,23 @@ async function resolveStartupRecoveryPass(
     now: input.now,
     autoResumeEnabled: autoResume.enabled,
   })
-  const eligibleCandidates = candidates.filter(
+  const thresholdApplies = autoResume.recoveryThreshold != null && Number.isFinite(autoResume.recoveryThreshold)
+  const thresholdCandidates = thresholdApplies
+    ? candidates.map(candidate => {
+      if (!candidate.eligibility.eligible || repos.getOpenPrompt(candidate.run.id) == null) return candidate
+      return {
+        ...candidate,
+        eligibility: { eligible: false, reason: "open_prompt" as const },
+      }
+    })
+    : candidates
+  const eligibleCandidates = thresholdCandidates.filter(
     (candidate): candidate is StartupRecoveryCandidate & { eligibility: { eligible: true } } => candidate.eligibility.eligible,
   )
   if (eligibleCandidates.length > normalizedRecoveryThreshold(autoResume.recoveryThreshold)) {
-    return holdBackEligibleCandidates(repos, candidates, eligibleCandidates)
+    return holdBackEligibleCandidates(repos, thresholdCandidates, eligibleCandidates)
   }
-  return resolveCandidateOutcomes(repos, candidates, input, autoResume)
+  return resolveCandidateOutcomes(repos, thresholdCandidates, input, autoResume)
 }
 
 async function resolveStartupRecoveryOutcome(
@@ -305,8 +316,9 @@ async function resolveStartupRecoveryOutcome(
   run: RunRow,
   input: { apiWorkerInstanceId: string; now: number },
   autoResume: StartupAutoResumeOptions,
+  eligibilityOverride?: StartupAutoResumeEligibility,
 ): Promise<{ outcome: StartupRecoveryOutcome; error?: string }> {
-  const eligibility = classifyStartupAutoResumeEligibility({
+  const eligibility = eligibilityOverride ?? classifyStartupAutoResumeEligibility({
     hasOrphanedWorkerLease: hasOrphanedWorkerLease(run, input),
     hasOpenPrompt: repos.getOpenPrompt(run.id) != null,
     autoResumeEnabled: autoResume.enabled,

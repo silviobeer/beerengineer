@@ -129,6 +129,18 @@ export type WorkflowEvent =
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)
   | ({
+      type: "run_recovery_action"
+      runId: string
+      action: string
+      outcome: "accepted" | "noop"
+      reason?: "already_clear"
+      latestState: {
+        recoveryPayloadJson: string | null
+        supabaseBranchRef: string | null
+        supabaseBranchLifecycleState: string | null
+      }
+    } & WorkflowEventMeta)
+  | ({
       type: "plan_regenerated"
       runId: string
       operationId: string
