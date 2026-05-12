@@ -100,7 +100,7 @@ test("validateHarnessProfile rejects missing harnesses and accepts fast mode", (
   assert.match(missing.error?.detail ?? "", /opencode/)
 })
 
-test("registerWorkspace accepts opencode:cli for execution self-mode roles and rejects unsupported opencode variants", async () => {
+test("registerWorkspace persists execution-only opencode overrides and rejects unsupported execution override runtimes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-opencode-self-"))
   const db = initDatabase(join(dir, "db.sqlite"))
   const config = { ...defaultAppConfig(), allowedRoots: [dir] }
@@ -114,11 +114,16 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
       harnessProfile: {
         mode: "self",
         roles: {
-          coder: opencodeRole,
+          coder: claudeRole,
           reviewer: claudeRole,
         },
+        stageOverrides: {
+          execution: {
+            coder: opencodeRole,
+          },
+        },
       },
-      expected: { coder: opencodeRole, reviewer: claudeRole },
+      expectedExecution: { coder: opencodeRole },
     },
     {
       key: "reviewer-opencode",
@@ -126,10 +131,15 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
         mode: "self",
         roles: {
           coder: claudeRole,
-          reviewer: opencodeRole,
+          reviewer: claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            reviewer: opencodeRole,
+          },
         },
       },
-      expected: { coder: claudeRole, reviewer: opencodeRole },
+      expectedExecution: { reviewer: opencodeRole },
     },
     {
       key: "merge-opencode",
@@ -138,22 +148,34 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
         roles: {
           coder: claudeRole,
           reviewer: codexRole,
-          "merge-resolver": opencodeRole,
+          "merge-resolver": claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            "merge-resolver": opencodeRole,
+          },
         },
       },
-      expected: { coder: claudeRole, reviewer: codexRole, "merge-resolver": opencodeRole },
+      expectedExecution: { "merge-resolver": opencodeRole },
     },
     {
       key: "all-opencode",
       harnessProfile: {
         mode: "self",
         roles: {
-          coder: opencodeRole,
-          reviewer: opencodeRole,
-          "merge-resolver": opencodeRole,
+          coder: claudeRole,
+          reviewer: codexRole,
+          "merge-resolver": claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            coder: opencodeRole,
+            reviewer: opencodeRole,
+            "merge-resolver": opencodeRole,
+          },
         },
       },
-      expected: { coder: opencodeRole, reviewer: opencodeRole, "merge-resolver": opencodeRole },
+      expectedExecution: { coder: opencodeRole, reviewer: opencodeRole, "merge-resolver": opencodeRole },
     },
   ] as const
 
@@ -173,10 +195,15 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
       )
       assert.equal(result.ok, true, entry.key)
       const persisted = JSON.parse(readFileSync(join(path, ".beerengineer", "workspace.json"), "utf8")) as {
-        harnessProfile: { mode: string; roles: Record<string, unknown> }
+        harnessProfile: {
+          mode: string
+          roles: Record<string, unknown>
+          stageOverrides?: { execution?: Record<string, unknown> }
+        }
       }
       assert.equal(persisted.harnessProfile.mode, "self")
-      assert.deepEqual(persisted.harnessProfile.roles, entry.expected)
+      assert.deepEqual(persisted.harnessProfile.roles, entry.harnessProfile.roles)
+      assert.deepEqual(persisted.harnessProfile.stageOverrides?.execution, entry.expectedExecution)
     }
 
     for (const [label, harnessProfile] of [
@@ -185,8 +212,13 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
         {
           mode: "self",
           roles: {
-            coder: { ...opencodeRole, runtime: "sdk" },
+            coder: claudeRole,
             reviewer: claudeRole,
+          },
+          stageOverrides: {
+            execution: {
+              coder: { ...opencodeRole, runtime: "sdk" },
+            },
           },
         },
       ],
@@ -196,7 +228,12 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
           mode: "self",
           roles: {
             coder: claudeRole,
-            reviewer: { ...opencodeRole, runtime: "sdk" },
+            reviewer: claudeRole,
+          },
+          stageOverrides: {
+            execution: {
+              reviewer: { ...opencodeRole, runtime: "sdk" },
+            },
           },
         },
       ],
@@ -207,7 +244,12 @@ test("registerWorkspace accepts opencode:cli for execution self-mode roles and r
           roles: {
             coder: claudeRole,
             reviewer: codexRole,
-            "merge-resolver": { ...opencodeRole, runtime: "sdk" },
+            "merge-resolver": claudeRole,
+          },
+          stageOverrides: {
+            execution: {
+              "merge-resolver": { ...opencodeRole, runtime: "sdk" },
+            },
           },
         },
       ],

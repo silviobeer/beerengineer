@@ -153,7 +153,7 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
   }
 
   if (input.mode === "self") {
-    return validateSelfHarnessProfile(input.roles)
+    return validateSelfHarnessProfile(input)
   }
 
   throw new TypeError("llm.defaultHarnessProfile.mode is invalid")
@@ -170,13 +170,18 @@ function validateOpenCodeHarnessProfile(roles: unknown): HarnessProfile {
   }
 }
 
-function validateSelfHarnessProfile(roles: unknown): HarnessProfile {
+function validateSelfHarnessProfile(input: Record<string, unknown>): HarnessProfile {
+  const roles = input.roles
+  if (!isObject(roles)) {
+    throw new TypeError("llm.defaultHarnessProfile.roles must define coder and reviewer")
+  }
   const parsedRoles = requireProviderRoles(roles, "self roles")
   const coder = requireHarnessRole(parsedRoles.coder, "self roles")
   const reviewer = requireHarnessRole(parsedRoles.reviewer, "self roles")
   const mergeResolver = isObject(parsedRoles["merge-resolver"])
     ? requireHarnessRole(parsedRoles["merge-resolver"], "self roles[merge-resolver]")
     : undefined
+  const stageOverrides = validateSelfStageOverrides(input.stageOverrides)
   return {
     mode: "self",
     roles: {
@@ -184,7 +189,38 @@ function validateSelfHarnessProfile(roles: unknown): HarnessProfile {
       reviewer: serializeHarnessRole(reviewer),
       ...(mergeResolver ? { "merge-resolver": serializeHarnessRole(mergeResolver) } : {}),
     },
+    ...(stageOverrides ? { stageOverrides } : {}),
   }
+}
+
+function validateSelfStageOverrides(
+  input: unknown,
+): { execution?: { coder?: ReturnType<typeof serializeHarnessRole>; reviewer?: ReturnType<typeof serializeHarnessRole>; "merge-resolver"?: ReturnType<typeof serializeHarnessRole> } } | undefined {
+  if (input === undefined) return undefined
+  if (!isObject(input)) throw new TypeError('self stageOverrides must be an object when provided')
+  const keys = Object.keys(input)
+  if (keys.some(key => key !== "execution")) {
+    throw new TypeError('self stageOverrides only supports the "execution" stage')
+  }
+  const execution = input.execution
+  if (execution === undefined) return undefined
+  if (!isObject(execution)) throw new TypeError('self stageOverrides.execution must be an object when provided')
+  const executionKeys = Object.keys(execution)
+  if (executionKeys.some(key => key !== "coder" && key !== "reviewer" && key !== "merge-resolver")) {
+    throw new TypeError('self stageOverrides.execution only supports coder, reviewer, and merge-resolver')
+  }
+  const normalizedExecution = {
+    ...(isObject(execution.coder)
+      ? { coder: serializeHarnessRole(requireHarnessRole(execution.coder, "self stageOverrides.execution.coder")) }
+      : {}),
+    ...(isObject(execution.reviewer)
+      ? { reviewer: serializeHarnessRole(requireHarnessRole(execution.reviewer, "self stageOverrides.execution.reviewer")) }
+      : {}),
+    ...(isObject(execution["merge-resolver"])
+      ? { "merge-resolver": serializeHarnessRole(requireHarnessRole(execution["merge-resolver"], "self stageOverrides.execution[merge-resolver]")) }
+      : {}),
+  }
+  return Object.keys(normalizedExecution).length > 0 ? { execution: normalizedExecution } : undefined
 }
 
 function requireProviderRoles(roles: unknown, context: string) {

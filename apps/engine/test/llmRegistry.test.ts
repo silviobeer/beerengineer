@@ -191,6 +191,78 @@ test("resolveHarness supports opencode in self-mode profiles", () => {
   assert.equal(resolved.model, "qwen/qwen3-coder-plus")
 })
 
+test("self-mode execution stageOverrides apply only during execution", () => {
+  const executionCoder = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          reviewer: { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" },
+        },
+        stageOverrides: {
+          execution: {
+            coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            reviewer: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+          },
+        },
+      },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "coder",
+      stage: "execution",
+    }),
+  )
+  const planningCoder = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          reviewer: { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" },
+        },
+        stageOverrides: {
+          execution: {
+            coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+          },
+        },
+      },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "coder",
+      stage: "planning",
+    }),
+  )
+  const mergeResolver = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          reviewer: { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" },
+        },
+        stageOverrides: {
+          execution: {
+            "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+          },
+        },
+      },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "merge-resolver",
+      stage: "execution",
+    }),
+  )
+
+  assert.equal(executionCoder.harness, "opencode")
+  assert.equal(executionCoder.runtime, "cli")
+  assert.equal(planningCoder.harness, "claude")
+  assert.equal(planningCoder.runtime, "cli")
+  assert.equal(mergeResolver.harness, "opencode")
+  assert.equal(mergeResolver.runtime, "cli")
+})
+
 test("resolveHarness upgrades coder to opus for execution stage on claude-first (implementation needs the strongest model)", () => {
   const resolved = expectHosted(
     resolveHarness({

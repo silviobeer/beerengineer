@@ -952,7 +952,7 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
   }
 })
 
-test("workspace HTTP add accepts opencode for execution self-mode roles and rejects unsupported OpenCode variants", async () => {
+test("workspace HTTP add accepts execution-only opencode overrides and rejects unsupported OpenCode override variants", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()
   const dir = mkdtempSync(join(tmpdir(), "be2-workspace-api-opencode-"))
@@ -1001,9 +1001,15 @@ test("workspace HTTP add accepts opencode for execution self-mode roles and reje
         harnessProfile: {
           mode: "self",
           roles: {
-            coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
             reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
-            "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+              reviewer: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+              "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            },
           },
         },
         sonar: { enabled: false },
@@ -1020,16 +1026,24 @@ test("workspace HTTP add accepts opencode for execution self-mode roles and reje
         roles: {
           coder: { harness: string; runtime?: string }
           reviewer: { harness: string; runtime?: string }
-          "merge-resolver"?: { harness: string; runtime?: string }
+        }
+        stageOverrides?: {
+          execution?: {
+            coder?: { harness: string; runtime?: string }
+            reviewer?: { harness: string; runtime?: string }
+            "merge-resolver"?: { harness: string; runtime?: string }
+          }
         }
       }
     }
     assert.equal(gotten.harnessProfile.mode, "self")
-    assert.equal(gotten.harnessProfile.roles.coder.harness, "opencode")
-    assert.equal(gotten.harnessProfile.roles.coder.runtime, "cli")
+    assert.equal(gotten.harnessProfile.roles.coder.harness, "claude")
     assert.equal(gotten.harnessProfile.roles.reviewer.harness, "claude")
-    assert.equal(gotten.harnessProfile.roles["merge-resolver"]?.harness, "opencode")
-    assert.equal(gotten.harnessProfile.roles["merge-resolver"]?.runtime, "cli")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.coder?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.coder?.runtime, "cli")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.reviewer?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.["merge-resolver"]?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.["merge-resolver"]?.runtime, "cli")
 
     const invalidSdkRes = await fetch(`${base}/workspaces`, {
       method: "POST",
@@ -1040,8 +1054,13 @@ test("workspace HTTP add accepts opencode for execution self-mode roles and reje
         harnessProfile: {
           mode: "self",
           roles: {
-            coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "sdk" },
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
             reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "sdk" },
+            },
           },
         },
         sonar: { enabled: false },
@@ -1062,8 +1081,13 @@ test("workspace HTTP add accepts opencode for execution self-mode roles and reje
         harnessProfile: {
           mode: "self",
           roles: {
-            coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "bogus" },
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
             reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "bogus" },
+            },
           },
         },
         sonar: { enabled: false },
@@ -1075,12 +1099,40 @@ test("workspace HTTP add accepts opencode for execution self-mode roles and reje
     assert.equal(malformedBody.error, "invalid_harness_profile")
     assert.match(malformedBody.detail, /runtime/)
 
+    const outOfScopeStageRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: join(allowedRoot, "api-opencode-planning"),
+        key: "api-opencode-planning",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            planning: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(outOfScopeStageRes.status, 400)
+    const outOfScopeStageBody = await outOfScopeStageRes.json() as { error: string; detail: string }
+    assert.equal(outOfScopeStageBody.error, "invalid_harness_profile")
+    assert.match(outOfScopeStageBody.detail, /execution/)
+
     const listRes = await fetch(`${base}/workspaces`)
     assert.equal(listRes.status, 200)
     const list = await listRes.json() as { workspaces: Array<{ key: string }> }
     assert.ok(list.workspaces.some(workspace => workspace.key === "api-opencode"))
     assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-sdk"), false)
     assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-malformed"), false)
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-planning"), false)
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })

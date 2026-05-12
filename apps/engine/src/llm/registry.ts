@@ -187,7 +187,13 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
         string,
         { harness: KnownHarness; provider?: string; model?: string; runtime?: InvocationRuntime }
       >
-      const selected = roles[input.role] ?? roles.coder
+      const executionOverrides = input.stage === "execution"
+        ? input.harnessProfile.stageOverrides?.execution as Record<
+          string,
+          { harness: KnownHarness; provider?: string; model?: string; runtime?: InvocationRuntime }
+        > | undefined
+        : undefined
+      const selected = executionOverrides?.[input.role] ?? roles[input.role] ?? roles.coder
       const runtime: InvocationRuntime = selected.runtime ?? "cli"
       return {
         kind: "hosted",
