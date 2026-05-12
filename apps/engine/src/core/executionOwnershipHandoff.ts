@@ -16,6 +16,9 @@ type HandoffCandidate = Pick<
   | "status"
   | "owner"
   | "worker_owner_kind"
+  | "worker_instance_id"
+  | "worker_started_at"
+  | "worker_heartbeat_at"
   | "current_stage"
   | "recovery_status"
   | "recovery_scope"
@@ -120,9 +123,11 @@ function consumeExecutionOwnershipHandoffResume(
 }
 
 export function isExecutionOwnershipHandoffRun(run: HandoffCandidate | undefined): boolean {
-  const owner = run?.worker_owner_kind ?? run?.owner
   return run?.status === "blocked"
-    && owner === "cli"
+    && run.worker_owner_kind === "cli"
+    && run.worker_instance_id != null
+    && run.worker_started_at != null
+    && run.worker_heartbeat_at != null
     && (run.current_stage === "planning" || run.current_stage === "execution")
     && run.recovery_status === "blocked"
     && run.recovery_scope === "stage"
@@ -148,16 +153,12 @@ export async function claimExecutionOwnershipHandoffs(
   for (const run of candidates) {
     const remediation = pendingExecutionOwnershipHandoffRemediation(repos, run)
     if (!remediation) continue
-    let claimed: RunRow | undefined
-    try {
-      claimed = repos.claimBlockedExecutionHandoff(run.id, {
-        workerInstanceId: input.apiWorkerInstanceId,
-        startedAt: input.workerLeaseClock?.() ?? Date.now(),
-      })
-    } finally {
-      consumeExecutionOwnershipHandoffResume(repos, run.id, remediation.id)
-    }
+    const claimed = repos.claimBlockedExecutionHandoff(run.id, {
+      workerInstanceId: input.apiWorkerInstanceId,
+      startedAt: input.workerLeaseClock?.() ?? Date.now(),
+    })
     if (!claimed) continue
+    consumeExecutionOwnershipHandoffResume(repos, run.id, remediation.id)
     const resumed = await input.resumeRun(repos, {
       runId: run.id,
       remediationId: remediation.id,
