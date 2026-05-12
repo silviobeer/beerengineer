@@ -116,6 +116,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - The implemented clear actions are `clear_recovery_payload`, `clear_supabase_branch_ref`, and `clear_supabase_branch_lifecycle_state`.
   - Those narrow actions persist latest-state changes on the `runs` row only, scoped to `recovery_payload_json`, `supabase_branch_ref`, and `supabase_branch_lifecycle_state`.
   - Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear.
+  - Implemented clear actions accept only `{ action }`; extra mutation fields or attempts to clear additional fields in the same request are rejected with `400 bad_request`, `reason: "unexpected_fields"`, and no state change.
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
