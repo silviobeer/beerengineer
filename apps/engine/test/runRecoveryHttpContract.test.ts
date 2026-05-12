@@ -137,6 +137,8 @@ function seedRecoveryFixtures(dbPath: string): { freshRunId: string; retainedRun
 function seedSkipFixtures(dbPath: string): {
   eligibleRunId: string
   noCurrentRunId: string
+  inactiveRunId: string
+  activeLeaseRunId: string
   terminalRunId: string
   skippedRunId: string
 } {
@@ -156,11 +158,6 @@ function seedSkipFixtures(dbPath: string): {
       recovery_summary: null,
       recovery_payload_json: null,
     })
-    repos.claimRunWorkerLease(eligible.run.id, {
-      workerInstanceId: "cli-worker-eligible",
-      workerOwnerKind: "cli",
-      startedAt: Date.now(),
-    })
     repos.createStageRun({ runId: eligible.run.id, stageKey: "execution" })
 
     const noCurrent = createRunFixture(repos, {
@@ -176,8 +173,38 @@ function seedSkipFixtures(dbPath: string): {
       recovery_summary: null,
       recovery_payload_json: null,
     })
-    repos.claimRunWorkerLease(noCurrent.run.id, {
-      workerInstanceId: "cli-worker-no-current",
+
+    const inactive = createRunFixture(repos, {
+      title: "Inactive current stage",
+      recoverySummary: "Current stage is no longer active.",
+    })
+    repos.updateRun(inactive.run.id, {
+      status: "blocked",
+      current_stage: "planning",
+      recovery_status: "blocked",
+      recovery_scope: "stage",
+      recovery_scope_ref: "planning",
+      recovery_summary: "Manual review is required before continuing.",
+      recovery_payload_json: null,
+    })
+    repos.createStageRun({ runId: inactive.run.id, stageKey: "planning" })
+
+    const activeLease = createRunFixture(repos, {
+      title: "Live worker lease",
+      recoverySummary: "Worker is still active.",
+    })
+    repos.updateRun(activeLease.run.id, {
+      status: "running",
+      current_stage: "execution",
+      recovery_status: null,
+      recovery_scope: null,
+      recovery_scope_ref: null,
+      recovery_summary: null,
+      recovery_payload_json: null,
+    })
+    repos.createStageRun({ runId: activeLease.run.id, stageKey: "execution" })
+    repos.claimRunWorkerLease(activeLease.run.id, {
+      workerInstanceId: "cli-worker-active",
       workerOwnerKind: "cli",
       startedAt: Date.now(),
     })
@@ -194,11 +221,6 @@ function seedSkipFixtures(dbPath: string): {
       recovery_scope_ref: null,
       recovery_summary: null,
       recovery_payload_json: null,
-    })
-    repos.claimRunWorkerLease(terminal.run.id, {
-      workerInstanceId: "cli-worker-terminal",
-      workerOwnerKind: "cli",
-      startedAt: Date.now(),
     })
     const terminalStage = repos.createStageRun({ runId: terminal.run.id, stageKey: "requirements" })
     repos.completeStageRun(terminalStage.id, "completed")
@@ -222,6 +244,8 @@ function seedSkipFixtures(dbPath: string): {
     return {
       eligibleRunId: eligible.run.id,
       noCurrentRunId: noCurrent.run.id,
+      inactiveRunId: inactive.run.id,
+      activeLeaseRunId: activeLease.run.id,
       terminalRunId: terminal.run.id,
       skippedRunId: skipped.run.id,
     }
@@ -462,19 +486,23 @@ test("REQ-1 edge cases: unknown, malformed, and missing run requests reject with
 test("REQ-2 TC-REQ-2-01: recovery read surface offers skip_current_stage only for an active unskipped current stage", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
   const dbPath = join(dir, "db.sqlite")
-  const fixture = seedSkipFixtures(dbPath)
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
 
   try {
     await waitForHealth(base)
+    const fixture = seedSkipFixtures(dbPath)
 
     const eligible = await getRecovery(base, fixture.eligibleRunId) as { recovery: { availableActions: string[] } }
     const noCurrent = await getRecovery(base, fixture.noCurrentRunId) as { recovery: null }
+    const inactive = await getRecovery(base, fixture.inactiveRunId) as { recovery: { availableActions: string[] } }
+    const activeLease = await getRecovery(base, fixture.activeLeaseRunId) as { recovery: { availableActions: string[] } }
     const terminal = await getRecovery(base, fixture.terminalRunId) as { recovery: { availableActions: string[] } }
     const skipped = await getRecovery(base, fixture.skippedRunId) as { recovery: { availableActions: string[] } }
 
     assert.deepEqual(eligible.recovery.availableActions, ["skip_current_stage"])
     assert.equal(noCurrent.recovery, null)
+    assert.deepEqual(inactive.recovery.availableActions, [])
+    assert.deepEqual(activeLease.recovery.availableActions, [])
     assert.deepEqual(terminal.recovery.availableActions, [])
     assert.deepEqual(skipped.recovery.availableActions, [])
   } finally {
@@ -486,11 +514,11 @@ test("REQ-2 TC-REQ-2-01: recovery read surface offers skip_current_stage only fo
 test("REQ-2 TC-REQ-2-02/03/06: accepted skip_current_stage records the skip, blocks the run, and does not auto-advance", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
   const dbPath = join(dir, "db.sqlite")
-  const fixture = seedSkipFixtures(dbPath)
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
 
   try {
     await waitForHealth(base)
+    const fixture = seedSkipFixtures(dbPath)
 
     const accepted = await postRecovery(base, fixture.eligibleRunId, { action: "skip_current_stage" })
     assert.equal(accepted.status, 200)
@@ -551,15 +579,23 @@ test("REQ-2 TC-REQ-2-02/03/06: accepted skip_current_stage records the skip, blo
 test("REQ-2 TC-REQ-2-04: ineligible skip_current_stage requests reject with specific reasons and no state changes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
   const dbPath = join(dir, "db.sqlite")
-  const fixture = seedSkipFixtures(dbPath)
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
 
   try {
     await waitForHealth(base)
+    const fixture = seedSkipFixtures(dbPath)
 
     const noCurrentBefore = JSON.stringify({
       recovery: await getRecovery(base, fixture.noCurrentRunId),
       tree: await getRunTree(base, fixture.noCurrentRunId),
+    })
+    const inactiveBefore = JSON.stringify({
+      recovery: await getRecovery(base, fixture.inactiveRunId),
+      tree: await getRunTree(base, fixture.inactiveRunId),
+    })
+    const activeLeaseBefore = JSON.stringify({
+      recovery: await getRecovery(base, fixture.activeLeaseRunId),
+      tree: await getRunTree(base, fixture.activeLeaseRunId),
     })
     const terminalBefore = JSON.stringify({
       recovery: await getRecovery(base, fixture.terminalRunId),
@@ -579,6 +615,28 @@ test("REQ-2 TC-REQ-2-04: ineligible skip_current_stage requests reject with spec
       action: "skip_current_stage",
       reason: "no_current_stage",
       message: "Skip current stage is unavailable because the run has no current stage.",
+    })
+
+    const inactive = await postRecovery(base, fixture.inactiveRunId, { action: "skip_current_stage" })
+    assert.equal(inactive.status, 409)
+    assert.deepEqual(inactive.json, {
+      ok: false,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_not_active",
+      message: "Skip current stage is unavailable because the current stage is not active.",
+    })
+
+    const activeLease = await postRecovery(base, fixture.activeLeaseRunId, { action: "skip_current_stage" })
+    assert.equal(activeLease.status, 409)
+    assert.deepEqual(activeLease.json, {
+      ok: false,
+      error: "recovery_action_ineligible",
+      code: "invalid_transition",
+      action: "skip_current_stage",
+      reason: "current_stage_worker_active",
+      message: "Skip current stage is unavailable because a worker still holds the active stage lease.",
     })
 
     const terminal = await postRecovery(base, fixture.terminalRunId, { action: "skip_current_stage" })
@@ -607,6 +665,14 @@ test("REQ-2 TC-REQ-2-04: ineligible skip_current_stage requests reject with spec
       recovery: await getRecovery(base, fixture.noCurrentRunId),
       tree: await getRunTree(base, fixture.noCurrentRunId),
     }), noCurrentBefore)
+    assert.equal(JSON.stringify({
+      recovery: await getRecovery(base, fixture.inactiveRunId),
+      tree: await getRunTree(base, fixture.inactiveRunId),
+    }), inactiveBefore)
+    assert.equal(JSON.stringify({
+      recovery: await getRecovery(base, fixture.activeLeaseRunId),
+      tree: await getRunTree(base, fixture.activeLeaseRunId),
+    }), activeLeaseBefore)
     assert.equal(JSON.stringify({
       recovery: await getRecovery(base, fixture.terminalRunId),
       tree: await getRunTree(base, fixture.terminalRunId),

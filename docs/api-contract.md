@@ -110,7 +110,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - `recover_fresh_branch` persists the contract's `fresh_path_recovery` state for a fresh-eligible blocked Supabase provisioning run.
   - `retry_retained` persists the contract's `retained_path_recovery` state for a retained-diagnosis blocked Supabase provisioning run.
   - `clear_and_fresh` clears the retained branch attachment for that same retained-diagnosis incident and persists `fresh_path_recovery`; repeating it returns `outcome: "noop"` with `reason: "already_on_fresh_path"`.
-  - `skip_current_stage` is offered only when the run has an active non-terminal current stage that is not already recorded as skipped; ineligible requests reject with specific reasons such as `no_current_stage`, `current_stage_terminal`, and `current_stage_already_skipped`.
+  - `skip_current_stage` is offered only when the run has an active non-terminal current stage that is not already recorded as skipped and no live worker still holds the stage lease; ineligible requests reject with specific reasons such as `no_current_stage`, `current_stage_not_active`, `current_stage_worker_active`, `current_stage_terminal`, and `current_stage_already_skipped`.
   - Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged.
   - Reserved setup actions still keep `resume`, `replan`, and `retry_supabase_readiness` on the same canonical family with a specific `action_not_implemented` rejection.
   - The implemented clear actions are `clear_recovery_payload`, `clear_supabase_branch_ref`, and `clear_supabase_branch_lifecycle_state`.

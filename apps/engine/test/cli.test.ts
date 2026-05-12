@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
+import { createServer as createNetServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
@@ -28,6 +29,25 @@ function makeStubBin(dir: string, name: string, body: string): void {
 
 const TEST_API_TOKEN = "test-token"
 
+async function findFreePort(): Promise<number> {
+  return await new Promise((resolvePromise, reject) => {
+    const probe = createNetServer()
+    probe.once("error", reject)
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address()
+      if (!address || typeof address === "string") {
+        probe.close(() => reject(new Error("failed to allocate an ephemeral test port")))
+        return
+      }
+      const { port } = address
+      probe.close(error => {
+        if (error) reject(error)
+        else resolvePromise(port)
+      })
+    })
+  })
+}
+
 async function waitForHealth(base: string, timeoutMs = 10000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -40,8 +60,8 @@ async function waitForHealth(base: string, timeoutMs = 10000): Promise<void> {
   throw new Error(`server at ${base} did not become healthy in time`)
 }
 
-function startEngineServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string; port: number } {
-  const port = 4900 + Math.floor(Math.random() * 100)
+async function startEngineServer(env: NodeJS.ProcessEnv): Promise<{ proc: ChildProcess; base: string; port: number }> {
+  const port = await findFreePort()
   const host = "127.0.0.1"
   const serverPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "api", "server.ts")
   const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
@@ -244,30 +264,29 @@ test("REQ-2 TC-REQ-2-05 public CLI skip-current-stage preserves the canonical re
       browser: { enabled: false },
     }), "utf8")
 
-    const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
-    const item = repos.createItem({ workspaceId: workspace.id, code: "ITEM-0700", title: "Skip current stage", description: "skip" })
-    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title, owner: "api", status: "running" })
-    repos.updateRun(run.id, {
-      status: "running",
-      current_stage: "execution",
-      recovery_status: null,
-      recovery_scope: null,
-      recovery_scope_ref: null,
-      recovery_summary: null,
-      recovery_payload_json: null,
-    })
-    repos.claimRunWorkerLease(run.id, {
-      workerInstanceId: "cli-worker",
-      workerOwnerKind: "cli",
-      startedAt: Date.now(),
-    })
-    repos.createStageRun({ runId: run.id, stageKey: "execution" })
     db.close()
     dbClosed = true
 
-    const server = startEngineServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+    const server = await startEngineServer({ BEERENGINEER_UI_DB_PATH: dbPath })
     try {
       await waitForHealth(server.base)
+      const seedDb = initDatabase(dbPath)
+      const seedRepos = new Repos(seedDb)
+      const workspace = seedRepos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+      const item = seedRepos.createItem({ workspaceId: workspace.id, code: "ITEM-0700", title: "Skip current stage", description: "skip" })
+      const run = seedRepos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title, owner: "api", status: "running" })
+      seedRepos.updateRun(run.id, {
+        status: "running",
+        current_stage: "execution",
+        recovery_status: null,
+        recovery_scope: null,
+        recovery_scope_ref: null,
+        recovery_summary: null,
+        recovery_payload_json: null,
+      })
+      seedRepos.createStageRun({ runId: run.id, stageKey: "execution" })
+      seedDb.close()
+
       writeFileSync(configPath, JSON.stringify({
         schemaVersion: 1,
         dataDir: dir,

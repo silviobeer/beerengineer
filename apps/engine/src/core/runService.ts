@@ -28,7 +28,7 @@ import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
-import { inspectWorkerLease } from "./workerLease.js"
+import { inspectWorkerLease, STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
 import {
   parseSupabaseProvisioningRecoveryPayload,
   updateSupabaseProvisioningRecoveryPayload,
@@ -179,6 +179,7 @@ export type SkipCurrentStageEligibilityReason =
   | "current_stage_not_active"
   | "current_stage_terminal"
   | "current_stage_already_skipped"
+  | "current_stage_worker_active"
 
 export type RunRecoverySurfaceProjection = {
   recoveryStatus: RecoveryPathStatus | null
@@ -1498,6 +1499,10 @@ function skipCurrentStageEligibility(
   if (stageRun && !ACTIVE_STAGE_RUN_STATUSES.has(stageRun.status)) {
     return { eligible: false, reason: "current_stage_not_active" }
   }
+  const lease = inspectWorkerLease(repos, run.id)
+  if (lease && Date.now() - lease.heartbeatAt < STALE_WORKER_HEARTBEAT_MS) {
+    return { eligible: false, reason: "current_stage_worker_active" }
+  }
   return { eligible: true, currentStage, stageRun }
 }
 
@@ -1510,6 +1515,8 @@ function skipCurrentStageRejection(
       ? "Skip current stage is unavailable because the run has no current stage."
       : reason === "current_stage_not_active"
         ? "Skip current stage is unavailable because the current stage is not active."
+        : reason === "current_stage_worker_active"
+          ? "Skip current stage is unavailable because a worker still holds the active stage lease."
         : reason === "current_stage_terminal"
           ? "Skip current stage is unavailable because the current stage is already terminal."
           : "Skip current stage is unavailable because the current stage is already recorded as skipped."

@@ -4880,6 +4880,7 @@
               "incompatible_recovery_state",
               "no_current_stage",
               "current_stage_not_active",
+              "current_stage_worker_active",
               "current_stage_terminal",
               "current_stage_already_skipped"
             ]
