@@ -299,6 +299,71 @@ test("REQ-1 tokenless localhost mutations are admitted whether legacy token head
   }
 })
 
+test("REQ-2 localhost compatibility keeps the same validation failure across env token and legacy header combinations", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-boundary-compat-"))
+  const dbPath = join(dir, "server.sqlite")
+  const configPath = join(dir, "config.json")
+  const allowedRoot = join(dir, "projects")
+  const stateDir = join(dir, "state")
+  const staleTokenPath = join(stateDir, "beerengineer", "api.token")
+  const { mkdirSync, writeFileSync } = await import("node:fs")
+  initDatabase(dbPath).close()
+  mkdirSync(allowedRoot, { recursive: true })
+  mkdirSync(join(stateDir, "beerengineer"), { recursive: true })
+  writeFileSync(staleTokenPath, "stale-legacy-token", "utf8")
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+
+  const cases = [
+    { label: "no env token and no legacy header", apiToken: null, header: undefined },
+    { label: "no env token and a legacy header", apiToken: null, header: "legacy-placeholder" },
+    { label: "env token and no legacy header", apiToken: "env-token", header: undefined },
+    { label: "env token and a mismatched legacy header", apiToken: "env-token", header: "legacy-placeholder" },
+  ] as const
+
+  for (const scenario of cases) {
+    const { proc, base } = await startServer({
+      BEERENGINEER_UI_DB_PATH: dbPath,
+      BEERENGINEER_CONFIG_PATH: configPath,
+      BEERENGINEER_DATA_DIR: join(dir, "data"),
+      XDG_STATE_HOME: stateDir,
+    }, { apiToken: scenario.apiToken })
+    try {
+      await waitForHealth(base)
+      const res = await fetch(`${base}/workspaces`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(scenario.header ? { "x-beerengineer-token": scenario.header } : {}),
+        },
+        body: JSON.stringify({
+          path: join(allowedRoot, "bad"),
+          harnessProfile: { mode: "does-not-exist" },
+        }),
+      })
+      assert.equal(res.status, 400, scenario.label)
+      const body = await res.json() as { error: string }
+      assert.equal(body.error, "invalid_harness_profile", scenario.label)
+    } finally {
+      await stopServer(proc)
+    }
+  }
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("REQ-10-1 characterizes the current SSE handshake and hello frame", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-api-boundary-sse-"))
   const dbPath = join(dir, "server.sqlite")
