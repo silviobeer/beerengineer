@@ -22,7 +22,7 @@
       "name": "openrouter",
       "models": [
         { "id": "qwen/qwen3.5-coder" },
-        { "id": "deepseek/deepseek-v3.2" },
+        { "id": "deepseek/deepseek-v4-pro" },
         { "id": "mistralai/codestral-2501" },
         { "id": "mistralai/mistral-large-2411" }
       ]
@@ -85,11 +85,11 @@
     },
     "opencode-china": {
       "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
-      "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v3.2" },
+      "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v4-pro" },
       "merge-resolver": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
       "stageOverrides": {
         "qa": {
-          "coder": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v3.2" },
+          "coder": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v4-pro" },
           "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" }
         }
       }
