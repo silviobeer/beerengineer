@@ -174,8 +174,18 @@ async function writeWaveHandoff(input: {
   | { ok: true; handoffPath: string }
   | { ok: false; error: string; details?: unknown }
 > {
-  if (!input.handoffClient || !input.workspaceRoot || !input.runId || !input.projectRef) {
-    return { ok: true, handoffPath: "" }
+  const missingDependencies: string[] = []
+  if (input.handoffClient == null) missingDependencies.push("handoffClient")
+  if (input.workspaceRoot == null || input.workspaceRoot === "") missingDependencies.push("workspaceRoot")
+  if (input.runId == null || input.runId === "") missingDependencies.push("runId")
+  if (input.projectRef == null || input.projectRef === "") missingDependencies.push("projectRef")
+
+  if (missingDependencies.length > 0) {
+    return {
+      ok: false,
+      error: "handoff_dependency_missing",
+      details: `Missing Supabase post-create handoff dependency: ${missingDependencies.join(", ")}`,
+    }
   }
   try {
     await ensureSupabaseHandoffGitignore(input.workspaceRoot)
