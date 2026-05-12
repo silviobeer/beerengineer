@@ -124,7 +124,7 @@ function buildCommandForProvider(
     }
     case "opencode": {
       const command = ["opencode", "run"]
-      const modelSpec = provider && model ? `${provider}/${model}` : model
+      const modelSpec = provider && model ? `${provider}/${model}` : undefined
       if (modelSpec) command.push("--model", modelSpec)
       command.push("--format", "json")
       return { ok: true, command, stdinText: prompt }

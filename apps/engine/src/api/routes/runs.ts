@@ -150,7 +150,12 @@ function executionHarnessSelectionsForRun(repos: Repos, runId: string): Array<{
   }
   const roles: HarnessRole[] = ["coder", "reviewer", "merge-resolver"]
   return roles.flatMap(role => {
-    const resolved = resolveHarness({ ...llm, role, stage: "execution" })
+    let resolved
+    try {
+      resolved = resolveHarness({ ...llm, role, stage: "execution" })
+    } catch {
+      return []
+    }
     if (resolved.kind === "fake") return []
     return [{
       role,
