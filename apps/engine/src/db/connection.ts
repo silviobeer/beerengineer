@@ -144,7 +144,8 @@ function migrateRunsOwnerColumn(db: Db): void {
 /**
  * Add the recovery projection columns to an older `runs` table. New databases
  * pick these up from schema.sql directly; this branch keeps pre-existing local
- * DBs readable after upgrade.
+ * DBs readable after upgrade. Recovery latest-state writes stay on the `runs`
+ * row projection; there is no separate generic recovery patch table.
  */
 function migrateRunsRecoveryColumns(db: Db): void {
   const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>

@@ -519,6 +519,16 @@ export class Repos {
     return this.getRun(runId)
   }
 
+  /**
+   * Recovery-specific latest-state write path. Intentionally narrower than
+   * `setRunSupabaseBranch` so the canonical recovery HTTP surface can mutate
+   * only the projected branch ref without rewriting unrelated metadata.
+   */
+  setRunRecoverySupabaseBranchRef(runId: string, branchRef: string | null): RunRow | undefined {
+    this.run("UPDATE runs SET supabase_branch_ref = ?, updated_at = ? WHERE id = ?", branchRef, now(), runId)
+    return this.getRun(runId)
+  }
+
   clearRunSupabaseBranch(runId: string): RunRow | undefined {
     this.run(
       "UPDATE runs SET supabase_branch_ref = NULL, supabase_branch_name = NULL, supabase_branch_lifecycle_state = NULL, updated_at = ? WHERE id = ?",
@@ -529,6 +539,16 @@ export class Repos {
   }
 
   setRunSupabaseLifecycleState(runId: string, lifecycleState: string): RunRow | undefined {
+    this.run("UPDATE runs SET supabase_branch_lifecycle_state = ?, updated_at = ? WHERE id = ?", lifecycleState, now(), runId)
+    return this.getRun(runId)
+  }
+
+  /**
+   * Recovery-specific latest-state write path. Keeps recovery mutation
+   * semantics scoped to the lifecycle projection instead of the broader branch
+   * metadata path used by provisioning.
+   */
+  setRunRecoverySupabaseLifecycleState(runId: string, lifecycleState: string | null): RunRow | undefined {
     this.run("UPDATE runs SET supabase_branch_lifecycle_state = ?, updated_at = ? WHERE id = ?", lifecycleState, now(), runId)
     return this.getRun(runId)
   }
@@ -600,6 +620,21 @@ export class Repos {
       now(),
       id
     )
+  }
+
+  /**
+   * Recovery-specific latest-state write path for payload-only adjustments.
+   * This is used by the canonical recovery HTTP surface so narrow recovery
+   * fixes do not flow through the generic run patch helper.
+   */
+  setRunRecoveryPayloadJson(id: string, payloadJson: string | null): RunRow | undefined {
+    this.run(
+      "UPDATE runs SET recovery_payload_json = ?, updated_at = ? WHERE id = ?",
+      payloadJson,
+      now(),
+      id,
+    )
+    return this.getRun(id)
   }
 
   clearRunRecovery(id: string): void {

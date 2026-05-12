@@ -99,6 +99,10 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 - `GET /runs/:id`
 - `GET /runs/:id/tree`
 - `GET /runs/:id/recovery`
+- `POST /runs/:id/recovery`
+  - Canonical recovery mutation surface for both recovery action families.
+  - Setup scaffolding reserves named actions on this route and currently implements only the narrow clear actions: `clear_recovery_payload`, `clear_supabase_branch_ref`, and `clear_supabase_branch_lifecycle_state`.
+  - Those narrow actions persist latest-state changes on the `runs` row only, scoped to `recovery_payload_json`, `supabase_branch_ref`, and `supabase_branch_lifecycle_state`.
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`

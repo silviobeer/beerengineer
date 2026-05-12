@@ -24,6 +24,18 @@ import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { recoveryUserMessageForRun } from "../../core/recoveryUserMessage.js"
 
+const RESERVED_RECOVERY_MUTATION_ACTIONS = [
+  "resume",
+  "replan",
+  "retry_supabase_readiness",
+] as const
+
+const NARROW_RECOVERY_CLEAR_ACTIONS = [
+  "clear_recovery_payload",
+  "clear_supabase_branch_ref",
+  "clear_supabase_branch_lifecycle_state",
+] as const
+
 function contentTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
     case ".html":
@@ -228,6 +240,58 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
       recovery_user_message: recoveryUserMessageForRun(run),
       resumable: !isResumeInFlight(runId),
       remediations: repos.listExternalRemediations(runId),
+    },
+  })
+}
+
+export async function handleMutateRecovery(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+): Promise<void> {
+  const run = repos.getRun(runId)
+  if (!run) return json(res, 404, { error: "run_not_found", code: "not_found" })
+
+  const body = (await readJson(req)) as { action?: string }
+  if (typeof body.action !== "string" || body.action.trim().length === 0) {
+    return json(res, 400, { error: "recovery_action_required", code: "bad_request" })
+  }
+
+  const action = body.action.trim()
+  if (RESERVED_RECOVERY_MUTATION_ACTIONS.includes(action as (typeof RESERVED_RECOVERY_MUTATION_ACTIONS)[number])) {
+    return json(res, 501, {
+      error: "recovery_action_reserved",
+      code: "not_implemented",
+      message: "Named recovery actions are reserved on POST /runs/:id/recovery and will be wired by later stories.",
+    })
+  }
+
+  if (!NARROW_RECOVERY_CLEAR_ACTIONS.includes(action as (typeof NARROW_RECOVERY_CLEAR_ACTIONS)[number])) {
+    return json(res, 400, { error: "unsupported_recovery_action", code: "bad_request" })
+  }
+
+  switch (action) {
+    case "clear_recovery_payload":
+      repos.setRunRecoveryPayloadJson(runId, null)
+      break
+    case "clear_supabase_branch_ref":
+      repos.setRunRecoverySupabaseBranchRef(runId, null)
+      break
+    case "clear_supabase_branch_lifecycle_state":
+      repos.setRunRecoverySupabaseLifecycleState(runId, null)
+      break
+  }
+
+  const updated = repos.getRun(runId)
+  json(res, 200, {
+    ok: true,
+    runId,
+    action,
+    latestState: {
+      recoveryPayloadJson: updated?.recovery_payload_json ?? null,
+      supabaseBranchRef: updated?.supabase_branch_ref ?? null,
+      supabaseBranchLifecycleState: updated?.supabase_branch_lifecycle_state ?? null,
     },
   })
 }
