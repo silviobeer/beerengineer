@@ -5,8 +5,8 @@ export const managementEndpoints = {
   getProject: (projectRef: string) => `/projects/${encodeURIComponent(projectRef)}`,
   listBranches: (projectRef: string) => `/projects/${encodeURIComponent(projectRef)}/branches`,
   createBranch: (projectRef: string) => `/projects/${encodeURIComponent(projectRef)}/branches`,
-  getBranch: (projectRef: string, branchRef: string) =>
-    `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}`,
+  getBranch: (_projectRef: string, branchRef: string) =>
+    `/branches/${encodeURIComponent(branchRef)}`,
   deleteBranch: (projectRef: string, branchRef: string) =>
     `/projects/${encodeURIComponent(projectRef)}/branches/${encodeURIComponent(branchRef)}`,
   runQuery: (projectRef: string, branchRef: string) =>
