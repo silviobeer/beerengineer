@@ -196,7 +196,7 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
     const entry = conversationEntryFromLog(runId, row, stageKeyOf(row), foldedPrompts.foldedTextByLogId)
     return entry ? [entry] : []
   })
-  const openPrompt = findOpenPrompt(entries)
+  const openPrompt = findOpenPrompt(entries, repos.getOpenPrompt(runId)?.id ?? null)
   const updatedAt = entries.at(-1)?.createdAt ?? new Date(run.updated_at).toISOString()
 
   return { runId, updatedAt, entries, openPrompt }
@@ -305,14 +305,11 @@ function conversationEntryFromLog(
   }
 }
 
-function findOpenPrompt(entries: ConversationEntry[]): OpenPrompt | null {
-  const answered = new Set<string>()
-  for (const entry of entries) {
-    if (entry.kind === "answer" && entry.answerTo) answered.add(entry.answerTo)
-  }
+function findOpenPrompt(entries: ConversationEntry[], activePromptId: string | null): OpenPrompt | null {
+  if (!activePromptId) return null
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]
-    if (entry.kind !== "question" || !entry.promptId || answered.has(entry.promptId)) continue
+    if (entry.kind !== "question" || entry.promptId !== activePromptId) continue
     return {
       promptId: entry.promptId,
       runId: entry.runId,
