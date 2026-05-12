@@ -291,6 +291,7 @@ export type RegisterErrorCode =
   | "path_missing_parent"
   | "path_not_directory"
   | "key_conflict"
+  | "unsupported_harness_selection"
   | "profile_references_unavailable_harness"
   | "profile_references_unavailable_runtime"
   | "scaffold_failed"
@@ -323,7 +324,7 @@ export type ValidationResult = {
   ok: boolean
   warnings: string[]
   error?: {
-    code: Extract<RegisterErrorCode, "profile_references_unavailable_harness" | "profile_references_unavailable_runtime">
+    code: Extract<RegisterErrorCode, "profile_references_unavailable_harness" | "profile_references_unavailable_runtime" | "unsupported_harness_selection">
     detail: string
   }
 }

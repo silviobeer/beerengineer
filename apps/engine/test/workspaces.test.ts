@@ -208,6 +208,26 @@ test("registerWorkspace persists execution-only opencode overrides and rejects u
 
     for (const [label, harnessProfile] of [
       [
+        "top-level coder opencode",
+        {
+          mode: "self",
+          roles: {
+            coder: opencodeRole,
+            reviewer: claudeRole,
+          },
+        },
+      ],
+      [
+        "opencode preset mode",
+        {
+          mode: "opencode",
+          roles: {
+            coder: { provider: "openrouter", model: "qwen/qwen3-coder-plus" },
+            reviewer: { provider: "openrouter", model: "deepseek/deepseek-v4-pro" },
+          },
+        },
+      ],
+      [
         "coder sdk",
         {
           mode: "self",
@@ -267,8 +287,13 @@ test("registerWorkspace persists execution-only opencode overrides and rejects u
         { repos, config, appReport: report },
       )
       assert.equal(result.ok, false, label)
-      assert.equal(result.error, "profile_references_unavailable_runtime")
-      assert.match(result.detail ?? "", /opencode:sdk/)
+      if (label.includes("sdk")) {
+        assert.equal(result.error, "profile_references_unavailable_runtime")
+        assert.match(result.detail ?? "", /opencode:sdk/)
+      } else {
+        assert.equal(result.error, "unsupported_harness_selection")
+        assert.match(result.detail ?? "", /coder/)
+      }
       assert.equal(existsSync(join(path, ".beerengineer", "workspace.json")), false)
     }
   } finally {
@@ -1022,6 +1047,113 @@ test("resolveMergeConflictsViaLlm refuses sdk runtime with an actionable reason"
     assert.match(result.reason, /sdk is not implemented/)
     assert.match(result.reason, /merge-resolver/)
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resolveMergeConflictsViaLlm supports opencode for merge resolution", async () => {
+  const { resolveMergeConflictsViaLlm } = await import("../src/core/mergeResolver.js")
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-resolver-opencode-"))
+  const binDir = join(dir, "bin")
+  const repoDir = join(dir, "repo")
+  const previousPath = process.env.PATH
+  try {
+    mkdirSync(binDir, { recursive: true })
+    mkdirSync(repoDir, { recursive: true })
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "base\n", "utf8")
+    spawnSync("git", ["add", "README.md"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "base"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "-b", "feature"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "feature\n", "utf8")
+    spawnSync("git", ["commit", "-am", "feature"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "main"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "main\n", "utf8")
+    spawnSync("git", ["commit", "-am", "main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["merge", "feature"], { cwd: repoDir, encoding: "utf8" })
+
+    const stubPath = join(binDir, "opencode")
+    writeFileSync(stubPath, `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'EOF' > README.md
+resolved
+EOF
+printf '%s\n' '{"type":"step_start","sessionID":"merge-123"}'
+printf '%s\n' '{"type":"text","part":{"text":"{\\"summary\\":\\"resolved\\",\\"resolvedFiles\\":[\\"README.md\\"]}"}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"input":9,"output":11}}}'
+`, "utf8")
+    chmodSync(stubPath, 0o755)
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`
+
+    const result = resolveMergeConflictsViaLlm({
+      workspaceRoot: repoDir,
+      mergeMessage: "test merge",
+      harness: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus" },
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(readFileSync(join(repoDir, "README.md"), "utf8"), "resolved\n")
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resolveMergeConflictsViaLlm omits opencode --model when provider is missing", async () => {
+  const { resolveMergeConflictsViaLlm } = await import("../src/core/mergeResolver.js")
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-resolver-opencode-providerless-"))
+  const binDir = join(dir, "bin")
+  const repoDir = join(dir, "repo")
+  const previousPath = process.env.PATH
+  try {
+    mkdirSync(binDir, { recursive: true })
+    mkdirSync(repoDir, { recursive: true })
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "base\n", "utf8")
+    spawnSync("git", ["add", "README.md"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "base"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "-b", "feature"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "feature\n", "utf8")
+    spawnSync("git", ["commit", "-am", "feature"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "main"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "main\n", "utf8")
+    spawnSync("git", ["commit", "-am", "main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["merge", "feature"], { cwd: repoDir, encoding: "utf8" })
+
+    const argvPath = join(dir, "argv.txt")
+    const stubPath = join(binDir, "opencode")
+    writeFileSync(stubPath, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > ${JSON.stringify(argvPath)}
+cat >/dev/null
+cat <<'EOF' > README.md
+resolved
+EOF
+printf '%s\n' '{"type":"step_start","sessionID":"merge-456"}'
+printf '%s\n' '{"type":"text","part":{"text":"{\\"summary\\":\\"resolved\\",\\"resolvedFiles\\":[\\"README.md\\"]}"}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"input":9,"output":11}}}'
+`, "utf8")
+    chmodSync(stubPath, 0o755)
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`
+
+    const result = resolveMergeConflictsViaLlm({
+      workspaceRoot: repoDir,
+      mergeMessage: "test merge",
+      harness: { harness: "opencode", model: "qwen/qwen3-coder-plus" },
+    })
+
+    assert.equal(result.ok, true)
+    const argv = readFileSync(argvPath, "utf8")
+    assert.doesNotMatch(argv, /--model/)
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
     rmSync(dir, { recursive: true, force: true })
   }
 })

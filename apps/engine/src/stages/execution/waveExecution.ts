@@ -7,7 +7,7 @@ import { writeRecoveryRecord } from "../../core/recovery.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { assignPort, releasePort } from "../../core/portAllocator.js"
 import { layout, requireItemRunScopedContext } from "../../core/workspaceLayout.js"
-import { resolveMergeResolverHarness } from "../../llm/registry.js"
+import { emitHarnessResolution, executionCoderPolicy, resolveMergeResolverHarness } from "../../llm/registry.js"
 import { runRalphStory, writeWaveSummary, type RalphCycleBoundaryResult, type StoryArtifacts } from "./ralphRuntime.js"
 import { runSetupStory } from "./setupStory.js"
 import { buildStoryExecutionContext, createScreenOwners, executionStageLlmForStory } from "./storyContext.js"
@@ -218,8 +218,9 @@ async function executeWave(
   const mergeResolverHarness = llm?.executionCoder
     ? (() => {
         const resolved = resolveMergeResolverHarness(llm.executionCoder)
+        emitHarnessResolution("execution", "merge-resolver", resolved, executionCoderPolicy(llm.executionCoder.runtimePolicy))
         if (resolved.kind === "fake") return { harness: "fake" as const }
-        return { harness: resolved.harness, runtime: resolved.runtime, model: resolved.model }
+        return { harness: resolved.harness, runtime: resolved.runtime, provider: resolved.provider, model: resolved.model }
       })()
     : undefined
   const expectedSharedFiles = expectedSharedFilesForWave(wave)
