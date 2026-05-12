@@ -162,6 +162,8 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   const resumeConflict = openapi.paths["/runs/{id}/resume"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const retryRetainedConflict = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const retryRetainedSuccess = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
+  const clearAndFreshConflict = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const clearAndFreshSuccess = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
   const retryConflict = openapi.paths["/runs/{id}/supabase-readiness/retry"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const gitRepairConflict = openapi.paths["/setup/git-identity/repair"]?.post?.responses?.["409"]
   const workspaceDeleteConflict = openapi.paths["/workspaces/{key}"]?.delete?.responses?.["409"]
@@ -171,6 +173,10 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.match(JSON.stringify(retryRetainedConflict), /RetryRetainedConflict/)
   assert.ok(retryRetainedSuccess)
   assert.match(JSON.stringify(retryRetainedSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
+  assert.ok(clearAndFreshConflict)
+  assert.match(JSON.stringify(clearAndFreshConflict), /ClearAndFreshConflict/)
+  assert.ok(clearAndFreshSuccess)
+  assert.match(JSON.stringify(clearAndFreshSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
   assert.ok(retryConflict)
   assert.match(JSON.stringify(retryConflict), /ResumeOperatorDecisionConflict/)
   assert.equal(JSON.stringify(gitRepairConflict).includes("ResumeOperatorDecisionConflict"), false)
@@ -179,12 +185,15 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.ok(openapi.components.schemas.ResumeOperatorDecisionConflict)
   assert.ok(openapi.components.schemas.RunRecoveryDecision)
   assert.ok(openapi.components.schemas.RetryRetainedConflict)
+  assert.ok(openapi.components.schemas.ClearAndFreshConflict)
   assert.match(contract, /operator_decision_required/)
   assert.match(contract, /retained_diagnosis_branch/)
   assert.match(contract, /retry-retained/)
   assert.match(contract, /clear-and-fresh/)
   assert.match(contract, /POST \/runs\/:id\/recovery\/retry-retained/)
+  assert.match(contract, /POST \/runs\/:id\/recovery\/clear-and-fresh/)
   assert.match(contract, /retry_retained_conflict/)
+  assert.match(contract, /clear_and_fresh_conflict/)
   assert.match(contract, /decision: RunRecoveryDecision \| null/)
 })
 

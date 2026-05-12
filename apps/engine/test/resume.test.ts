@@ -12,7 +12,12 @@ import { Repos } from "../src/db/repositories.js"
 import { runWorkflow } from "../src/workflow.ts"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
-import { prepareForegroundRetryRetainedRun, retryRetainedRunInProcess } from "../src/core/runService.js"
+import {
+  clearAndFreshRunInProcess,
+  prepareForegroundClearAndFreshRun,
+  prepareForegroundRetryRetainedRun,
+  retryRetainedRunInProcess,
+} from "../src/core/runService.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { buildWorkflowResumeInput, loadResumeReadiness, performResume } from "../src/core/resume.js"
@@ -20,6 +25,7 @@ import { preparedImportSourceSnapshotDir } from "../src/core/preparedImport.js"
 import {
   buildSupabaseProvisioningRecoveryPayload,
   buildSupabaseReadinessRecoveryPayload,
+  parseSupabaseProvisioningRecoveryPayload,
 } from "../src/core/supabase/recoveryPayload.js"
 import { retainedDiagnosisRecoveryDecision } from "../src/core/supabase/recoveryDecision.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
@@ -770,6 +776,261 @@ test("REQ-2 AC-2.4: retryRetainedRunInProcess re-checks retained eligibility bef
         },
       })
       assert.equal(repos.listExternalRemediations(run.id).length, 0)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("REQ-3 AC-3.2/AC-3.3/AC-3.4: clearAndFreshRunInProcess detaches the retained branch, starts cleanup, and resumes through the fresh path", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(ws.id, { projectRef: "proj_test", region: "us-east-1", dbMode: "direct" })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Clear And Fresh", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `clear-and-fresh-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `clear-and-fresh-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      repos.setRunSupabaseBranch(run.id, {
+        ref: "br_retained",
+        name: "wave-1",
+        lifecycleState: "retained-for-diagnosis",
+      })
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: "execution",
+        recovery_status: "blocked",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Supabase provisioning failed during validation.",
+        recovery_payload_json: buildSupabaseProvisioningRecoveryPayload({
+          runId: run.id,
+          workspaceId: ws.id,
+          workspaceKey: ws.key,
+          projectRef: "proj_test",
+          waveId: "W1",
+          waveNumber: 1,
+          branchRef: "br_retained",
+          failedStep: "validate",
+          failureCause: "Validation failed",
+          userMessage: "Supabase provisioning failed. Operator recovery action is required.",
+        }),
+      })
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Supabase provisioning failed during validation.",
+        detail: "seeded retained diagnosis recovery",
+        evidencePaths: [layout.runDir(ctx)],
+      })
+
+      let destroyCalls = 0
+      let observedStateAtResume: RunRow | undefined
+      const result = await clearAndFreshRunInProcess(repos, {
+        runId: run.id,
+        supabaseAdapterFactory: () => ({
+          adapter: {
+            destroyBranch: async () => {
+              destroyCalls += 1
+              return { ok: true, context: { status: "destroyed" } }
+            },
+          } as never,
+        }),
+        resumeRunImpl: async input => {
+          observedStateAtResume = repos.getRun(run.id)
+          await performResume({
+            ...input,
+            workflowRunner: async () => {},
+          })
+        },
+      })
+
+      assert.equal(result.ok, true)
+      assert.equal(repos.getRun(run.id)?.status, "queued")
+      assert.equal(destroyCalls, 1)
+      assert.equal(observedStateAtResume?.supabase_branch_ref, null)
+      assert.equal(observedStateAtResume?.supabase_branch_lifecycle_state, null)
+      assert.equal(parseSupabaseProvisioningRecoveryPayload(observedStateAtResume?.recovery_payload_json)?.operatorAction, "discard")
+      assert.equal(parseSupabaseProvisioningRecoveryPayload(observedStateAtResume?.recovery_payload_json)?.branchRef, undefined)
+      for (let i = 0; i < 50; i++) {
+        if (repos.getRun(run.id)?.status === "completed") break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+
+      const resumed = repos.getRun(run.id)
+      const payload = resumed ? retainedDiagnosisRecoveryDecision(resumed) : null
+      const cleanupLogs = repos.listLogsForRun(run.id).filter(log => log.event_type === "supabase_branch_lifecycle")
+      assert.equal(repos.listExternalRemediations(run.id).length, 1)
+      assert.equal(repos.listExternalRemediations(run.id)[0]?.summary, "Operator cleared the retained diagnosis branch and started a fresh recovery path.")
+      assert.equal(repos.listLogsForRun(run.id).some(log => log.event_type === "run_resumed"), true)
+      assert.equal(resumed?.status, "completed")
+      assert.equal(resumed?.recovery_status, null)
+      assert.equal(resumed?.supabase_branch_ref, null)
+      assert.equal(payload, null)
+      assert.deepEqual(
+        cleanupLogs.map(log => JSON.parse(log.data_json ?? "{}") as { step?: string; status?: string }).map(log => [log.step, log.status]),
+        [["cleanup", "in_progress"], ["cleanup", "passed"]],
+      )
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("REQ-3 AC-3.5/AC-3.6: clear-and-fresh warns on cleanup failure and re-checks retained eligibility before remediation side effects", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(ws.id, { projectRef: "proj_test", region: "us-east-1", dbMode: "direct" })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Clear And Fresh Warning", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `clear-and-fresh-warning-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `clear-and-fresh-warning-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      repos.setRunSupabaseBranch(run.id, {
+        ref: "br_retained",
+        name: "wave-1",
+        lifecycleState: "retained-for-diagnosis",
+      })
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: "execution",
+        recovery_status: "blocked",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Supabase provisioning failed during validation.",
+        recovery_payload_json: buildSupabaseProvisioningRecoveryPayload({
+          runId: run.id,
+          workspaceId: ws.id,
+          workspaceKey: ws.key,
+          projectRef: "proj_test",
+          waveId: "W1",
+          waveNumber: 1,
+          branchRef: "br_retained",
+          failedStep: "validate",
+          failureCause: "Validation failed",
+          userMessage: "Supabase provisioning failed. Operator recovery action is required.",
+        }),
+      })
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Supabase provisioning failed during validation.",
+        detail: "seeded retained diagnosis recovery",
+        evidencePaths: [layout.runDir(ctx)],
+      })
+
+      const result = await clearAndFreshRunInProcess(repos, {
+        runId: run.id,
+        supabaseAdapterFactory: () => ({
+          adapter: {
+            destroyBranch: async () => ({ ok: false, context: { message: "provider rejected cleanup" } }),
+          } as never,
+        }),
+        resumeRunImpl: async input => {
+          await performResume({
+            ...input,
+            workflowRunner: async () => {},
+          })
+        },
+      })
+
+      assert.equal(result.ok, true)
+      for (let i = 0; i < 50; i++) {
+        if (repos.getRun(run.id)?.status === "completed") break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+
+      const resumed = repos.getRun(run.id)
+      const cleanupLogs = repos.listLogsForRun(run.id).filter(log => log.event_type === "supabase_branch_lifecycle")
+      assert.equal(resumed?.status, "completed")
+      assert.equal(resumed?.supabase_branch_ref, null)
+      assert.equal(repos.listLogsForRun(run.id).some(log => log.event_type === "run_resumed"), true)
+      assert.equal(
+        cleanupLogs.some(log => {
+          const data = JSON.parse(log.data_json ?? "{}") as { step?: string; status?: string; reason?: string }
+          return data.step === "cleanup" && data.status === "retained" && data.reason === "provider rejected cleanup"
+        }),
+        true,
+      )
+
+      repos.setRunSupabaseBranch(run.id, {
+        ref: "br_retained",
+        name: "wave-1",
+        lifecycleState: "retained-for-diagnosis",
+      })
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: "execution",
+        recovery_status: "blocked",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Supabase provisioning failed during validation.",
+        recovery_payload_json: buildSupabaseProvisioningRecoveryPayload({
+          runId: run.id,
+          workspaceId: ws.id,
+          workspaceKey: ws.key,
+          projectRef: "proj_test",
+          waveId: "W1",
+          waveNumber: 1,
+          branchRef: "br_retained",
+          failedStep: "validate",
+          failureCause: "Validation failed",
+          userMessage: "Supabase provisioning failed. Operator recovery action is required.",
+        }),
+      })
+
+      const prepared = await prepareForegroundClearAndFreshRun(repos, makeWorkflowIO().io, {
+        runId: run.id,
+        capabilityResolver: () => {
+          repos.updateRun(run.id, {
+            status: "failed",
+            recovery_status: "failed",
+            recovery_summary: "Run has already moved on.",
+            recovery_payload_json: null,
+          })
+          repos.clearRunSupabaseBranch(run.id)
+          return { supabaseAdapterFactory: null }
+        },
+      })
+
+      assert.deepEqual(prepared, {
+        ok: false,
+        status: 409,
+        error: "clear_and_fresh_conflict",
+        code: "clear_and_fresh_conflict",
+        message: "clear-and-fresh is only available while the run is retained for diagnosis.",
+        currentState: {
+          status: "failed",
+          recoveryStatus: "failed",
+          supabaseBranchLifecycleState: null,
+        },
+      })
     } finally {
       db.close()
     }

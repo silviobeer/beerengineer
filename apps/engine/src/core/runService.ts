@@ -27,7 +27,10 @@ import type { AppConfig } from "../setup/types.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
+import { recordSupabaseLifecycle } from "./supabase/lifecycleEvents.js"
+import { updateSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 import { retainedDiagnosisRecoveryDecision, type RunRecoveryDecision } from "./supabase/recoveryDecision.js"
+import { discardSupabaseBranchFromRunRecovery } from "./supabase/runRecoveryActions.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 import { inspectWorkerLease } from "./workerLease.js"
 
@@ -138,6 +141,20 @@ export type RetryRetainedRunResult =
     }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
+export type ClearAndFreshRunResult =
+  | { ok: true; runId: string; remediationId: string }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "clear_and_fresh_conflict"
+      code: "clear_and_fresh_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
 export type ReplanRunResult =
   | { ok: true; runId: string }
   | { ok: false; status: 404; error: "run_not_found"; message: string }
@@ -177,6 +194,20 @@ export type PreparedForegroundRetryRetainedRunResult =
       status: 409
       error: "retry_retained_conflict"
       code: "retry_retained_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type PreparedForegroundClearAndFreshRunResult =
+  | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "clear_and_fresh_conflict"
+      code: "clear_and_fresh_conflict"
       message: string
       currentState: RetryRetainedCurrentState
     }
@@ -686,8 +717,16 @@ export function isRetryRetainedConflictResult(
   return !result.ok && result.error === "retry_retained_conflict"
 }
 
+export function isClearAndFreshConflictResult(
+  result: ClearAndFreshRunResult | PreparedForegroundClearAndFreshRunResult,
+): result is Extract<ClearAndFreshRunResult, { ok: false; error: "clear_and_fresh_conflict" }> {
+  return !result.ok && result.error === "clear_and_fresh_conflict"
+}
+
 const RETRY_RETAINED_REMEDIATION_SUMMARY = "Operator retried the retained diagnosis branch."
 const RETRY_RETAINED_PRECONDITION_ERROR = "retry_retained_precondition_failed"
+const CLEAR_AND_FRESH_REMEDIATION_SUMMARY = "Operator cleared the retained diagnosis branch and started a fresh recovery path."
+const CLEAR_AND_FRESH_PRECONDITION_ERROR = "clear_and_fresh_precondition_failed"
 
 function retryRetainedCurrentState(run: RunRow): RetryRetainedCurrentState {
   return {
@@ -710,6 +749,83 @@ function retryRetainedConflict(run: RunRow): Extract<RetryRetainedRunResult, { o
 
 function throwRetryRetainedPreconditionError(): never {
   throw new Error(RETRY_RETAINED_PRECONDITION_ERROR)
+}
+
+function clearAndFreshConflict(run: RunRow): Extract<ClearAndFreshRunResult, { ok: false; error: "clear_and_fresh_conflict" }> {
+  return {
+    ok: false,
+    status: 409,
+    error: "clear_and_fresh_conflict",
+    code: "clear_and_fresh_conflict",
+    message: "clear-and-fresh is only available while the run is retained for diagnosis.",
+    currentState: retryRetainedCurrentState(run),
+  }
+}
+
+function throwClearAndFreshPreconditionError(): never {
+  throw new Error(CLEAR_AND_FRESH_PRECONDITION_ERROR)
+}
+
+async function runClearAndFreshBeforeResume(
+  repos: Repos,
+  runId: string,
+  resumeInput: PerformResumeInput,
+  resumeRunImpl: PerformResumeImpl,
+): Promise<void> {
+  const run = repos.getRun(runId)
+  if (!run) throwClearAndFreshPreconditionError()
+  const branchRef = run.supabase_branch_ref
+  const payload = updateSupabaseProvisioningRecoveryPayload(run.recovery_payload_json, {
+    branchRef: null,
+    operatorAction: "discard",
+  })
+  const discarded = discardSupabaseBranchFromRunRecovery(repos, { runId })
+  if (!discarded.ok) throwClearAndFreshPreconditionError()
+  if (!payload) {
+    throwClearAndFreshPreconditionError()
+  }
+  repos.setRunRecovery(runId, {
+    status: run.recovery_status,
+    scope: run.recovery_scope,
+    scopeRef: run.recovery_scope_ref,
+    summary: run.recovery_summary,
+    payloadJson: payload,
+  })
+
+  if (branchRef && resumeInput.supabaseHook) {
+    recordSupabaseLifecycle({
+      repos,
+      runId,
+      branchRef,
+      step: "cleanup",
+      status: "in_progress",
+    })
+    const cleanup = await resumeInput.supabaseHook.adapter.destroyBranch({
+      workspaceId: resumeInput.supabaseHook.workspaceId,
+      projectRef: resumeInput.supabaseHook.projectRef,
+      branchRef,
+    })
+    if (!cleanup.ok) {
+      recordSupabaseLifecycle({
+        repos,
+        runId,
+        branchRef,
+        step: "cleanup",
+        status: "retained",
+        reason: String(cleanup.context?.message ?? cleanup.context?.error ?? "Destroy failed"),
+      })
+    } else {
+      recordSupabaseLifecycle({
+        repos,
+        runId,
+        branchRef,
+        step: "cleanup",
+        status: "passed",
+      })
+    }
+  }
+
+  await resumeRunImpl(resumeInput)
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -1256,6 +1372,39 @@ export async function retryRetainedRunInProcess(
   return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
 }
 
+export async function clearAndFreshRunInProcess(
+  repos: Repos,
+  input: {
+    runId: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<ClearAndFreshRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundClearAndFreshRun(repos, io, {
+    runId: input.runId,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    resumeRunImpl: input.resumeRunImpl,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "clearAndFreshRunInProcess", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
 export async function resumeRunFromExistingRemediationInProcess(
   repos: Repos,
   input: {
@@ -1630,6 +1779,77 @@ export async function prepareForegroundRetryRetainedRun(
       const currentRun = repos.getRun(input.runId)
       return currentRun
         ? retryRetainedConflict(currentRun)
+        : { ok: false, status: 404, error: "run_not_found" }
+    }
+    throw error
+  }
+
+  if (prepared.ok && repos.getRun(input.runId)?.status === "blocked") {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  return prepared
+}
+
+export async function prepareForegroundClearAndFreshRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    runId: string
+    workerOwnerKind?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<PreparedForegroundClearAndFreshRunResult> {
+  const readiness = await loadResumeReadiness(repos, input.runId)
+  if (readiness.kind === "not_found") return { ok: false, status: 404, error: "run_not_found" }
+  if (readiness.kind === "not_resumable") {
+    if (retainedDiagnosisRecoveryDecision(readiness.run)) {
+      return { ok: false, status: 409, error: readiness.reason }
+    }
+    return clearAndFreshConflict(readiness.run)
+  }
+  if (readiness.kind !== "ready") return clearAndFreshConflict(readiness.run)
+  if (!retainedDiagnosisRecoveryDecision(readiness.run)) return clearAndFreshConflict(readiness.run)
+
+  let prepared: PreparedForegroundResumeRunResult
+  try {
+    prepared = await prepareForegroundResumeRun(repos, io, {
+      runId: input.runId,
+      summary: CLEAR_AND_FRESH_REMEDIATION_SUMMARY,
+      workerOwnerKind: input.workerOwnerKind,
+      workerInstanceId: input.workerInstanceId,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: input.supabaseAdapterFactory,
+      capabilityResolver: input.capabilityResolver,
+      admissionController: input.admissionController,
+      resumeRunImpl: async resumeInput => {
+        await runClearAndFreshBeforeResume(
+          repos,
+          input.runId,
+          resumeInput,
+          input.resumeRunImpl ?? performResume,
+        )
+      },
+      persistItemDecision: false,
+      bypassRetainedDiagnosisDecision: true,
+      verifyBeforeRemediation: run => {
+        if (!retainedDiagnosisRecoveryDecision(run)) throwClearAndFreshPreconditionError()
+      },
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === CLEAR_AND_FRESH_PRECONDITION_ERROR) {
+      const currentRun = repos.getRun(input.runId)
+      return currentRun
+        ? clearAndFreshConflict(currentRun)
         : { ok: false, status: 404, error: "run_not_found" }
     }
     throw error

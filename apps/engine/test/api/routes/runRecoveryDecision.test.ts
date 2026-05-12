@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { handleGetRecovery, handleResumeRun, handleRetryRetainedRecovery } from "../../../src/api/routes/runs.js"
+import { handleClearAndFreshRecovery, handleGetRecovery, handleResumeRun, handleRetryRetainedRecovery } from "../../../src/api/routes/runs.js"
 import { writeRecoveryRecord } from "../../../src/core/recovery.js"
 import { buildSupabaseProvisioningRecoveryPayload } from "../../../src/core/supabase/recoveryPayload.js"
 import { layout } from "../../../src/core/workspaceLayout.js"
@@ -318,6 +318,43 @@ test("REQ-2 AC-2.4: stale retry-retained requests return a conflict with the aut
     })
     assert.equal(fx.repos.listExternalRemediations(fx.run.id).length, 0)
     assert.equal(fx.repos.listLogsForRun(fx.run.id).some(log => log.event_type === "run_resumed"), false)
+  } finally {
+    fx.cleanup()
+  }
+})
+
+test("REQ-3 AC-3.6: stale clear-and-fresh requests return a conflict with the authoritative current state and start no cleanup or recovery work", async () => {
+  const fx = setupFixture()
+  try {
+    await seedRetainedDiagnosisRun(fx)
+    fx.repos.updateRun(fx.run.id, {
+      status: "failed",
+      recovery_status: "failed",
+      recovery_summary: "Run has already moved on.",
+      recovery_payload_json: null,
+    })
+    fx.repos.clearRunSupabaseBranch(fx.run.id)
+
+    const { res, state } = captureRes()
+    await handleClearAndFreshRecovery(fx.repos, jsonReq({}), res, fx.run.id)
+
+    assert.equal(state.status, 409)
+    assert.deepEqual(parseBody(state), {
+      error: "clear_and_fresh_conflict",
+      code: "clear_and_fresh_conflict",
+      message: "clear-and-fresh is only available while the run is retained for diagnosis.",
+      currentState: {
+        status: "failed",
+        recoveryStatus: "failed",
+        supabaseBranchLifecycleState: null,
+      },
+    })
+    assert.equal(fx.repos.listExternalRemediations(fx.run.id).length, 0)
+    assert.equal(fx.repos.listLogsForRun(fx.run.id).some(log => log.event_type === "run_resumed"), false)
+    assert.equal(
+      fx.repos.listLogsForRun(fx.run.id).some(log => log.event_type === "supabase_branch_lifecycle"),
+      false,
+    )
   } finally {
     fx.cleanup()
   }
