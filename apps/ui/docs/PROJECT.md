@@ -53,7 +53,8 @@ glue.
   4. **Action buttons** (`BoardCardActions.tsx`) — `start_visual_companion`,
      `start_frontend_design`, `promote_to_requirements`, etc. Posted
      through `app/api/items/[id]/actions/[action]/route.ts` which proxies
-     to the engine with the CSRF token from disk.
+     to the engine over loopback without token lookup in the standard
+     localhost flow.
   5. **Conversation** (`ItemChat.tsx` → `ChatPanel.tsx`) — primes from
      `GET /runs/:id/conversation`, then appends live `chat_*` events
      via the SSE context. Shows the open prompt and a textarea to answer.
