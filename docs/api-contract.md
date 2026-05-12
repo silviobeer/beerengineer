@@ -100,16 +100,19 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 - `GET /runs/:id/tree`
 - `GET /runs/:id/recovery`
   - Recovery detail now includes additive `recoveryStatus`, `supabaseBranchLifecycleState`, and `availableActions` facts.
+  - When a run has a current stage, the engine may expose recovery detail solely to advertise current-stage skip availability even if no recovery is currently persisted.
   - For the named path-changing recovery flow, the contract-defined post-action values are `fresh_path_recovery` and `retained_path_recovery`.
   - `availableActions` is authoritative engine output for the compatible named recovery actions at the run's current persisted state.
 - `POST /runs/:id/recovery`
   - Canonical recovery mutation surface for named recovery, skip, and narrow clear actions.
+  - The implemented skip action is `skip_current_stage`; it records the active current stage as skipped and leaves the run blocked for manual review without auto-advancing.
   - The implemented named path-changing actions are `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh`.
   - `recover_fresh_branch` persists the contract's `fresh_path_recovery` state for a fresh-eligible blocked Supabase provisioning run.
   - `retry_retained` persists the contract's `retained_path_recovery` state for a retained-diagnosis blocked Supabase provisioning run.
   - `clear_and_fresh` clears the retained branch attachment for that same retained-diagnosis incident and persists `fresh_path_recovery`; repeating it returns `outcome: "noop"` with `reason: "already_on_fresh_path"`.
+  - `skip_current_stage` is offered only when the run has an active non-terminal current stage that is not already recorded as skipped and no live worker still holds the stage lease; ineligible requests reject with specific reasons such as `no_current_stage`, `current_stage_not_active`, `current_stage_worker_active`, `current_stage_terminal`, and `current_stage_already_skipped`.
   - Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged.
-  - Reserved setup actions still keep `resume`, `replan`, `retry_supabase_readiness`, and `skip_current_stage` on the same canonical family with a specific `action_not_implemented` rejection.
+  - Reserved setup actions still keep `resume`, `replan`, and `retry_supabase_readiness` on the same canonical family with a specific `action_not_implemented` rejection.
   - The implemented clear actions are `clear_recovery_payload`, `clear_supabase_branch_ref`, and `clear_supabase_branch_lifecycle_state`.
   - Those narrow actions persist latest-state changes on the `runs` row only, scoped to `recovery_payload_json`, `supabase_branch_ref`, and `supabase_branch_lifecycle_state`.
   - Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear.
