@@ -40,6 +40,22 @@ export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: s
   handoffClient?: SupabaseHandoffClient
 } | null
 
+function asBoundSupabaseHandoffClient(
+  client: SupabaseHandoffClient | undefined,
+): SupabaseHandoffClient | undefined {
+  if (!client) return undefined
+  return {
+    getProjectKeys: client.getProjectKeys.bind(client),
+    getBranchConnectionString: client.getBranchConnectionString.bind(client),
+  }
+}
+
+function isSupabaseHandoffClient(value: unknown): value is SupabaseHandoffClient {
+  if (!value || typeof value !== "object") return false
+  return typeof (value as SupabaseHandoffClient).getProjectKeys === "function"
+    && typeof (value as SupabaseHandoffClient).getBranchConnectionString === "function"
+}
+
 export function buildSupabaseWorkflowHook(
   repos: Repos,
   workspaceId: string,
@@ -60,6 +76,10 @@ export function buildSupabaseWorkflowHook(
   })
   if (!built) return undefined
 
+  const handoffClient = isSupabaseHandoffClient(built.managementClient)
+    ? asBoundSupabaseHandoffClient(built.managementClient)
+    : asBoundSupabaseHandoffClient(built.handoffClient)
+
   return {
     repos,
     adapter: built.adapter,
@@ -71,7 +91,7 @@ export function buildSupabaseWorkflowHook(
     protectionSwitch: workspaceRow.supabase_protection_switch ?? "off",
     cleanupPolicy: workspaceRow.supabase_cleanup_policy ?? "on-success-immediate",
     cleanupTtlHours: workspaceRow.supabase_cleanup_ttl_hours ?? null,
-    handoffClient: built.handoffClient,
+    handoffClient,
   }
 }
 
