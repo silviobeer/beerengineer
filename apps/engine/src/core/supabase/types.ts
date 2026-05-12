@@ -44,6 +44,11 @@ export type SupabaseBranch = {
   name?: string
   status?: string
   parentRef?: string
+  db_host?: string
+  db_port?: number
+  db_user?: string
+  db_pass?: string
+  jwt_secret?: string
 }
 
 export type SupabaseSqlResult = {

@@ -24,10 +24,11 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : []
 }
 
-function normalizeBranch(value: unknown): SupabaseBranch {
+function normalizeBranch(value: unknown, branchId?: string): SupabaseBranch {
   const branch = value as SupabaseBranch
   return {
     ...branch,
+    id: branch.id ?? branchId ?? branch.ref,
     ref: branch.ref ?? branch.id,
   }
 }
@@ -63,7 +64,7 @@ export class SupabaseManagementClient {
   }
 
   async listBranches(projectRef: string): Promise<SupabaseBranch[]> {
-    return asArray<unknown>(await this.request(managementEndpoints.listBranches(projectRef))).map(normalizeBranch)
+    return asArray<unknown>(await this.request(managementEndpoints.listBranches(projectRef))).map(v => normalizeBranch(v))
   }
 
   async createBranch(projectRef: string, input: { name: string; parentRef?: string }): Promise<SupabaseBranch> {
@@ -81,7 +82,7 @@ export class SupabaseManagementClient {
   }
 
   async getBranch(projectRef: string, branchRef: string): Promise<SupabaseBranch> {
-    return normalizeBranch(await this.request(managementEndpoints.getBranch(projectRef, branchRef)))
+    return normalizeBranch(await this.request(managementEndpoints.getBranch(projectRef, branchRef)), branchRef)
   }
 
   async deleteBranch(projectRef: string, branchRef: string): Promise<void> {
@@ -96,23 +97,29 @@ export class SupabaseManagementClient {
   }
 
   async getProjectKeys(projectRef: string, branchRef?: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }> {
-    const body = await this.request(managementEndpoints.projectKeys(projectRef, branchRef)) as {
-      anonKey?: string
-      anon_key?: string
-      serviceRoleKey?: string
-      service_role_key?: string
-      url?: string
-    }
+    // Branch sub-resources live on the branch's *preview* project ref (returned
+    // by getBranch as `ref`), not the parent project ref. Resolve once.
+    const previewRef = branchRef ? (await this.getBranch(projectRef, branchRef)).ref : projectRef
+    const body = await this.request(`${managementEndpoints.projectKeys(previewRef)}?reveal=true`) as unknown
+    const entries = Array.isArray(body)
+      ? (body as Array<{ name?: string; api_key?: string }>)
+      : []
+    const find = (name: string): string => entries.find(e => e?.name === name)?.api_key ?? ""
     return {
-      anonKey: body.anonKey ?? body.anon_key ?? "",
-      serviceRoleKey: body.serviceRoleKey ?? body.service_role_key ?? "",
-      url: body.url ?? `https://${projectRef}.supabase.co`,
+      anonKey: find("anon"),
+      serviceRoleKey: find("service_role"),
+      url: `https://${previewRef}.supabase.co`,
     }
   }
 
   async getBranchConnectionString(projectRef: string, branchRef: string): Promise<string> {
-    const body = await this.request(managementEndpoints.branchConnectionString(projectRef, branchRef)) as { connectionString?: string; connection_string?: string }
-    return body.connectionString ?? body.connection_string ?? ""
+    // /v1/branches/{branchRef} returns db_host / db_user / db_pass / db_port —
+    // synthesize the Postgres URL locally rather than hitting a separate
+    // connection-string endpoint that does not exist with this URL shape.
+    const branch = await this.getBranch(projectRef, branchRef)
+    if (!branch.db_host || !branch.db_user || !branch.db_pass) return ""
+    const port = branch.db_port ?? 5432
+    return `postgresql://${branch.db_user}:${encodeURIComponent(branch.db_pass)}@${branch.db_host}:${port}/postgres`
   }
 
   private async request(path: string, init: RequestInit = {}, options: { timeoutMs?: number } = {}): Promise<unknown> {
