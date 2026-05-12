@@ -98,8 +98,9 @@ glue.
 | `POST /api/runs/[id]/answer` | `POST /runs/:id/answer` | Reply to an open prompt |
 | `GET /api/runs/[id]/messages` | `GET /runs/:id/messages` | Server-side message backfill (used by the legacy app/_ui tree only) |
 
-All proxies attach `x-beerengineer-token` from
-`$XDG_STATE_HOME/beerengineer/api.token` (or `BEERENGINEER_API_TOKEN`).
+All proxies call the engine server-side over loopback without token
+lookup in the standard localhost flow. Legacy token headers remain
+compatibility input at the engine boundary, not a UI requirement.
 
 ---
 
