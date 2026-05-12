@@ -4559,7 +4559,9 @@
               "runId",
               "action",
               "outcome",
-              "latestState"
+              "latestState",
+              "recoveryStatus",
+              "supabaseBranchLifecycleState"
             ],
             "properties": {
               "ok": {

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { test } from "node:test"
+import { fileURLToPath } from "node:url"
 
 import { buildSupabaseProvisioningRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { initDatabase } from "../src/db/connection.js"
@@ -34,7 +35,7 @@ async function waitForHealth(base: string, timeoutMs = 10000): Promise<void> {
 function startServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string } {
   const port = 4700 + Math.floor(Math.random() * 200)
   const host = "127.0.0.1"
-  const serverPath = resolve(new URL(".", import.meta.url).pathname, "..", "src", "api", "server.ts")
+  const serverPath = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "src", "api", "server.ts")
   const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
     env: {
       ...process.env,

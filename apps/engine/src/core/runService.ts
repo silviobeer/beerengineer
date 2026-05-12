@@ -1485,7 +1485,8 @@ export function projectRunRecoverySurface(
     }
   }
 
-  if (run.supabase_branch_lifecycle_state === "retained-for-diagnosis" || payload.branchRef || run.supabase_branch_ref) {
+  const retainedBranchRef = payload.branchRef ?? run.supabase_branch_ref
+  if (run.supabase_branch_lifecycle_state === "retained-for-diagnosis" && retainedBranchRef) {
     return {
       recoveryStatus: null,
       supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
@@ -1605,6 +1606,17 @@ export function mutateRunRecoveryActionInProcess(
         )
         break
       case "retry_retained":
+        if (!(run.supabase_branch_ref ?? payload.branchRef)) {
+          return {
+            ok: false,
+            status: 409,
+            error: "recovery_action_ineligible",
+            code: "invalid_transition",
+            action,
+            reason: "incompatible_recovery_state",
+            message: "Recovery action is not available for this run.",
+          }
+        }
         repos.setRunRecoveryPayloadJson(
           run.id,
           updateSupabaseProvisioningRecoveryPayload(run.recovery_payload_json, {
