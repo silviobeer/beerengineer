@@ -73,9 +73,11 @@ API-driven one.
 
 `src/api/`, OpenAPI at `src/api/openapi.json` (also served at `GET /openapi.json`)
 
-- Listens on `127.0.0.1:4100` by default. Token auth via
-  `x-beerengineer-token` (CSRF) loaded from
-  `$XDG_STATE_HOME/beerengineer/api.token`.
+- Listens on `127.0.0.1:4100` by default. Loopback requests are admitted
+  without token management. Legacy callers may still send
+  `x-beerengineer-token`, and non-loopback compatibility flows may still
+  use `BEERENGINEER_API_TOKEN`, but the supported local operator path no
+  longer depends on an `api.token` file.
 - Endpoints: `/workspaces`, `/board`, `/runs`, `/items`,
   `/runs/:id/{events,messages,conversation,answer}`, `/items/:id/actions/:action`, `/events`.
 - SSE channels:
@@ -140,8 +142,8 @@ without the matching env key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`).
 `src/setup/`
 
 - `beerengineer setup` — interactive bootstrap. Writes config under
-  `$XDG_CONFIG_HOME/beerengineer-nodejs/` and the API token to
-  `$XDG_STATE_HOME/beerengineer/api.token`.
+  `$XDG_CONFIG_HOME/beerengineer-nodejs/` and initializes local app state
+  without generating a localhost API token artifact.
 - `beerengineer doctor [--json]` — machine-readable health check used
   by the harness protocol. See [`app-setup.md`](./app-setup.md).
 - Walkthrough: [`setup-for-dummies.md`](./setup-for-dummies.md).
@@ -151,6 +153,8 @@ without the matching env key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`).
 ## Out of scope (today)
 
 - Cloud / multi-tenant deployment. The engine is a local tool.
-- Authentication beyond a single CSRF token. There are no user accounts.
+- Authentication beyond loopback trust for local operators and the
+  existing secret-based non-local integrations. There are no user
+  accounts.
 - A non-SQLite persistence layer.
 - Stage editing through the UI. Pipeline shape is code-defined.

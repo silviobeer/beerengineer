@@ -3,7 +3,7 @@
   "info": {
     "title": "beerengineer_ Engine API",
     "version": "0.1.0",
-    "description": "HTTP surface for `@beerengineer/engine`. Canonical contract for every\nclient \u2014 CLI (remote mode), UI (when one exists), future chattool\nwebhooks. Hand-maintained; companion to `spec/api-contract.md`.\n\n### Authentication\n\nMutating requests (POST, DELETE, PUT, PATCH) must send\n`x-beerengineer-token: <api_token>`. The token is generated at engine\nstartup when `BEERENGINEER_API_TOKEN` is not set, and written to\n`$XDG_STATE_HOME/beerengineer/api.token` (default\n`~/.local/state/beerengineer/api.token`).\n\nGET requests (including SSE streams) do not require the header \u2014 only the\nin-scope UI origin (configured via `BEERENGINEER_UI_ORIGIN`) can talk to\nthe engine in browsers thanks to CORS.\n\nInbound webhooks under `/webhooks/*` authenticate with channel-specific\nsecrets (e.g. `x-telegram-bot-api-secret-token`) and bypass the CSRF gate.\n"
+    "description": "HTTP surface for `@beerengineer/engine`. Canonical contract for every\nclient — CLI (remote mode), UI (when one exists), future chattool\nwebhooks. Hand-maintained; companion to `spec/api-contract.md`.\n\n### Authentication\n\nNormal localhost requests over loopback are admitted without token management.\nLegacy callers may still send `x-beerengineer-token`, and non-loopback\ncallers can still use `BEERENGINEER_API_TOKEN` as an optional compatibility\nsecret, but the supported local operator flow does not require reading,\ncreating, exporting, or copying a token.\n\nInbound webhooks under `/webhooks/*` authenticate with channel-specific\nsecrets (e.g. `x-telegram-bot-api-secret-token`) and bypass the localhost\nadmission gate."
   },
   "servers": [
     {
@@ -50,12 +50,6 @@
     },
     {
       "name": "Spec"
-    }
-  ],
-  "security": [
-    {},
-    {
-      "csrfToken": []
     }
   ],
   "paths": {
@@ -197,7 +191,7 @@
         "tags": [
           "Setup"
         ],
-        "summary": "Doctor report \u2014 environment readiness.",
+        "summary": "Doctor report — environment readiness.",
         "parameters": [
           {
             "name": "group",
@@ -273,11 +267,6 @@
           "Setup"
         ],
         "summary": "Save beerengineer_ app-level Git identity.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -311,11 +300,6 @@
           "Setup"
         ],
         "summary": "Repair workspace-local Git identity using server-side workspace resolution.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -406,11 +390,6 @@
           "Update"
         ],
         "summary": "Check the newest GitHub release against the current install and refresh the on-disk cache.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Release metadata for the latest GitHub release.",
@@ -441,11 +420,6 @@
           "Update"
         ],
         "summary": "Stage a GitHub release for update apply and queue the managed swap flow.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -487,11 +461,6 @@
           "Update"
         ],
         "summary": "Reserved rollback endpoint.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "409": {
             "description": "Post-migration automatic rollback is not supported through this endpoint.",
@@ -512,11 +481,6 @@
           "Update"
         ],
         "summary": "Gracefully shut the engine down for an in-flight update operation.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "202": {
             "description": "Shutdown accepted; the engine will stop after flushing the response.",
@@ -599,11 +563,6 @@
           "Workspaces"
         ],
         "summary": "Register a workspace.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -677,11 +636,6 @@
           "Workspaces"
         ],
         "summary": "Re-derive per-workspace config files from the registry.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Backfill result.",
@@ -728,11 +682,6 @@
           "Workspaces"
         ],
         "summary": "Remove a workspace registration.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "parameters": [
           {
             "name": "purge",
@@ -779,11 +728,6 @@
           "Workspaces"
         ],
         "summary": "Resolve a workspace's on-disk root (server-side open).",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Resolved root path.",
@@ -862,11 +806,6 @@
           "Workspaces"
         ],
         "summary": "Connect a workspace to a Supabase project resolved from the route key.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -911,11 +850,6 @@
           "Workspaces"
         ],
         "summary": "Rotate the Supabase Management API token used by readiness checks.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -957,11 +891,6 @@
           "Workspaces"
         ],
         "summary": "Create or attach a workspace persistent Supabase test branch.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -1063,11 +992,6 @@
           "Items"
         ],
         "summary": "Create an implementation item from a prepared local directory.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1257,11 +1181,6 @@
           "Items"
         ],
         "summary": "Perform a named action on an item.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -1415,11 +1334,6 @@
           "Runs"
         ],
         "summary": "Start a new run from a title/description.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1624,11 +1538,6 @@
           "Runs"
         ],
         "summary": "Retry a retained diagnosis branch through the existing run recovery path.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Run recovery was accepted on the retained branch.",
@@ -1696,11 +1605,6 @@
           "Runs"
         ],
         "summary": "Clear a retained diagnosis branch and continue recovery on the fresh path.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Run recovery was accepted on the fresh path after clearing the retained branch.",
@@ -1734,9 +1638,6 @@
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
           "400": {
             "description": "Bad Request — capability blocked or missing readiness.",
             "content": {
@@ -1753,6 +1654,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
             "description": "Conflict — the run is no longer eligible for clear-and-fresh or another resume blocker applies.",
@@ -1802,11 +1706,6 @@
           "Runs"
         ],
         "summary": "Resume a blocked/failed run with an operator remediation summary.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1894,11 +1793,6 @@
           "Runs"
         ],
         "summary": "Regenerate and safely replace the active plan for an inactive run.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2063,11 +1957,6 @@
           "Runs"
         ],
         "summary": "Retry the same run after Supabase readiness setup has been updated.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Run resumed from the Supabase readiness blocker.",
@@ -2160,11 +2049,6 @@
           "Conversation"
         ],
         "summary": "Answer an open prompt. Returns the post-write conversation.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2280,11 +2164,6 @@
           "Messages"
         ],
         "summary": "Record a free-form user message into a run (does **not** answer a prompt).",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2575,11 +2454,6 @@
           "Items"
         ],
         "summary": "Start the local preview command for an item's managed worktree.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Preview start accepted or detected as already running.",
@@ -2611,11 +2485,6 @@
           "Items"
         ],
         "summary": "Stop the local preview command for an item's managed worktree.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Preview stop accepted or already stopped.",
@@ -2704,11 +2573,6 @@
           "Notifications"
         ],
         "summary": "Emit a test notification on a configured channel.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Delivered.",
@@ -2755,7 +2619,6 @@
         ],
         "summary": "Inbound Telegram chat-tool webhook.",
         "description": "Authenticates with `x-telegram-bot-api-secret-token`. Bypasses the\nengine's CSRF gate. Not intended to be called by internal clients.\n",
-        "security": [],
         "responses": {
           "200": {
             "description": "Webhook accepted."
@@ -2775,11 +2638,6 @@
           "Setup"
         ],
         "summary": "Initialize app config, data directory, and database state.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Initialization succeeded or was already complete.",
@@ -2849,11 +2707,6 @@
           "Setup"
         ],
         "summary": "Partially update app-level setup/configuration.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -2914,11 +2767,6 @@
           "Setup"
         ],
         "summary": "Register or update the Telegram webhook against the effective setup scope.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "parameters": [
           {
             "in": "query",
@@ -2970,11 +2818,6 @@
           "Setup"
         ],
         "summary": "Start a live Telegram verification round-trip for the effective setup scope.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "parameters": [
           {
             "in": "query",
@@ -3026,11 +2869,6 @@
           "Setup"
         ],
         "summary": "Run setup checks again, optionally for one group.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -3123,11 +2961,6 @@
           "Setup"
         ],
         "summary": "Replace, disable, reactivate, delete, or test a secret.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3191,11 +3024,6 @@
           "Setup"
         ],
         "summary": "Validate and rotate the Supabase Management API token.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3247,11 +3075,6 @@
           "Setup"
         ],
         "summary": "Update workspace Supabase cleanup and protection settings.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3325,11 +3148,6 @@
           "Setup"
         ],
         "summary": "Attach an existing Supabase project to a workspace.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3379,11 +3197,6 @@
           "Setup"
         ],
         "summary": "Recreate the configured persistent Supabase test branch after typed confirmation.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3432,11 +3245,6 @@
           "Setup"
         ],
         "summary": "Disconnect Supabase project metadata from a workspace.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3564,11 +3372,6 @@
           "Setup"
         ],
         "summary": "Destroy a stored Supabase run branch after typed confirmation.",
-        "security": [
-          {
-            "csrfToken": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3627,13 +3430,6 @@
     }
   },
   "components": {
-    "securitySchemes": {
-      "csrfToken": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-beerengineer-token"
-      }
-    },
     "parameters": {
       "WorkspaceKey": {
         "name": "key",
@@ -3682,7 +3478,7 @@
         }
       },
       "Conflict": {
-        "description": "Conflict \u2014 precondition failed.",
+        "description": "Conflict — precondition failed.",
         "content": {
           "application/json": {
             "schema": {
@@ -3704,7 +3500,7 @@
           },
           "code": {
             "type": "string",
-            "description": "One of `bad_request`, `not_found`, `forbidden`,\n`invalid_transition`, `prompt_not_open`, `run_blocked`, and a few\nroute-specific codes (e.g. `csrf_token_required`).\n"
+            "description": "One of `bad_request`, `not_found`, `forbidden`, `invalid_transition`, `prompt_not_open`, `run_blocked`, and a few route-specific codes."
           }
         }
       },
@@ -4515,7 +4311,7 @@
           },
           "type": {
             "type": "string",
-            "description": "Canonical message type \u2014 see spec/messaging-levels.md \u00a75."
+            "description": "Canonical message type — see spec/messaging-levels.md §5."
           },
           "level": {
             "type": "integer",
@@ -6231,7 +6027,7 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "Workspace has no Supabase context and no destructive findings \u2014 gate panel suppressed in UI.",
+            "description": "Workspace has no Supabase context and no destructive findings — gate panel suppressed in UI.",
             "required": [
               "supabaseRelevant"
             ],

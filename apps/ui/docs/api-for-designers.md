@@ -36,9 +36,13 @@ the engine — you just read it).
 ## Authentication in one sentence
 
 Browser-side fetches can hit all `GET` endpoints directly (CORS-restricted
-to the configured UI origin). Mutating calls (`POST`/`DELETE`) need an
-`x-beerengineer-token: …` header — the UI reads the token from the engine's
-token file on its server side; the browser never sees it.
+to the configured UI origin). Mutating calls (`POST`/`DELETE`) go through
+the UI's server-side proxy on the same origin, so the supported localhost
+flow does not require an `x-beerengineer-token` header.
+
+Legacy token headers remain optional compatibility input for older or
+non-loopback callers, but designers should treat localhost mutations as
+tokenless.
 
 SSE streams (`/events`, `/runs/:id/events`) are GETs — no header needed.
 
@@ -176,7 +180,9 @@ Each frame is a projected `MessageEntry`:
 Don't design around these. They exist, but they're plumbing.
 
 - **Stages vs columns.** The engine has ~11 stages; the board has 5 columns. The engine does the mapping in `items.current_column`. You just read it.
-- **CSRF token file.** The UI server reads it and injects the header. Browser code doesn't see it.
+- **Legacy token compatibility.** Older or non-loopback callers may still
+  send token headers, but the supported localhost UI path does not depend
+  on a token file or header injection.
 - **SQLite.** All state lives in one SQLite file that the engine owns. The UI must never read it directly — that's why this document exists.
 
 ---
