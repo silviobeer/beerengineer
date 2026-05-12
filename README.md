@@ -60,7 +60,9 @@ Items move through the dedicated **Merge** column after per-project handoff. By 
   uses your local CLI subscription) or **SDK** (in-process, billed
   per-token to your API key) per role. Ships five real
   `(harness, runtime)` adapters: `claude:cli`, `claude:sdk`,
-  `codex:cli`, `codex:sdk`, `opencode:cli`. Presets cover the common
+  `codex:cli`, `codex:sdk`, `opencode:cli`. OpenCode support is
+  execution-stage only: use `opencode:cli` for the execution coder,
+  execution reviewer, or merge-resolver role. Presets cover the common
   combinations; `self` mode mixes harnesses + runtimes per role
 - **CLI-first** (`beerengineer …`), with an **HTTP/SSE API** on port
   4100 for any external consumer (UIs, webhooks, custom tooling)
