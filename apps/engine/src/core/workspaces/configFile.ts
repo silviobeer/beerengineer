@@ -189,17 +189,21 @@ function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
       if (mode === "self") {
         const stageOverrides = (raw as { stageOverrides?: unknown }).stageOverrides
         if (stageOverrides !== undefined) {
-          if (!stageOverrides || typeof stageOverrides !== "object") return false
+          if (!stageOverrides || typeof stageOverrides !== "object" || Array.isArray(stageOverrides)) return false
           const stageKeys = Object.keys(stageOverrides as Record<string, unknown>)
           if (stageKeys.some(key => key !== "execution")) return false
           const execution = (stageOverrides as Record<string, unknown>).execution
           if (execution !== undefined) {
-            if (!execution || typeof execution !== "object") return false
+            if (!execution || typeof execution !== "object" || Array.isArray(execution)) return false
             const executionKeys = Object.keys(execution as Record<string, unknown>)
             if (executionKeys.some(key => key !== "coder" && key !== "reviewer" && key !== "merge-resolver")) return false
             const overrides = execution as Record<string, unknown>
             for (const role of ["coder", "reviewer", "merge-resolver"] as const) {
-              if (overrides[role] !== undefined && typeof overrides[role] !== "object") return false
+              const value = overrides[role]
+              if (value === undefined) continue
+              if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value as Record<string, unknown>).length === 0) {
+                return false
+              }
             }
           }
         }

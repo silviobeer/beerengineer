@@ -301,6 +301,30 @@ function tmpDbPath(): string {
 }
 
 function writeFakeCli(binDir: string, name: string): void {
+  if (process.platform === "win32") {
+    const path = join(binDir, `${name}.cmd`)
+    writeFileSync(
+      path,
+      `@echo off
+if "%~1"=="--version" (
+  echo ${name} 1.0.0
+  exit /b 0
+)
+if "%~1"=="auth" if "%~2"=="status" (
+  echo authenticated
+  exit /b 0
+)
+if "%~1"=="login" if "%~2"=="status" (
+  echo logged in
+  exit /b 0
+)
+echo ${name}
+`,
+      "utf8",
+    )
+    return
+  }
+
   const path = join(binDir, name)
   writeFileSync(
     path,

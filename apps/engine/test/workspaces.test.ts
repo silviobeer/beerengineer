@@ -803,6 +803,47 @@ test("readWorkspaceConfig upgrades codex CLI workspaces with write-capable execu
   }
 })
 
+test("readWorkspaceConfig rejects malformed self execution stageOverrides role entries", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  try {
+    const root = join(dir, "invalid-self-overrides")
+    mkdirSync(join(root, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(root, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "invalid-self-overrides",
+        name: "Invalid Self Overrides",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: [],
+            },
+          },
+        },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "unsafe-autonomous-write",
+        },
+        sonar: { enabled: false },
+        reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const config = await import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(root))
+    assert.equal(config, null)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("registerWorkspace rejects non-boolean rerere config values visibly", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-rerere-invalid-"))
   const db = initDatabase(join(dir, "db.sqlite"))

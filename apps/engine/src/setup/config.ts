@@ -209,6 +209,11 @@ function validateSelfStageOverrides(
   if (executionKeys.some(key => key !== "coder" && key !== "reviewer" && key !== "merge-resolver")) {
     throw new TypeError('self stageOverrides.execution only supports coder, reviewer, and merge-resolver')
   }
+  for (const key of ["coder", "reviewer", "merge-resolver"] as const) {
+    if (Object.prototype.hasOwnProperty.call(execution, key) && !isObject(execution[key])) {
+      throw new TypeError(`self stageOverrides.execution.${key} must be an object when provided`)
+    }
+  }
   const normalizedExecution = {
     ...(isObject(execution.coder)
       ? { coder: serializeHarnessRole(requireHarnessRole(execution.coder, "self stageOverrides.execution.coder")) }
