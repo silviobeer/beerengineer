@@ -4301,6 +4301,48 @@
             ],
             "description": "Projected user-facing recovery message. Present for lost-worker recoveries; null for other recovery causes. Derived from recovery status/cause/summary, not stored as a DB column."
           },
+          "execution_harness_selections": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "description": "Projected resolved execution-role selections for operator visibility. Each entry identifies the execution role plus its harness/runtime/provider/model.",
+            "items": {
+              "type": "object",
+              "required": [
+                "role",
+                "harness",
+                "runtime",
+                "provider",
+                "model"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "coder",
+                    "reviewer",
+                    "merge-resolver"
+                  ]
+                },
+                "harness": {
+                  "type": "string"
+                },
+                "runtime": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
           "created_at": {
             "type": "integer"
           },

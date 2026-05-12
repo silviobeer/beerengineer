@@ -17,6 +17,7 @@ export type MergeResolverHarness = {
    * rejected with a clear error rather than silently degrading to CLI.
    */
   runtime?: "cli" | "sdk"
+  provider?: string
   model?: string
 }
 
@@ -87,10 +88,11 @@ function buildPrompt(message: string, files: string[], expectedSharedFiles: stri
 
 function buildCommandForProvider(
   harness: MergeResolverHarness["harness"],
+  provider: string | undefined,
   model: string | undefined,
   workspaceRoot: string,
   prompt: string,
-): { ok: true; command: string[] } | { ok: false; reason: string } {
+): { ok: true; command: string[]; stdinText?: string } | { ok: false; reason: string } {
   switch (harness) {
     case "claude": {
       const command = [
@@ -120,8 +122,13 @@ function buildCommandForProvider(
       command.push(prompt)
       return { ok: true, command }
     }
-    case "opencode":
-      return { ok: false, reason: "merge-resolver: opencode provider not implemented yet" }
+    case "opencode": {
+      const command = ["opencode", "run"]
+      const modelSpec = provider && model ? `${provider}/${model}` : undefined
+      if (modelSpec) command.push("--model", modelSpec)
+      command.push("--format", "json")
+      return { ok: true, command, stdinText: prompt }
+    }
     case "fake":
       return { ok: false, reason: "merge-resolver: fake provider — skipped" }
   }
@@ -146,11 +153,11 @@ function writeResolverLog(logDir: string | undefined, payload: Record<string, un
   }
 }
 
-function runResolverCommandAsync(command: string[], cwd: string, timeoutMs: number): Promise<ResolverCommandResult> {
+function runResolverCommandAsync(command: string[], cwd: string, timeoutMs: number, stdinText?: string): Promise<ResolverCommandResult> {
   return new Promise(resolve => {
     const child = spawn(command[0], command.slice(1), {
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     })
     const stdoutChunks: Buffer[] = []
     const stderrChunks: Buffer[] = []
@@ -169,6 +176,9 @@ function runResolverCommandAsync(command: string[], cwd: string, timeoutMs: numb
     }
     child.stdout.on("data", chunk => stdoutChunks.push(chunk as Buffer))
     child.stderr.on("data", chunk => stderrChunks.push(chunk as Buffer))
+    if (stdinText) {
+      child.stdin?.end(stdinText)
+    }
     child.once("error", err => {
       finish({
         status: 1,
@@ -284,6 +294,7 @@ export function resolveMergeConflictsViaLlm(input: {
   const prompt = buildPrompt(input.mergeMessage, conflicted, input.expectedSharedFiles)
   const built = buildCommandForProvider(
     input.harness.harness,
+    input.harness.provider,
     input.harness.model,
     input.workspaceRoot,
     prompt,
@@ -306,6 +317,7 @@ export function resolveMergeConflictsViaLlm(input: {
   const result = spawnSync(built.command[0], built.command.slice(1), {
     cwd: input.workspaceRoot,
     encoding: "utf8",
+    input: built.stdinText,
     timeout: timeoutMs,
   })
 
@@ -343,6 +355,7 @@ export async function resolveMergeConflictsViaLlmAsync(input: {
   const prompt = buildPrompt(input.mergeMessage, conflicted, input.expectedSharedFiles)
   const built = buildCommandForProvider(
     input.harness.harness,
+    input.harness.provider,
     input.harness.model,
     input.workspaceRoot,
     prompt,
@@ -355,7 +368,7 @@ export async function resolveMergeConflictsViaLlmAsync(input: {
 
   const timeoutMs = resolverTimeoutMs(input.timeoutMs, conflicted.length)
   const startedAt = Date.now()
-  const result = await runResolverCommandAsync(built.command, input.workspaceRoot, timeoutMs)
+  const result = await runResolverCommandAsync(built.command, input.workspaceRoot, timeoutMs, built.stdinText)
 
   return finishResolution(input as typeof input & { harness: MergeResolverHarness }, conflicted, built.command, startedAt, result)
 }

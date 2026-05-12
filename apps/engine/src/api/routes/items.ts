@@ -16,6 +16,7 @@ import { runEntryFactsForItem } from "../../core/itemRunEntryFacts.js"
 import { isStructuredMergeConflictRecoveryRun } from "../../core/mergeConflictRecovery.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import {
+  isUnsupportedHarnessSelectionResult,
   isWorkflowCapabilityBlockedResult,
   isWorkflowStartGitBlockedResult,
   resumeRunInProcess,
@@ -169,6 +170,10 @@ export async function handleCreatePreparedImportItem(
       respondWorkflowGitBlocker(res, result, "import_prepared")
       return
     }
+    if (isUnsupportedHarnessSelectionResult(result)) {
+      json(res, result.status, { error: result.error, code: result.code, message: result.message, role: result.role, action: "import_prepared" })
+      return
+    }
     json(res, result.status, isWorkflowCapabilityBlockedResult(result)
       ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action: "import_prepared" }
       : { error: result.error, action: "import_prepared" })
@@ -217,6 +222,10 @@ async function handlePreparedImportAction(
   if (!result.ok) {
     if (isWorkflowStartGitBlockedResult(result)) {
       respondWorkflowGitBlocker(res, result, "import_prepared")
+      return
+    }
+    if (isUnsupportedHarnessSelectionResult(result)) {
+      json(res, result.status, { error: result.error, code: result.code, message: result.message, role: result.role, action: "import_prepared" })
       return
     }
     json(res, result.status, isWorkflowCapabilityBlockedResult(result)
@@ -292,6 +301,10 @@ function handleStartRunItemAction(
   if (!result.ok) {
     if (isWorkflowStartGitBlockedResult(result)) {
       respondWorkflowGitBlocker(res, result, action)
+      return
+    }
+    if (isUnsupportedHarnessSelectionResult(result)) {
+      json(res, result.status, { error: result.error, code: result.code, message: result.message, role: result.role, action })
       return
     }
     json(res, result.status, isWorkflowCapabilityBlockedResult(result)

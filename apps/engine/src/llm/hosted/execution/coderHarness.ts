@@ -87,9 +87,6 @@ export async function runCoderHarness(input: {
   if (input.harness.kind === "fake") {
     throw new Error("Unsupported execution harness: fake")
   }
-  if (input.harness.harness === "opencode") {
-    throw new Error("Unsupported execution harness: opencode")
-  }
   const { harness, runtime, provider, model, workspaceRoot } = input.harness
   const baseline = await ensureGitBaseline(workspaceRoot, input.baselinePath)
   const request: HostedRequest = {

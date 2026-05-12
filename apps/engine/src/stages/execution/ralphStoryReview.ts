@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { readWorkspaceConfig } from "../../core/workspaces.js"
+import { emitHarnessResolution, resolveHarness } from "../../llm/registry.js"
+import { reviewerPolicy } from "../../llm/runtimePolicy.js"
 import type { RunLlmConfig } from "../../llm/registry.js"
 import { shouldIgnoreTransientUntrackedPath } from "../../llm/hosted/execution/coderHarness.js"
 import { runStoryReviewTools } from "../../review/registry.js"
@@ -51,6 +53,15 @@ export async function runStoryReview(input: {
       forceFake: true,
     }))
   }
+
+  const reviewHarness = resolveHarness({
+    workspaceRoot: input.llm.workspaceRoot,
+    harnessProfile: input.llm.harnessProfile,
+    runtimePolicy: input.llm.runtimePolicy,
+    role: "reviewer",
+    stage: "execution",
+  })
+  emitHarnessResolution("execution", "reviewer", reviewHarness, reviewerPolicy(input.llm.runtimePolicy, "execution"))
 
   const reviewWorkspaceRoot = input.storyContext.worktreeRoot ?? input.llm.workspaceRoot
   const configRoot = input.storyContext.primaryWorkspaceRoot ?? input.llm.workspaceRoot
