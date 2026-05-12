@@ -56,6 +56,16 @@ function isSupabaseHandoffClient(value: unknown): value is SupabaseHandoffClient
     && typeof (value as SupabaseHandoffClient).getBranchConnectionString === "function"
 }
 
+function copiedUnboundHandoffMethods(input: {
+  handoffClient?: SupabaseHandoffClient
+  managementClient?: SupabaseReadinessManagementClient
+}): boolean {
+  const { handoffClient, managementClient } = input
+  if (!handoffClient || !isSupabaseHandoffClient(managementClient) || handoffClient === managementClient) return false
+  return handoffClient.getProjectKeys === managementClient.getProjectKeys
+    && handoffClient.getBranchConnectionString === managementClient.getBranchConnectionString
+}
+
 export function buildSupabaseWorkflowHook(
   repos: Repos,
   workspaceId: string,
@@ -76,9 +86,16 @@ export function buildSupabaseWorkflowHook(
   })
   if (!built) return undefined
 
-  const handoffClient = isSupabaseHandoffClient(built.managementClient)
-    ? asBoundSupabaseHandoffClient(built.managementClient)
+  const managementHandoffClient = isSupabaseHandoffClient(built.managementClient)
+    ? built.managementClient
+    : undefined
+  const handoffClient = copiedUnboundHandoffMethods({
+    handoffClient: built.handoffClient,
+    managementClient: built.managementClient,
+  })
+    ? asBoundSupabaseHandoffClient(managementHandoffClient)
     : asBoundSupabaseHandoffClient(built.handoffClient)
+      ?? asBoundSupabaseHandoffClient(managementHandoffClient)
 
   return {
     repos,

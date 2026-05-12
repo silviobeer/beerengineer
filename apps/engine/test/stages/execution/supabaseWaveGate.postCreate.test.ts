@@ -207,3 +207,94 @@ test("REQ-1 AC-1.3: legitimate post-create handoff failures remain surfaced afte
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("REQ-1 AC-1.1: a valid dedicated handoff client remains authoritative when the hook also carries a management client", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-wave-gate-post-create-dedicated-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const secretStorePath = join(dir, "secrets.json")
+  const previousSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  process.env.BEERENGINEER_SECRET_STORE_PATH = secretStorePath
+  storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp_wave_gate_post_create_dedicated", { storePath: secretStorePath })
+
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: dir })
+  repos.connectWorkspaceSupabase(workspace.id, { projectRef: "proj_1", region: "eu-central-1" })
+  repos.setWorkspaceSupabasePersistentBranch(workspace.id, {
+    ref: "br_parent",
+    name: "branch-parent",
+    status: "ACTIVE_HEALTHY",
+  })
+
+  const managementCalls: string[] = []
+  const managementClient = new SupabaseManagementClient({
+    token: "sbp_wave_gate_post_create_dedicated",
+    baseUrl: "https://example.test",
+    fetch: (async (url) => {
+      managementCalls.push(String(url))
+      throw new Error(`management client should stay unused for handoff: ${String(url)}`)
+    }) as typeof fetch,
+  })
+
+  const dedicatedCalls: string[] = []
+
+  try {
+    const hook = buildSupabaseWorkflowHook(
+      repos,
+      workspace.id,
+      repos.getWorkspace(workspace.id),
+      () => ({
+        adapter: {
+          provisionBranch: async () => ({ ok: true, context: { branchRef: "br_wave" } }),
+          pollBranchStatus: async () => ({ ok: true, context: { status: "ready" } }),
+          validateBranch: async () => ({ ok: true, context: { status: "validated" } }),
+          destroyBranch: async () => ({ ok: true }),
+          migrateProduction: async () => ({ ok: true }),
+          reconcile: async () => ({ ok: true }),
+        },
+        managementClient,
+        handoffClient: {
+          getProjectKeys: async () => {
+            dedicatedCalls.push("keys")
+            return {
+              url: "https://dedicated.supabase.co",
+              anonKey: "anon_dedicated",
+              serviceRoleKey: "service_dedicated",
+            }
+          },
+          getBranchConnectionString: async () => {
+            dedicatedCalls.push("connection")
+            return "postgres://dedicated"
+          },
+        },
+      }),
+    )
+
+    assert.ok(hook, "expected Supabase workflow hook")
+
+    const result = await provisionWaveIfDbRelevant({
+      wave: wave(),
+      adapter: hook.adapter,
+      handoffClient: hook.handoffClient,
+      context: {
+        workspaceId: workspace.id,
+        workspaceKey: workspace.key,
+        workspaceRoot: dir,
+        runId: "run-dedicated",
+        itemId: "item-dedicated",
+        projectId: "project-1",
+        projectRef: "proj_1",
+        parentBranchRef: "br_parent",
+        dbMode: "branching",
+      },
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(dedicatedCalls, ["keys", "connection"])
+    assert.deepEqual(managementCalls, [])
+  } finally {
+    if (previousSecretStorePath == null) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStorePath
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
