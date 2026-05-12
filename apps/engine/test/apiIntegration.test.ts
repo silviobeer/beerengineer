@@ -149,6 +149,61 @@ test("OpenAPI and prose document recovery_user_message on board and run DTOs", (
   assert.match(contract, /clients should render that engine-provided copy before generic fallback text/)
 })
 
+test("REQ-1 contract documents retained diagnosis operator decisions on resume and recovery", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    paths: Record<string, {
+      post?: { responses?: Record<string, { content?: { "application/json"?: { schema?: unknown } } }> }
+      delete?: { responses?: Record<string, { content?: { "application/json"?: { schema?: unknown } } }> }
+    }>
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  const resumeConflict = openapi.paths["/runs/{id}/resume"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const retryRetainedConflict = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const retryRetainedSuccess = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
+  const clearAndFreshBadRequest = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["400"]?.content?.["application/json"]?.schema
+  const clearAndFreshConflict = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const clearAndFreshSuccess = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
+  const clearAndFreshUnavailable = openapi.paths["/runs/{id}/recovery/clear-and-fresh"]?.post?.responses?.["503"]?.content?.["application/json"]?.schema
+  const retryConflict = openapi.paths["/runs/{id}/supabase-readiness/retry"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const gitRepairConflict = openapi.paths["/setup/git-identity/repair"]?.post?.responses?.["409"]
+  const workspaceDeleteConflict = openapi.paths["/workspaces/{key}"]?.delete?.responses?.["409"]
+  assert.ok(resumeConflict)
+  assert.match(JSON.stringify(resumeConflict), /ResumeOperatorDecisionConflict/)
+  assert.ok(retryRetainedConflict)
+  assert.match(JSON.stringify(retryRetainedConflict), /RetryRetainedConflict/)
+  assert.ok(retryRetainedSuccess)
+  assert.match(JSON.stringify(retryRetainedSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
+  assert.ok(clearAndFreshBadRequest)
+  assert.match(JSON.stringify(clearAndFreshBadRequest), /WorkflowCapabilityBlockedError/)
+  assert.ok(clearAndFreshConflict)
+  assert.match(JSON.stringify(clearAndFreshConflict), /ClearAndFreshConflict/)
+  assert.ok(clearAndFreshSuccess)
+  assert.match(JSON.stringify(clearAndFreshSuccess), /"recoveryStatus":\{"type":\["string","null"\]\}/)
+  assert.ok(clearAndFreshUnavailable)
+  assert.match(JSON.stringify(clearAndFreshUnavailable), /WorkflowCapabilityBlockedError/)
+  assert.ok(retryConflict)
+  assert.match(JSON.stringify(retryConflict), /ResumeOperatorDecisionConflict/)
+  assert.equal(JSON.stringify(gitRepairConflict).includes("ResumeOperatorDecisionConflict"), false)
+  assert.equal(JSON.stringify(workspaceDeleteConflict).includes("ResumeOperatorDecisionConflict"), false)
+  assert.ok(openapi.components.schemas.RecoveryDetail.properties?.decision)
+  assert.ok(openapi.components.schemas.ResumeOperatorDecisionConflict)
+  assert.ok(openapi.components.schemas.RunRecoveryDecision)
+  assert.ok(openapi.components.schemas.RetryRetainedConflict)
+  assert.ok(openapi.components.schemas.ClearAndFreshConflict)
+  assert.ok(openapi.components.schemas.WorkflowCapabilityBlockedError)
+  assert.match(contract, /operator_decision_required/)
+  assert.match(contract, /retained_diagnosis_branch/)
+  assert.match(contract, /retry-retained/)
+  assert.match(contract, /clear-and-fresh/)
+  assert.match(contract, /POST \/runs\/:id\/recovery\/retry-retained/)
+  assert.match(contract, /POST \/runs\/:id\/recovery\/clear-and-fresh/)
+  assert.match(contract, /retry_retained_conflict/)
+  assert.match(contract, /clear_and_fresh_conflict/)
+  assert.match(contract, /decision: RunRecoveryDecision \| null/)
+})
+
 test("PROJ-9 REQ-4 rollout contract documents consumer surfaces, freshness, and board budget", () => {
   const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
 

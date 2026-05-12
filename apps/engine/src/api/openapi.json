@@ -1613,6 +1613,184 @@
         }
       }
     },
+    "/runs/{id}/recovery/retry-retained": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Retry a retained diagnosis branch through the existing run recovery path.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run recovery was accepted on the retained branch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "recoveryStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "runId",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict — the run is no longer eligible for retained-branch retry or another resume blocker applies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RetryRetainedConflict"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}/recovery/clear-and-fresh": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Clear a retained diagnosis branch and continue recovery on the fresh path.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run recovery was accepted on the fresh path after clearing the retained branch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "recoveryStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "runId",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "400": {
+            "description": "Bad Request — capability blocked or missing readiness.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowCapabilityBlockedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — the run is no longer eligible for clear-and-fresh or another resume blocker applies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ClearAndFreshConflict"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable — capability not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowCapabilityBlockedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{id}/resume": {
       "parameters": [
         {
@@ -1686,7 +1864,21 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "Conflict — generic resume blocker or an explicit retained-diagnosis operator decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResumeOperatorDecisionConflict"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -1910,7 +2102,21 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "Conflict — generic resume blocker or an explicit retained-diagnosis operator decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResumeOperatorDecisionConflict"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -4354,6 +4560,176 @@
           }
         }
       },
+      "RunRecoveryDecision": {
+        "type": "object",
+        "required": [
+          "kind",
+          "reason",
+          "nextActions",
+          "branchRef"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "operator_decision_required"
+          },
+          "reason": {
+            "type": "string",
+            "const": "retained_diagnosis_branch"
+          },
+          "nextActions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "retry-retained",
+                "clear-and-fresh"
+              ]
+            }
+          },
+          "branchRef": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The retained branch currently blocking resume when the provider exposed one."
+          }
+        }
+      },
+      "ResumeOperatorDecisionConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "decision"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "operator_decision_required"
+          },
+          "code": {
+            "type": "string",
+            "const": "operator_decision_required"
+          },
+          "message": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/RunRecoveryDecision"
+          }
+        }
+      },
+      "RetryRetainedConflictCurrentState": {
+        "type": "object",
+        "required": [
+          "status",
+          "recoveryStatus",
+          "supabaseBranchLifecycleState"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "recoveryStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "blocked",
+              "failed",
+              null
+            ]
+          },
+          "supabaseBranchLifecycleState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RetryRetainedConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "currentState"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "retry_retained_conflict"
+          },
+          "code": {
+            "type": "string",
+            "const": "retry_retained_conflict"
+          },
+          "message": {
+            "type": "string"
+          },
+          "currentState": {
+            "$ref": "#/components/schemas/RetryRetainedConflictCurrentState"
+          }
+        }
+      },
+      "ClearAndFreshConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "currentState"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "clear_and_fresh_conflict"
+          },
+          "code": {
+            "type": "string",
+            "const": "clear_and_fresh_conflict"
+          },
+          "message": {
+            "type": "string"
+          },
+          "currentState": {
+            "$ref": "#/components/schemas/RetryRetainedConflictCurrentState"
+          }
+        }
+      },
+      "WorkflowCapabilityBlockedError": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "workflow_capability_blocked"
+          },
+          "code": {
+            "type": "string",
+            "const": "workflow_capability_blocked"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "incomplete_config",
+              "blocked_readiness",
+              "gate_blocked"
+            ]
+          }
+        }
+      },
       "RecoveryDetail": {
         "type": "object",
         "required": [
@@ -4397,6 +4773,16 @@
               "null"
             ],
             "description": "Projected user-facing recovery message to display before generic fallback copy when present."
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunRecoveryDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "resumable": {
             "type": "boolean"

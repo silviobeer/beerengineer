@@ -27,6 +27,11 @@ import type { AppConfig } from "../setup/types.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
+import { recordSupabaseLifecycle } from "./supabase/lifecycleEvents.js"
+import { updateSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
+import { retainedDiagnosisRecoveryDecision, type RunRecoveryDecision } from "./supabase/recoveryDecision.js"
+import { discardSupabaseBranchFromRunRecovery } from "./supabase/runRecoveryActions.js"
+import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 import { inspectWorkerLease } from "./workerLease.js"
 
@@ -107,6 +112,48 @@ export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "operator_decision_required"
+      code: "operator_decision_required"
+      message: string
+      decision: RunRecoveryDecision
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type RetryRetainedCurrentState = {
+  status: RunRow["status"]
+  recoveryStatus: RunRow["recovery_status"]
+  supabaseBranchLifecycleState: RunRow["supabase_branch_lifecycle_state"]
+}
+
+export type RetryRetainedRunResult =
+  | { ok: true; runId: string; remediationId: string }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "retry_retained_conflict"
+      code: "retry_retained_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type ClearAndFreshRunResult =
+  | { ok: true; runId: string; remediationId: string }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "clear_and_fresh_conflict"
+      code: "clear_and_fresh_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type ReplanRunResult =
@@ -129,6 +176,42 @@ export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "operator_decision_required"
+      code: "operator_decision_required"
+      message: string
+      decision: RunRecoveryDecision
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type PreparedForegroundRetryRetainedRunResult =
+  | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "retry_retained_conflict"
+      code: "retry_retained_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type PreparedForegroundClearAndFreshRunResult =
+  | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | {
+      ok: false
+      status: 409
+      error: "clear_and_fresh_conflict"
+      code: "clear_and_fresh_conflict"
+      message: string
+      currentState: RetryRetainedCurrentState
+    }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedImportRunResult =
@@ -621,6 +704,212 @@ export function isWorkflowCapabilityBlockedResult(
   result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
 ): result is WorkflowCapabilityOwnershipBlockedResult | WorkflowCapabilityBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_capability_blocked"
+}
+
+export function isResumeOperatorDecisionResult(
+  result: ResumeRunResult | PreparedForegroundResumeRunResult,
+): result is Extract<ResumeRunResult, { ok: false; error: "operator_decision_required" }> {
+  return !result.ok && result.error === "operator_decision_required"
+}
+
+export function isRetryRetainedConflictResult(
+  result: RetryRetainedRunResult | PreparedForegroundRetryRetainedRunResult,
+): result is Extract<RetryRetainedRunResult, { ok: false; error: "retry_retained_conflict" }> {
+  return !result.ok && result.error === "retry_retained_conflict"
+}
+
+export function isClearAndFreshConflictResult(
+  result: ClearAndFreshRunResult | PreparedForegroundClearAndFreshRunResult,
+): result is Extract<ClearAndFreshRunResult, { ok: false; error: "clear_and_fresh_conflict" }> {
+  return !result.ok && result.error === "clear_and_fresh_conflict"
+}
+
+const RETRY_RETAINED_REMEDIATION_SUMMARY = "Operator retried the retained diagnosis branch."
+const RETRY_RETAINED_PRECONDITION_ERROR = "retry_retained_precondition_failed"
+const CLEAR_AND_FRESH_REMEDIATION_SUMMARY = "Operator cleared the retained diagnosis branch and started a fresh recovery path."
+const CLEAR_AND_FRESH_PRECONDITION_ERROR = "clear_and_fresh_precondition_failed"
+
+function retryRetainedCurrentState(run: RunRow): RetryRetainedCurrentState {
+  return {
+    status: run.status,
+    recoveryStatus: run.recovery_status,
+    supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
+  }
+}
+
+function retryRetainedConflict(run: RunRow): Extract<RetryRetainedRunResult, { ok: false; error: "retry_retained_conflict" }> {
+  return {
+    ok: false,
+    status: 409,
+    error: "retry_retained_conflict",
+    code: "retry_retained_conflict",
+    message: "retry-retained is only available while the run is retained for diagnosis.",
+    currentState: retryRetainedCurrentState(run),
+  }
+}
+
+function throwRetryRetainedPreconditionError(): never {
+  throw new Error(RETRY_RETAINED_PRECONDITION_ERROR)
+}
+
+function clearAndFreshConflict(run: RunRow): Extract<ClearAndFreshRunResult, { ok: false; error: "clear_and_fresh_conflict" }> {
+  return {
+    ok: false,
+    status: 409,
+    error: "clear_and_fresh_conflict",
+    code: "clear_and_fresh_conflict",
+    message: "clear-and-fresh is only available while the run is retained for diagnosis.",
+    currentState: retryRetainedCurrentState(run),
+  }
+}
+
+function throwClearAndFreshPreconditionError(): never {
+  throw new Error(CLEAR_AND_FRESH_PRECONDITION_ERROR)
+}
+
+type ResumeReadinessResult = Awaited<ReturnType<typeof loadResumeReadiness>>
+
+type ClearAndFreshCapabilityContext = {
+  ready: true
+  capabilitiesResult: WorkflowCapabilityBag
+  supabaseHook?: SupabaseWorkflowHook
+}
+
+function clearAndFreshReadinessFailure(
+  readiness: ResumeReadinessResult,
+): PreparedForegroundClearAndFreshRunResult | null {
+  if (readiness.kind === "not_found") return { ok: false, status: 404, error: "run_not_found" }
+  if (readiness.kind === "not_resumable") {
+    return retainedDiagnosisRecoveryDecision(readiness.run)
+      ? { ok: false, status: 409, error: readiness.reason }
+      : clearAndFreshConflict(readiness.run)
+  }
+  if (readiness.kind !== "ready") return clearAndFreshConflict(readiness.run)
+  if (retainedDiagnosisRecoveryDecision(readiness.run) == null) return clearAndFreshConflict(readiness.run)
+  return null
+}
+
+function clearAndFreshPreconditionFailureResult(
+  repos: Repos,
+  runId: string,
+): PreparedForegroundClearAndFreshRunResult {
+  const currentRun = repos.getRun(runId)
+  return currentRun
+    ? clearAndFreshConflict(currentRun)
+    : { ok: false, status: 404, error: "run_not_found" }
+}
+
+function resolveClearAndFreshCapabilityContext(
+  repos: Repos,
+  input: Pick<
+    Parameters<typeof prepareForegroundClearAndFreshRun>[2],
+    "runId" | "supabaseAdapterFactory" | "capabilityResolver"
+  >,
+  run: RunRow,
+): PreparedForegroundClearAndFreshRunResult | ClearAndFreshCapabilityContext {
+  const workspace = repos.getWorkspace(run.workspace_id)
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
+
+  const runAfterCapabilityCheck = repos.getRun(input.runId)
+  if (!runAfterCapabilityCheck) return { ok: false, status: 404, error: "run_not_found" }
+  if (retainedDiagnosisRecoveryDecision(runAfterCapabilityCheck) == null) {
+    return clearAndFreshConflict(runAfterCapabilityCheck)
+  }
+
+  return {
+    ready: true,
+    capabilitiesResult,
+    supabaseHook: buildSupabaseWorkflowHook(repos, run.workspace_id, workspace, capabilitiesResult.supabaseAdapterFactory),
+  }
+}
+
+function cleanupFailureReason(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value
+  if (value instanceof Error && value.message.trim()) return value.message
+  if (value && typeof value === "object") {
+    const row = value as { message?: unknown; error?: unknown }
+    if (typeof row.message === "string" && row.message.trim()) return row.message
+    if (typeof row.error === "string" && row.error.trim()) return row.error
+  }
+  return "Destroy failed"
+}
+
+async function runClearAndFreshBeforeResume(
+  repos: Repos,
+  runId: string,
+  supabaseHook?: SupabaseWorkflowHook,
+): Promise<void> {
+  const run = repos.getRun(runId)
+  if (!run) throwClearAndFreshPreconditionError()
+  const branchRef = run.supabase_branch_ref
+  const payload = updateSupabaseProvisioningRecoveryPayload(run.recovery_payload_json, {
+    branchRef: null,
+    operatorAction: "discard",
+  })
+  if (payload == null) {
+    throwClearAndFreshPreconditionError()
+  }
+  const discarded = discardSupabaseBranchFromRunRecovery(repos, { runId })
+  if (!discarded.ok) throwClearAndFreshPreconditionError()
+  repos.setRunRecovery(runId, {
+    status: run.recovery_status,
+    scope: run.recovery_scope,
+    scopeRef: run.recovery_scope_ref,
+    summary: run.recovery_summary,
+    payloadJson: payload,
+  })
+
+  if (branchRef && supabaseHook) {
+    recordSupabaseLifecycle({
+      repos,
+      runId,
+      branchRef,
+      step: "cleanup",
+      status: "in_progress",
+    })
+    try {
+      const cleanup = await supabaseHook.adapter.destroyBranch({
+        workspaceId: supabaseHook.workspaceId,
+        projectRef: supabaseHook.projectRef,
+        branchRef,
+      })
+      if (cleanup.ok) {
+        recordSupabaseLifecycle({
+          repos,
+          runId,
+          branchRef,
+          step: "cleanup",
+          status: "passed",
+        })
+      } else {
+        recordSupabaseLifecycle({
+          repos,
+          runId,
+          branchRef,
+          step: "cleanup",
+          status: "retained",
+          reason: cleanupFailureReason(cleanup.context),
+        })
+      }
+    } catch (error) {
+      recordSupabaseLifecycle({
+        repos,
+        runId,
+        branchRef,
+        step: "cleanup",
+        status: "retained",
+        reason: cleanupFailureReason(error),
+      })
+    }
+  }
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -1134,6 +1423,72 @@ export async function resumeRunInProcess(
   return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
 }
 
+export async function retryRetainedRunInProcess(
+  repos: Repos,
+  input: {
+    runId: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<RetryRetainedRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundRetryRetainedRun(repos, io, {
+    runId: input.runId,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    resumeRunImpl: input.resumeRunImpl,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "retryRetainedRunInProcess", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
+export async function clearAndFreshRunInProcess(
+  repos: Repos,
+  input: {
+    runId: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<ClearAndFreshRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundClearAndFreshRun(repos, io, {
+    runId: input.runId,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    resumeRunImpl: input.resumeRunImpl,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "clearAndFreshRunInProcess", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
 export async function resumeRunFromExistingRemediationInProcess(
   repos: Repos,
   input: {
@@ -1328,6 +1683,8 @@ export async function prepareForegroundResumeRun(
     admissionController?: WorkerAdmissionController
     resumeRunImpl?: PerformResumeImpl
     persistItemDecision?: boolean
+    bypassRetainedDiagnosisDecision?: boolean
+    verifyBeforeRemediation?: (run: RunRow) => void
   },
 ): Promise<PreparedForegroundResumeRunResult> {
   const summary = input.summary.trim()
@@ -1338,6 +1695,17 @@ export async function prepareForegroundResumeRun(
   if (readiness.kind === "no_recovery") return { ok: false, status: 409, error: "not_resumable" }
   if (readiness.kind === "not_resumable") {
     return { ok: false, status: 409, error: readiness.reason }
+  }
+  const decision = retainedDiagnosisRecoveryDecision(readiness.run)
+  if (decision && input.bypassRetainedDiagnosisDecision !== true) {
+    return {
+      ok: false,
+      status: 409,
+      error: "operator_decision_required",
+      code: "operator_decision_required",
+      message: "Run requires an explicit operator decision before recovery can continue.",
+      decision,
+    }
   }
   const workspace = repos.getWorkspace(readiness.run.workspace_id)
   const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
@@ -1362,6 +1730,10 @@ export async function prepareForegroundResumeRun(
   let scopeRef: string | null = null
   if (scope.type === "stage") scopeRef = scope.stageId
   else if (scope.type === "story") scopeRef = `${scope.waveNumber}/${scope.storyId}`
+
+  const runBeforeRemediation = repos.getRun(input.runId)
+  if (!runBeforeRemediation) return { ok: false, status: 404, error: "run_not_found" }
+  input.verifyBeforeRemediation?.(runBeforeRemediation)
 
   const remediation: ExternalRemediationRow = repos.createExternalRemediation({
     runId: input.runId,
@@ -1437,6 +1809,124 @@ export async function prepareForegroundResumeRun(
       ? queueDeferredStart(admission, input.runId, start)
       : () => admission.runAdmitted(input.runId, start),
   }
+}
+
+export async function prepareForegroundRetryRetainedRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    runId: string
+    workerOwnerKind?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<PreparedForegroundRetryRetainedRunResult> {
+  const readiness = await loadResumeReadiness(repos, input.runId)
+  if (readiness.kind === "not_found") return { ok: false, status: 404, error: "run_not_found" }
+  if (readiness.kind === "not_resumable") {
+    if (retainedDiagnosisRecoveryDecision(readiness.run)) {
+      return { ok: false, status: 409, error: readiness.reason }
+    }
+    return retryRetainedConflict(readiness.run)
+  }
+  if (readiness.kind !== "ready") return retryRetainedConflict(readiness.run)
+  if (!retainedDiagnosisRecoveryDecision(readiness.run)) return retryRetainedConflict(readiness.run)
+
+  let prepared: PreparedForegroundResumeRunResult
+  try {
+    prepared = await prepareForegroundResumeRun(repos, io, {
+      runId: input.runId,
+      summary: RETRY_RETAINED_REMEDIATION_SUMMARY,
+      workerOwnerKind: input.workerOwnerKind,
+      workerInstanceId: input.workerInstanceId,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: input.supabaseAdapterFactory,
+      capabilityResolver: input.capabilityResolver,
+      admissionController: input.admissionController,
+      resumeRunImpl: input.resumeRunImpl,
+      persistItemDecision: false,
+      bypassRetainedDiagnosisDecision: true,
+      verifyBeforeRemediation: run => {
+        if (!retainedDiagnosisRecoveryDecision(run)) throwRetryRetainedPreconditionError()
+      },
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === RETRY_RETAINED_PRECONDITION_ERROR) {
+      const currentRun = repos.getRun(input.runId)
+      return currentRun
+        ? retryRetainedConflict(currentRun)
+        : { ok: false, status: 404, error: "run_not_found" }
+    }
+    throw error
+  }
+
+  if (prepared.ok && repos.getRun(input.runId)?.status === "blocked") {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  return prepared
+}
+
+export async function prepareForegroundClearAndFreshRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    runId: string
+    workerOwnerKind?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<PreparedForegroundClearAndFreshRunResult> {
+  const readiness = await loadResumeReadiness(repos, input.runId)
+  const readinessFailure = clearAndFreshReadinessFailure(readiness)
+  if (readinessFailure) return readinessFailure
+
+  const capabilityContext = resolveClearAndFreshCapabilityContext(repos, input, readiness.run)
+  if (!capabilityContext.ready) return capabilityContext
+
+  let prepared: PreparedForegroundResumeRunResult
+  try {
+    await runClearAndFreshBeforeResume(repos, input.runId, capabilityContext.supabaseHook)
+    prepared = await prepareForegroundResumeRun(repos, io, {
+      runId: input.runId,
+      summary: CLEAR_AND_FRESH_REMEDIATION_SUMMARY,
+      workerOwnerKind: input.workerOwnerKind,
+      workerInstanceId: input.workerInstanceId,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+      capabilityResolver: () => capabilityContext.capabilitiesResult,
+      admissionController: input.admissionController,
+      resumeRunImpl: input.resumeRunImpl,
+      persistItemDecision: false,
+      bypassRetainedDiagnosisDecision: true,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === CLEAR_AND_FRESH_PRECONDITION_ERROR) {
+      return clearAndFreshPreconditionFailureResult(repos, input.runId)
+    }
+    throw error
+  }
+
+  if (prepared.ok && repos.getRun(input.runId)?.status === "blocked") {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  return prepared
 }
 
 // Re-export the event type for convenience.
