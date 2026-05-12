@@ -1,7 +1,7 @@
 import { isKnownModel } from "../harness/models.js"
 import presetsJson from "../harness/presets.json" with { type: "json" }
 import type { SetupReport } from "../../setup/types.js"
-import type { HarnessProfile, HarnessRole, KnownHarness, ValidationResult } from "../../types/workspace.js"
+import type { ExecutionStageHarnessOverrides, HarnessProfile, HarnessRole, KnownHarness, ValidationResult } from "../../types/workspace.js"
 
 type PresetRoleEntry = { harness: KnownHarness; runtime?: "cli" | "sdk" }
 type PresetEntry = {
@@ -12,6 +12,21 @@ type PresetEntry = {
 }
 
 const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
+
+type UnsupportedHarnessSelection = {
+  code: "unsupported_harness_selection"
+  detail: string
+  role: HarnessRole
+}
+
+function pairsFromExecutionOverrides(
+  execution: ExecutionStageHarnessOverrides | undefined,
+): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
+  if (!execution) return []
+  return Object.values(execution)
+    .filter((role): role is NonNullable<typeof role> => Boolean(role))
+    .map(role => ({ harness: role.harness, runtime: role.runtime ?? "cli" }))
+}
 
 function pairsFromPreset(presetKey: string): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
   const preset = PRESETS[presetKey]
@@ -49,6 +64,7 @@ function rolePairsForProfile(
       const pairs: Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> = [
         { harness: profile.roles.coder.harness, runtime: profile.roles.coder.runtime ?? "cli" },
         { harness: profile.roles.reviewer.harness, runtime: profile.roles.reviewer.runtime ?? "cli" },
+        ...pairsFromExecutionOverrides(profile.stageOverrides?.execution),
       ]
       const mr = profile.roles["merge-resolver"]
       if (mr) pairs.push({ harness: mr.harness, runtime: mr.runtime ?? "cli" })
@@ -93,8 +109,53 @@ function appendUnknownModelWarnings(profile: HarnessProfile, warnings: string[])
   }
 }
 
+function unsupportedExecutionOpenCodeSelection(
+  role: HarnessRole,
+  surface: string,
+): UnsupportedHarnessSelection {
+  return {
+    code: "unsupported_harness_selection",
+    role,
+    detail:
+      `OpenCode (opencode:cli) is only supported for execution-role selections. ` +
+      `Rejected role "${role}" on ${surface}. ` +
+      `Use self.stageOverrides.execution.${role} with runtime "cli" instead.`,
+  }
+}
+
+export function validateExecutionRoleOpenCodeSelection(profile: HarnessProfile): { ok: true } | { ok: false; error: UnsupportedHarnessSelection } {
+  switch (profile.mode) {
+    case "opencode":
+      return { ok: false, error: unsupportedExecutionOpenCodeSelection("coder", 'harnessProfile.mode="opencode"') }
+    case "opencode-china":
+    case "opencode-euro":
+      return { ok: false, error: unsupportedExecutionOpenCodeSelection("coder", `harnessProfile.mode="${profile.mode}"`) }
+    case "self":
+      if (profile.roles.coder.harness === "opencode") {
+        return { ok: false, error: unsupportedExecutionOpenCodeSelection("coder", "harnessProfile.roles.coder") }
+      }
+      if (profile.roles.reviewer.harness === "opencode") {
+        return { ok: false, error: unsupportedExecutionOpenCodeSelection("reviewer", "harnessProfile.roles.reviewer") }
+      }
+      return { ok: true }
+    default:
+      return { ok: true }
+  }
+}
+
 export function validateHarnessProfile(profile: HarnessProfile, appReport: SetupReport): ValidationResult {
   const warnings: string[] = []
+  const opencodeScopeValidation = validateExecutionRoleOpenCodeSelection(profile)
+  if (!opencodeScopeValidation.ok) {
+    return {
+      ok: false,
+      warnings,
+      error: {
+        code: opencodeScopeValidation.error.code,
+        detail: opencodeScopeValidation.error.detail,
+      },
+    }
+  }
   const pairs = rolePairsForProfile(profile)
   const hardRejects = pairs.filter(p => p.harness === "opencode" && p.runtime === "sdk")
   if (hardRejects.length > 0) {
@@ -117,6 +178,19 @@ export function validateHarnessProfile(profile: HarnessProfile, appReport: Setup
         code: "profile_references_unavailable_runtime",
         detail:
           "Harness profile sets merge-resolver runtime to sdk, which is not implemented (the resolver is sync; SDK adapters are async). " +
+          'Set merge-resolver to runtime: "cli" — coder/reviewer SDK runtimes are unaffected.',
+        },
+      }
+  }
+
+  if (profile.mode === "self" && profile.stageOverrides?.execution?.["merge-resolver"]?.runtime === "sdk") {
+    return {
+      ok: false,
+      warnings,
+      error: {
+        code: "profile_references_unavailable_runtime",
+        detail:
+          "Harness profile sets execution stageOverrides merge-resolver runtime to sdk, which is not implemented (the resolver is sync; SDK adapters are async). " +
           'Set merge-resolver to runtime: "cli" — coder/reviewer SDK runtimes are unaffected.',
       },
     }

@@ -11,6 +11,8 @@ import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscriber
 import { generateReplacementPlanFromArtifacts, performExplicitReplan } from "./replan.js"
 import { loadResumeReadiness, performResume, type PerformResumeInput } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
+import { readWorkspaceConfigSync } from "./workspaces/configFile.js"
+import { validateExecutionRoleOpenCodeSelection } from "./workspaces/harnessProfiles.js"
 import { deriveProjectStartStages, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { defaultImportContextGenerator, writeImportContextArtifact, type ImportContextGenerator } from "./importContext.js"
 import { layout } from "./workspaceLayout.js"
@@ -92,8 +94,18 @@ export type WorkflowCapabilityBlockedResult = {
   message: string
 }
 
+export type UnsupportedHarnessSelectionResult = {
+  ok: false
+  status: 409
+  error: "unsupported_harness_selection"
+  code: "unsupported_harness_selection"
+  message: string
+  role: string
+}
+
 export type StartRunResult =
   | { ok: true; runId: string; itemId: string }
+  | UnsupportedHarnessSelectionResult
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
@@ -103,6 +115,7 @@ type StartRunFailureResult = Exclude<StartRunResult, { ok: true; runId: string; 
 
 export type PreparedForegroundRunResult =
   | { ok: true; runId: string; itemId: string; start: () => Promise<void> }
+  | UnsupportedHarnessSelectionResult
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
@@ -216,6 +229,7 @@ export type PreparedForegroundClearAndFreshRunResult =
 
 export type PreparedImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[] }
+  | UnsupportedHarnessSelectionResult
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
@@ -225,6 +239,7 @@ type PreparedImportFailureResult = Exclude<PreparedImportRunResult, { ok: true; 
 
 export type PreparedForegroundImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
+  | UnsupportedHarnessSelectionResult
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
   | WorkflowCapabilityBlockedResult
@@ -330,6 +345,25 @@ function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | n
       reason: "blocked_readiness",
       message: "Supabase capability is blocked by an unreadable test fixture.",
     })
+  }
+}
+
+function unsupportedHarnessSelectionForWorkspace(
+  workspace: WorkspaceRow | undefined,
+): UnsupportedHarnessSelectionResult | null {
+  const rootPath = workspace?.root_path?.trim()
+  if (!rootPath) return null
+  const workspaceConfig = readWorkspaceConfigSync(rootPath)
+  if (!workspaceConfig) return null
+  const validation = validateExecutionRoleOpenCodeSelection(workspaceConfig.harnessProfile)
+  if (validation.ok) return null
+  return {
+    ok: false,
+    status: 409,
+    error: validation.error.code,
+    code: validation.error.code,
+    message: validation.error.detail,
+    role: validation.error.role,
   }
 }
 
@@ -640,6 +674,8 @@ export function prepareForegroundIdeaRun(
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
   const workspace = input.workspaceKey ? repos.getWorkspaceByKey(input.workspaceKey) : undefined
+  const unsupportedSelection = unsupportedHarnessSelectionForWorkspace(workspace)
+  if (unsupportedSelection) return unsupportedSelection
   const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
     repos,
     workspace,
@@ -704,6 +740,12 @@ export function isWorkflowCapabilityBlockedResult(
   result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
 ): result is WorkflowCapabilityOwnershipBlockedResult | WorkflowCapabilityBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_capability_blocked"
+}
+
+export function isUnsupportedHarnessSelectionResult(
+  result: StartRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundImportRunResult,
+): result is UnsupportedHarnessSelectionResult {
+  return !result.ok && "code" in result && result.code === "unsupported_harness_selection"
 }
 
 export function isResumeOperatorDecisionResult(
@@ -1109,6 +1151,8 @@ export function prepareForegroundItemRun(
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
   const workspace = repos.getWorkspace(item.workspace_id)
+  const unsupportedSelection = unsupportedHarnessSelectionForWorkspace(workspace)
+  if (unsupportedSelection) return unsupportedSelection
   const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
     repos,
     workspace,
@@ -1240,6 +1284,8 @@ export async function prepareForegroundPreparedImportRun(
   const workspaceResult = resolvePreparedImportWorkspace(repos, existingItem, input.workspaceKey)
   if (!workspaceResult.ok) return workspaceResult.error
   const workspace = workspaceResult.workspace
+  const unsupportedSelection = unsupportedHarnessSelectionForWorkspace(workspace)
+  if (unsupportedSelection) return unsupportedSelection
   const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
     repos,
     workspace,

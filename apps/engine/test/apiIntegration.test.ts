@@ -1,9 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { delimiter, join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 
 import { initDatabase } from "../src/db/connection.js"
@@ -147,6 +147,17 @@ test("OpenAPI and prose document recovery_user_message on board and run DTOs", (
   assert.ok(openapi.components.schemas.BoardCard.properties?.recovery_user_message)
   assert.match(contract, /recovery_user_message: string \| null/)
   assert.match(contract, /clients should render that engine-provided copy before generic fallback text/)
+})
+
+test("REQ-2 contract documents execution harness selections on the run DTO", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  assert.ok(openapi.components.schemas.Run.properties?.execution_harness_selections)
+  assert.match(contract, /execution_harness_selections/)
+  assert.match(contract, /role\/harness identity for execution/)
 })
 
 test("REQ-1 contract documents retained diagnosis operator decisions on resume and recovery", () => {
@@ -298,6 +309,54 @@ function stopServer(proc: ChildProcess): Promise<void> {
 
 function tmpDbPath(): string {
   return join(mkdtempSync(join(tmpdir(), "be2-api-")), "db.sqlite")
+}
+
+function writeFakeCli(binDir: string, name: string): void {
+  if (process.platform === "win32") {
+    const path = join(binDir, `${name}.cmd`)
+    writeFileSync(
+      path,
+      `@echo off
+if "%~1"=="--version" (
+  echo ${name} 1.0.0
+  exit /b 0
+)
+if "%~1"=="auth" if "%~2"=="status" (
+  echo authenticated
+  exit /b 0
+)
+if "%~1"=="login" if "%~2"=="status" (
+  echo logged in
+  exit /b 0
+)
+echo ${name}
+`,
+      "utf8",
+    )
+    return
+  }
+
+  const path = join(binDir, name)
+  writeFileSync(
+    path,
+    `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "${name} 1.0.0"
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo "authenticated"
+  exit 0
+fi
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo "logged in"
+  exit 0
+fi
+echo "${name}"
+`,
+    "utf8",
+  )
+  chmodSync(path, 0o755)
 }
 
 function seedStaleRunningRun(
@@ -928,6 +987,193 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
   }
 })
 
+test("workspace HTTP add accepts execution-only opencode overrides and rejects unsupported OpenCode override variants", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-api-opencode-"))
+  const configPath = join(dir, "config.json")
+  const allowedRoot = join(dir, "projects")
+  const workspacePath = join(allowedRoot, "api-opencode")
+  const invalidSdkPath = join(allowedRoot, "api-opencode-sdk")
+  const malformedPath = join(allowedRoot, "api-opencode-malformed")
+  const binDir = join(dir, "bin")
+  mkdirSync(allowedRoot, { recursive: true })
+  mkdirSync(binDir, { recursive: true })
+  writeFakeCli(binDir, "claude")
+  writeFakeCli(binDir, "opencode")
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+    ANTHROPIC_API_KEY: "anthropic-test",
+    OPENCODE_API_KEY: "opencode-test",
+  })
+  try {
+    await waitForHealth(base)
+
+    const addRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: workspacePath,
+        key: "api-opencode",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+              reviewer: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+              "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(addRes.status, 200)
+
+    const getRes = await fetch(`${base}/workspaces/api-opencode`)
+    assert.equal(getRes.status, 200)
+    const gotten = await getRes.json() as {
+      harnessProfile: {
+        mode: string
+        roles: {
+          coder: { harness: string; runtime?: string }
+          reviewer: { harness: string; runtime?: string }
+        }
+        stageOverrides?: {
+          execution?: {
+            coder?: { harness: string; runtime?: string }
+            reviewer?: { harness: string; runtime?: string }
+            "merge-resolver"?: { harness: string; runtime?: string }
+          }
+        }
+      }
+    }
+    assert.equal(gotten.harnessProfile.mode, "self")
+    assert.equal(gotten.harnessProfile.roles.coder.harness, "claude")
+    assert.equal(gotten.harnessProfile.roles.reviewer.harness, "claude")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.coder?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.coder?.runtime, "cli")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.reviewer?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.["merge-resolver"]?.harness, "opencode")
+    assert.equal(gotten.harnessProfile.stageOverrides?.execution?.["merge-resolver"]?.runtime, "cli")
+
+    const invalidSdkRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: invalidSdkPath,
+        key: "api-opencode-sdk",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "sdk" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(invalidSdkRes.status, 409)
+    const invalidSdkBody = await invalidSdkRes.json() as { error: string; detail: string }
+    assert.equal(invalidSdkBody.error, "profile_references_unavailable_runtime")
+    assert.match(invalidSdkBody.detail, /opencode:sdk/)
+
+    const malformedRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: malformedPath,
+        key: "api-opencode-malformed",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "bogus" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(malformedRes.status, 400)
+    const malformedBody = await malformedRes.json() as { error: string; detail: string }
+    assert.equal(malformedBody.error, "invalid_harness_profile")
+    assert.match(malformedBody.detail, /runtime/)
+
+    const outOfScopeStageRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: join(allowedRoot, "api-opencode-planning"),
+        key: "api-opencode-planning",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+          },
+          stageOverrides: {
+            planning: {
+              coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+            },
+          },
+        },
+        sonar: { enabled: false },
+        git: { init: false },
+      }),
+    })
+    assert.equal(outOfScopeStageRes.status, 400)
+    const outOfScopeStageBody = await outOfScopeStageRes.json() as { error: string; detail: string }
+    assert.equal(outOfScopeStageBody.error, "invalid_harness_profile")
+    assert.match(outOfScopeStageBody.detail, /execution/)
+
+    const listRes = await fetch(`${base}/workspaces`)
+    assert.equal(listRes.status, 200)
+    const list = await listRes.json() as { workspaces: Array<{ key: string }> }
+    assert.ok(list.workspaces.some(workspace => workspace.key === "api-opencode"))
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-sdk"), false)
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-malformed"), false)
+    assert.equal(list.workspaces.some(workspace => workspace.key === "api-opencode-planning"), false)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("workspace HTTP add rejects malformed harnessProfile with 400", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()
@@ -1104,6 +1350,58 @@ test("POST /items/:id/actions/:action returns 409 on invalid transition", async 
     assert.equal(body.current.column, "done")
   } finally {
     await stopServer(proc)
+  }
+})
+
+test("REQ-2 AC-2.3: POST /items/:id/actions/start_implementation rejects unsupported OpenCode selection synchronously", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-api-opencode-start-"))
+  mkdirSync(join(workspaceRoot, ".beerengineer"), { recursive: true })
+  writeFileSync(join(workspaceRoot, ".beerengineer", "workspace.json"), JSON.stringify({
+    schemaVersion: 2,
+    key: "t",
+    name: "T",
+    harnessProfile: {
+      mode: "self",
+      roles: {
+        coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+        reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+      },
+    },
+    runtimePolicy: {
+      stageAuthoring: "safe-readonly",
+      reviewer: "safe-readonly",
+      coderExecution: "safe-workspace-write",
+    },
+    sonar: { enabled: false },
+    reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+    createdAt: 123,
+  }, null, 2))
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: workspaceRoot })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  repos.setItemColumn(item.id, "requirements", "draft")
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/items/${item.id}/actions/start_implementation`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({}),
+    })
+    assert.equal(res.status, 409)
+    const body = await res.json() as { error: string; code: string; role: string; message: string; action: string }
+    assert.equal(body.error, "unsupported_harness_selection")
+    assert.equal(body.code, "unsupported_harness_selection")
+    assert.equal(body.role, "coder")
+    assert.equal(body.action, "start_implementation")
+    assert.match(body.message, /coder/)
+  } finally {
+    await stopServer(proc)
+    rmSync(workspaceRoot, { recursive: true, force: true })
   }
 })
 
@@ -1934,6 +2232,94 @@ test("GET /runs/:id/messages returns canonical projected messages with level fil
     assert.deepEqual(secondBody.entries.map(entry => entry.type), ["agent_message", "phase_completed"])
   } finally {
     await stopServer(proc)
+  }
+})
+
+test("REQ-2 AC-2.4: run detail and run messages expose execution role and harness identity", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const rootPath = mkdtempSync(join(tmpdir(), "be2-run-opencode-detail-"))
+  mkdirSync(join(rootPath, ".beerengineer"), { recursive: true })
+  writeFileSync(join(rootPath, ".beerengineer", "workspace.json"), JSON.stringify({
+    schemaVersion: 2,
+    key: "t",
+    name: "T",
+    harnessProfile: {
+      mode: "self",
+      roles: {
+        coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+        reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+        "merge-resolver": { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+      },
+      stageOverrides: {
+        execution: {
+          reviewer: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+          "merge-resolver": { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+        },
+      },
+    },
+    runtimePolicy: {
+      stageAuthoring: "safe-readonly",
+      reviewer: "safe-readonly",
+      coderExecution: "safe-workspace-write",
+    },
+    sonar: { enabled: false },
+    reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+    createdAt: 123,
+  }, null, 2))
+
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  repos.appendLog({
+    runId: run.id,
+    eventType: "log",
+    message: "llm.resolve stage=execution role=reviewer harness=opencode runtime=cli provider=openrouter model=qwen/qwen3-coder-plus policy=safe-readonly",
+    data: { level: "info" },
+  })
+  repos.appendLog({
+    runId: run.id,
+    eventType: "log",
+    message: "llm.resolve stage=execution role=merge-resolver harness=opencode runtime=cli provider=openrouter model=qwen/qwen3-coder-plus policy=safe-workspace-write",
+    data: { level: "info" },
+  })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const runRes = await fetch(`${base}/runs/${run.id}`)
+    assert.equal(runRes.status, 200)
+    const runBody = await runRes.json() as {
+      execution_harness_selections: Array<{ role: string; harness: string; runtime: string }>
+    }
+    assert.ok(runBody.execution_harness_selections.some(selection =>
+      selection.role === "reviewer" && selection.harness === "opencode" && selection.runtime === "cli",
+    ))
+    assert.ok(runBody.execution_harness_selections.some(selection =>
+      selection.role === "merge-resolver" && selection.harness === "opencode" && selection.runtime === "cli",
+    ))
+
+    const messagesRes = await fetch(`${base}/runs/${run.id}/messages?level=0`)
+    assert.equal(messagesRes.status, 200)
+    const messagesBody = await messagesRes.json() as {
+      entries: Array<{ type: string; payload: { message?: string } }>
+    }
+    assert.ok(messagesBody.entries.some(entry =>
+      entry.type === "log" &&
+      entry.payload.message?.includes("role=reviewer") === true &&
+      entry.payload.message?.includes("harness=opencode") === true,
+    ))
+    assert.ok(messagesBody.entries.some(entry =>
+      entry.type === "log" &&
+      entry.payload.message?.includes("role=merge-resolver") === true &&
+      entry.payload.message?.includes("harness=opencode") === true,
+    ))
+  } finally {
+    await stopServer(proc)
+    rmSync(rootPath, { recursive: true, force: true })
   }
 })
 
