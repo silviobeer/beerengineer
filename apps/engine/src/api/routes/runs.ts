@@ -13,8 +13,13 @@ import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messag
 import { projectStageLogRow } from "../../core/messagingProjection.js"
 import {
   answerRunPromptInProcess,
+  clearAndFreshRunInProcess,
+  isClearAndFreshConflictResult,
+  isRetryRetainedConflictResult,
+  isResumeOperatorDecisionResult,
   isWorkflowCapabilityBlockedResult,
   replanRunInProcess,
+  retryRetainedRunInProcess,
   resumeRunInProcess,
   startRunFromIdea,
   type ReplanRunResult,
@@ -23,6 +28,7 @@ import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { recoveryUserMessageForRun } from "../../core/recoveryUserMessage.js"
+import { retainedDiagnosisRecoveryDecision } from "../../core/supabase/recoveryDecision.js"
 
 function contentTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
@@ -35,6 +41,70 @@ function contentTypeFor(path: string): string {
     default:
       return "text/plain; charset=utf-8"
   }
+}
+
+type ResumeRunFailure = Exclude<Awaited<ReturnType<typeof resumeRunInProcess>>, { ok: true }>
+type RetryRetainedRunFailure = Exclude<Awaited<ReturnType<typeof retryRetainedRunInProcess>>, { ok: true }>
+type ClearAndFreshRunFailure = Exclude<Awaited<ReturnType<typeof clearAndFreshRunInProcess>>, { ok: true }>
+
+function resumeFailureBody(result: ResumeRunFailure): Record<string, unknown> {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      reason: "reason" in result ? result.reason : undefined,
+    }
+  }
+  if (isResumeOperatorDecisionResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      decision: result.decision,
+    }
+  }
+  return { error: result.error }
+}
+
+function retryRetainedFailureBody(result: RetryRetainedRunFailure): Record<string, unknown> {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      reason: "reason" in result ? result.reason : undefined,
+    }
+  }
+  if (isRetryRetainedConflictResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      currentState: result.currentState,
+    }
+  }
+  return { error: result.error }
+}
+
+function clearAndFreshFailureBody(result: ClearAndFreshRunFailure): Record<string, unknown> {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      reason: "reason" in result ? result.reason : undefined,
+    }
+  }
+  if (isClearAndFreshConflictResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      currentState: result.currentState,
+    }
+  }
+  return { error: result.error }
 }
 
 export function handleGetBoard(db: Db, url: URL, res: ServerResponse): void {
@@ -219,6 +289,7 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run_not_found", code: "not_found" })
   if (!run.recovery_status) return json(res, 200, { recovery: null })
+  const decision = retainedDiagnosisRecoveryDecision(run)
   json(res, 200, {
     recovery: {
       status: run.recovery_status,
@@ -226,7 +297,8 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
       scopeRef: run.recovery_scope_ref,
       summary: run.recovery_summary,
       recovery_user_message: recoveryUserMessageForRun(run),
-      resumable: !isResumeInFlight(runId),
+      decision,
+      resumable: decision ? false : !isResumeInFlight(runId),
       remediations: repos.listExternalRemediations(runId),
     },
   })
@@ -262,9 +334,7 @@ export async function handleResumeRun(
     onItemColumnChanged,
   })
   if (!result.ok) {
-    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
-      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
-      : { error: result.error })
+    return json(res, result.status, resumeFailureBody(result))
   }
   const run = repos.getRun(result.runId)
   json(res, 200, { runId: result.runId, status: run?.status ?? "running" })
@@ -310,12 +380,56 @@ export async function handleSupabaseReadinessRetry(
     onItemColumnChanged,
   })
   if (!result.ok) {
-    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
-      ? { ok: false, error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
-      : { ok: false, error: result.error })
+    return json(res, result.status, { ok: false, ...resumeFailureBody(result) })
   }
   const run = repos.getRun(result.runId)
   json(res, 200, { ok: true, runId: result.runId, status: run?.status ?? "running", recoveryStatus: run?.recovery_status ?? null })
+}
+
+export async function handleRetryRetainedRecovery(
+  repos: Repos,
+  _req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const result = await retryRetainedRunInProcess(repos, {
+    runId,
+    onItemColumnChanged,
+  })
+  if (!result.ok) {
+    return json(res, result.status, retryRetainedFailureBody(result))
+  }
+  const run = repos.getRun(result.runId)
+  json(res, 200, {
+    ok: true,
+    runId: result.runId,
+    status: run?.status ?? "running",
+    recoveryStatus: run?.recovery_status ?? null,
+  })
+}
+
+export async function handleClearAndFreshRecovery(
+  repos: Repos,
+  _req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const result = await clearAndFreshRunInProcess(repos, {
+    runId,
+    onItemColumnChanged,
+  })
+  if (!result.ok) {
+    return json(res, result.status, clearAndFreshFailureBody(result))
+  }
+  const run = repos.getRun(result.runId)
+  json(res, 200, {
+    ok: true,
+    runId: result.runId,
+    status: run?.status ?? "running",
+    recoveryStatus: run?.recovery_status ?? null,
+  })
 }
 
 /** `POST /runs` — start a fresh run from a title/description + optional workspace. */
