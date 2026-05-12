@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { delimiter, join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 
 import { initDatabase } from "../src/db/connection.js"
@@ -1009,7 +1009,7 @@ test("workspace HTTP add accepts execution-only opencode overrides and rejects u
     BEERENGINEER_UI_DB_PATH: dbPath,
     BEERENGINEER_CONFIG_PATH: configPath,
     BEERENGINEER_DATA_DIR: join(dir, "data"),
-    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
     ANTHROPIC_API_KEY: "anthropic-test",
     OPENCODE_API_KEY: "opencode-test",
   })

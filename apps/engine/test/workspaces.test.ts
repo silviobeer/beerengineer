@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { delimiter, join } from "node:path"
 import { spawnSync } from "node:child_process"
 
 import {
@@ -631,7 +631,7 @@ test("runWorkspacePreflight reports scanner readiness from PATH", async () => {
   writeFileSync(join(stubBin, "sonar-scanner"), "#!/bin/sh\necho 'SonarScanner 9.9.0'\n", "utf8")
   chmodSync(join(stubBin, "sonar-scanner"), 0o755)
   const prevPath = process.env.PATH
-  process.env.PATH = `${stubBin}:${prevPath ?? ""}`
+  process.env.PATH = `${stubBin}${delimiter}${prevPath ?? ""}`
 
   try {
     const report = await runWorkspacePreflight(dir)
