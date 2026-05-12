@@ -229,3 +229,133 @@ test("execution handoff claimant rejects ineligible blocked variants without cla
     }
   }
 })
+
+test("execution handoff claimant restores the blocked CLI handoff when resume dispatch is rejected", async () => {
+  const { repos, workspace, close } = tempRepos("be2-execution-handoff-rejected-resume-")
+  try {
+    const seeded = seedRun(repos, workspace.id, {
+      title: "resume-rejected",
+      currentStage: "planning",
+      claimLeaseAs: "cli",
+    })
+    const remediation = repos.createExternalRemediation({
+      runId: seeded.runId,
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Resume the blocked execution handoff.",
+      source: "api",
+    })
+    queueExecutionOwnershipHandoffResume(repos, seeded.runId, remediation.id)
+
+    const before = repos.getRun(seeded.runId)
+    const claimed = await claimExecutionOwnershipHandoffs(repos, {
+      apiWorkerInstanceId: "api-worker-test",
+      resumeRun: async () => ({ ok: false }),
+    })
+
+    const after = repos.getRun(seeded.runId)
+    const payload = parseExecutionOwnershipHandoffRecoveryPayload(after?.recovery_payload_json)
+
+    assert.deepEqual(claimed.claimedRunIds, [])
+    assert.equal(after?.owner, before?.owner)
+    assert.equal(after?.worker_owner_kind, before?.worker_owner_kind)
+    assert.equal(after?.worker_instance_id, before?.worker_instance_id)
+    assert.equal(after?.worker_started_at, before?.worker_started_at)
+    assert.equal(after?.worker_heartbeat_at, before?.worker_heartbeat_at)
+    assert.equal(payload?.pendingResumeRemediationId, remediation.id)
+    assert.equal(payload?.lastAttemptedResumeRemediationId, null)
+  } finally {
+    close()
+  }
+})
+
+test("execution handoff claimant restores the blocked CLI handoff when resume dispatch throws", async () => {
+  const { repos, workspace, close } = tempRepos("be2-execution-handoff-thrown-resume-")
+  try {
+    const seeded = seedRun(repos, workspace.id, {
+      title: "resume-thrown",
+      currentStage: "execution",
+      claimLeaseAs: "cli",
+    })
+    const remediation = repos.createExternalRemediation({
+      runId: seeded.runId,
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Resume the blocked execution handoff.",
+      source: "api",
+    })
+    queueExecutionOwnershipHandoffResume(repos, seeded.runId, remediation.id)
+
+    const before = repos.getRun(seeded.runId)
+
+    await assert.rejects(
+      claimExecutionOwnershipHandoffs(repos, {
+        apiWorkerInstanceId: "api-worker-test",
+        resumeRun: async () => {
+          throw new Error("resume dispatch failed")
+        },
+      }),
+      /resume dispatch failed/,
+    )
+
+    const after = repos.getRun(seeded.runId)
+    const payload = parseExecutionOwnershipHandoffRecoveryPayload(after?.recovery_payload_json)
+
+    assert.equal(after?.owner, before?.owner)
+    assert.equal(after?.worker_owner_kind, before?.worker_owner_kind)
+    assert.equal(after?.worker_instance_id, before?.worker_instance_id)
+    assert.equal(after?.worker_started_at, before?.worker_started_at)
+    assert.equal(after?.worker_heartbeat_at, before?.worker_heartbeat_at)
+    assert.equal(payload?.pendingResumeRemediationId, remediation.id)
+    assert.equal(payload?.lastAttemptedResumeRemediationId, null)
+  } finally {
+    close()
+  }
+})
+
+test("execution handoff rollback does not overwrite runs that already left the blocked handoff state", async () => {
+  const { repos, workspace, close } = tempRepos("be2-execution-handoff-no-stale-rollback-")
+  try {
+    const seeded = seedRun(repos, workspace.id, {
+      title: "rollback-no-overwrite",
+      currentStage: "planning",
+      claimLeaseAs: "cli",
+    })
+    const remediation = repos.createExternalRemediation({
+      runId: seeded.runId,
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Resume the blocked execution handoff.",
+      source: "api",
+    })
+    queueExecutionOwnershipHandoffResume(repos, seeded.runId, remediation.id)
+
+    const claimed = await claimExecutionOwnershipHandoffs(repos, {
+      apiWorkerInstanceId: "api-worker-test",
+      resumeRun: async currentRepos => {
+        currentRepos.updateRun(seeded.runId, {
+          status: "completed",
+          current_stage: "handoff",
+          recovery_status: null,
+          recovery_scope: null,
+          recovery_scope_ref: null,
+          recovery_summary: null,
+          recovery_payload_json: null,
+        })
+        return { ok: false }
+      },
+    })
+
+    const after = repos.getRun(seeded.runId)
+
+    assert.deepEqual(claimed.claimedRunIds, [])
+    assert.equal(after?.status, "completed")
+    assert.equal(after?.current_stage, "handoff")
+    assert.equal(after?.recovery_status, null)
+    assert.equal(after?.owner, "api")
+    assert.equal(after?.worker_owner_kind, "api")
+    assert.equal(after?.worker_instance_id, "api-worker-test")
+  } finally {
+    close()
+  }
+})
