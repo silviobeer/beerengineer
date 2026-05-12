@@ -11,6 +11,7 @@ import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 
 const TEST_API_TOKEN = "test-token"
+const TEST_API_WORKER_INSTANCE_ID = "test-api-worker"
 const FRESH_PATH_RECOVERY = "fresh_path_recovery"
 const RETAINED_PATH_RECOVERY = "retained_path_recovery"
 
@@ -144,6 +145,7 @@ function seedSkipFixtures(dbPath: string): {
 } {
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
+  const staleStartedAt = Date.now() - 300_000
   try {
     const eligible = createRunFixture(repos, {
       title: "Eligible skip run",
@@ -157,6 +159,12 @@ function seedSkipFixtures(dbPath: string): {
       recovery_scope_ref: null,
       recovery_summary: null,
       recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(eligible.run.id, {
+      workerInstanceId: TEST_API_WORKER_INSTANCE_ID,
+      workerOwnerKind: "api",
+      startedAt: staleStartedAt,
+      heartbeatAt: staleStartedAt,
     })
     repos.createStageRun({ runId: eligible.run.id, stageKey: "execution" })
 
@@ -172,6 +180,12 @@ function seedSkipFixtures(dbPath: string): {
       recovery_scope_ref: null,
       recovery_summary: null,
       recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(noCurrent.run.id, {
+      workerInstanceId: TEST_API_WORKER_INSTANCE_ID,
+      workerOwnerKind: "api",
+      startedAt: staleStartedAt,
+      heartbeatAt: staleStartedAt,
     })
 
     const inactive = createRunFixture(repos, {
@@ -221,6 +235,12 @@ function seedSkipFixtures(dbPath: string): {
       recovery_scope_ref: null,
       recovery_summary: null,
       recovery_payload_json: null,
+    })
+    repos.claimRunWorkerLease(terminal.run.id, {
+      workerInstanceId: TEST_API_WORKER_INSTANCE_ID,
+      workerOwnerKind: "api",
+      startedAt: staleStartedAt,
+      heartbeatAt: staleStartedAt,
     })
     const terminalStage = repos.createStageRun({ runId: terminal.run.id, stageKey: "requirements" })
     repos.completeStageRun(terminalStage.id, "completed")
@@ -486,11 +506,14 @@ test("REQ-1 edge cases: unknown, malformed, and missing run requests reject with
 test("REQ-2 TC-REQ-2-01: recovery read surface offers skip_current_stage only for an active unskipped current stage", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
   const dbPath = join(dir, "db.sqlite")
-  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  const fixture = seedSkipFixtures(dbPath)
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_API_INSTANCE_ID: TEST_API_WORKER_INSTANCE_ID,
+  })
 
   try {
     await waitForHealth(base)
-    const fixture = seedSkipFixtures(dbPath)
 
     const eligible = await getRecovery(base, fixture.eligibleRunId) as { recovery: { availableActions: string[] } }
     const noCurrent = await getRecovery(base, fixture.noCurrentRunId) as { recovery: null }
@@ -514,11 +537,14 @@ test("REQ-2 TC-REQ-2-01: recovery read surface offers skip_current_stage only fo
 test("REQ-2 TC-REQ-2-02/03/06: accepted skip_current_stage records the skip, blocks the run, and does not auto-advance", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
   const dbPath = join(dir, "db.sqlite")
-  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  const fixture = seedSkipFixtures(dbPath)
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_API_INSTANCE_ID: TEST_API_WORKER_INSTANCE_ID,
+  })
 
   try {
     await waitForHealth(base)
-    const fixture = seedSkipFixtures(dbPath)
 
     const accepted = await postRecovery(base, fixture.eligibleRunId, { action: "skip_current_stage" })
     assert.equal(accepted.status, 200)
@@ -579,11 +605,14 @@ test("REQ-2 TC-REQ-2-02/03/06: accepted skip_current_stage records the skip, blo
 test("REQ-2 TC-REQ-2-04: ineligible skip_current_stage requests reject with specific reasons and no state changes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-run-skip-http-"))
   const dbPath = join(dir, "db.sqlite")
-  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  const fixture = seedSkipFixtures(dbPath)
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_API_INSTANCE_ID: TEST_API_WORKER_INSTANCE_ID,
+  })
 
   try {
     await waitForHealth(base)
-    const fixture = seedSkipFixtures(dbPath)
 
     const noCurrentBefore = JSON.stringify({
       recovery: await getRecovery(base, fixture.noCurrentRunId),
