@@ -83,6 +83,7 @@ export type Command =
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "run-get"; runId?: string; json?: boolean }
   | { kind: "run-skip-current-stage"; runId?: string }
+  | { kind: "run-recovery-action"; runId?: string; action?: string }
   | { kind: "run-resume"; runId?: string; resume?: ResumeFlags }
   | { kind: "run-replan"; runId?: string; replan?: ReplanFlags }
   | { kind: "run-attach-supabase-branch"; runId?: string; branchRef?: string }

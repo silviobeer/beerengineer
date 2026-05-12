@@ -142,6 +142,11 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["notifications", "test", "telegram"]), { kind: "notifications-test", channel: "telegram" })
   assert.deepEqual(parseArgs(["workspace", "preview", "/tmp/demo", "--json"]), { kind: "workspace-preview", path: "/tmp/demo", json: true })
   assert.deepEqual(parseArgs(["run", "skip-current-stage", "run-123"]), { kind: "run-skip-current-stage", runId: "run-123" })
+  assert.deepEqual(parseArgs(["run", "recovery", "run-123", "recover_fresh_branch"]), {
+    kind: "run-recovery-action",
+    runId: "run-123",
+    action: "recover_fresh_branch",
+  })
   assert.deepEqual(parseArgs(["workspace", "add", "--path", "/tmp/demo", "--profile", "fast", "--sonar", "--no-git", "--no-interactive"]), {
     kind: "workspace-add",
     json: false,
@@ -234,6 +239,9 @@ test("PROJ-3-PRD-5 AC-3 help text describes workspace capability command groups"
   assert.match(lines.join("\n"), /workspace git status/)
   assert.match(lines.join("\n"), /workspace coderabbit status <key> \[--json\]/)
   assert.match(lines.join("\n"), /workspace capability readiness/)
+  assert.match(lines.join("\n"), /run recovery <run-id> <action>/)
+  assert.match(lines.join("\n"), /recover_fresh_branch retry_retained/)
+  assert.match(lines.join("\n"), /clear_supabase_branch_ref clear_supabase_branch_lifecycle_state/)
 })
 
 test("REQ-2 TC-REQ-2-05 public CLI skip-current-stage preserves the canonical recovery outcome", async () => {
