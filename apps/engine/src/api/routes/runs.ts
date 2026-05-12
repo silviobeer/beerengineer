@@ -14,10 +14,12 @@ import { projectStageLogRow } from "../../core/messagingProjection.js"
 import {
   answerRunPromptInProcess,
   isWorkflowCapabilityBlockedResult,
+  mutateRunRecoveryActionInProcess,
   replanRunInProcess,
   resumeRunInProcess,
   startRunFromIdea,
   type ReplanRunResult,
+  type RunRecoveryActionRequest,
 } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
@@ -230,6 +232,23 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
       remediations: repos.listExternalRemediations(runId),
     },
   })
+}
+
+export async function handleMutateRecovery(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+): Promise<void> {
+  const result = mutateRunRecoveryActionInProcess(repos, {
+    runId,
+    ...(await readJson(req) as RunRecoveryActionRequest),
+  })
+  if (!result.ok) {
+    const { status, ...body } = result
+    return json(res, status, body)
+  }
+  json(res, 200, result)
 }
 
 /**

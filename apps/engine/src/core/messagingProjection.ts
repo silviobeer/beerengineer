@@ -259,6 +259,20 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     remediationId: typeof data.remediationId === "string" ? data.remediationId : "",
     scope: parseRecoveryScope(data.scope, row.run_id),
   }),
+  run_recovery_action: (row, data) => ({
+    type: "run_recovery_action",
+    runId: row.run_id,
+    action: typeof data.action === "string" ? data.action : row.message,
+    outcome: data.outcome === "noop" ? "noop" : "accepted",
+    reason: data.reason === "already_clear" ? "already_clear" : undefined,
+    latestState: typeof data.latestState === "object" && data.latestState !== null
+      ? data.latestState as Extract<WorkflowEvent, { type: "run_recovery_action" }>["latestState"]
+      : {
+          recoveryPayloadJson: null,
+          supabaseBranchRef: null,
+          supabaseBranchLifecycleState: null,
+        },
+  }),
   plan_regenerated: (row, data) => ({
     type: "plan_regenerated",
     runId: row.run_id,
