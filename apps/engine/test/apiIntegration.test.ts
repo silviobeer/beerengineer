@@ -160,11 +160,14 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
 
   const resumeConflict = openapi.paths["/runs/{id}/resume"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  const retryRetainedConflict = openapi.paths["/runs/{id}/recovery/retry-retained"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const retryConflict = openapi.paths["/runs/{id}/supabase-readiness/retry"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
   const gitRepairConflict = openapi.paths["/setup/git-identity/repair"]?.post?.responses?.["409"]
   const workspaceDeleteConflict = openapi.paths["/workspaces/{key}"]?.delete?.responses?.["409"]
   assert.ok(resumeConflict)
   assert.match(JSON.stringify(resumeConflict), /ResumeOperatorDecisionConflict/)
+  assert.ok(retryRetainedConflict)
+  assert.match(JSON.stringify(retryRetainedConflict), /RetryRetainedConflict/)
   assert.ok(retryConflict)
   assert.match(JSON.stringify(retryConflict), /ResumeOperatorDecisionConflict/)
   assert.equal(JSON.stringify(gitRepairConflict).includes("ResumeOperatorDecisionConflict"), false)
@@ -172,10 +175,13 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.ok(openapi.components.schemas.RecoveryDetail.properties?.decision)
   assert.ok(openapi.components.schemas.ResumeOperatorDecisionConflict)
   assert.ok(openapi.components.schemas.RunRecoveryDecision)
+  assert.ok(openapi.components.schemas.RetryRetainedConflict)
   assert.match(contract, /operator_decision_required/)
   assert.match(contract, /retained_diagnosis_branch/)
   assert.match(contract, /retry-retained/)
   assert.match(contract, /clear-and-fresh/)
+  assert.match(contract, /POST \/runs\/:id\/recovery\/retry-retained/)
+  assert.match(contract, /retry_retained_conflict/)
   assert.match(contract, /decision: RunRecoveryDecision \| null/)
 })
 

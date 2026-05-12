@@ -13,9 +13,11 @@ import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messag
 import { projectStageLogRow } from "../../core/messagingProjection.js"
 import {
   answerRunPromptInProcess,
+  isRetryRetainedConflictResult,
   isResumeOperatorDecisionResult,
   isWorkflowCapabilityBlockedResult,
   replanRunInProcess,
+  retryRetainedRunInProcess,
   resumeRunInProcess,
   startRunFromIdea,
   type ReplanRunResult,
@@ -40,6 +42,7 @@ function contentTypeFor(path: string): string {
 }
 
 type ResumeRunFailure = Exclude<Awaited<ReturnType<typeof resumeRunInProcess>>, { ok: true }>
+type RetryRetainedRunFailure = Exclude<Awaited<ReturnType<typeof retryRetainedRunInProcess>>, { ok: true }>
 
 function resumeFailureBody(result: ResumeRunFailure): Record<string, unknown> {
   if (isWorkflowCapabilityBlockedResult(result)) {
@@ -56,6 +59,26 @@ function resumeFailureBody(result: ResumeRunFailure): Record<string, unknown> {
       code: result.code,
       message: result.message,
       decision: result.decision,
+    }
+  }
+  return { error: result.error }
+}
+
+function retryRetainedFailureBody(result: RetryRetainedRunFailure): Record<string, unknown> {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      reason: "reason" in result ? result.reason : undefined,
+    }
+  }
+  if (isRetryRetainedConflictResult(result)) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      currentState: result.currentState,
     }
   }
   return { error: result.error }
@@ -338,6 +361,29 @@ export async function handleSupabaseReadinessRetry(
   }
   const run = repos.getRun(result.runId)
   json(res, 200, { ok: true, runId: result.runId, status: run?.status ?? "running", recoveryStatus: run?.recovery_status ?? null })
+}
+
+export async function handleRetryRetainedRecovery(
+  repos: Repos,
+  _req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const result = await retryRetainedRunInProcess(repos, {
+    runId,
+    onItemColumnChanged,
+  })
+  if (!result.ok) {
+    return json(res, result.status, retryRetainedFailureBody(result))
+  }
+  const run = repos.getRun(result.runId)
+  json(res, 200, {
+    ok: true,
+    runId: result.runId,
+    status: run?.status ?? "running",
+    recoveryStatus: run?.recovery_status ?? null,
+  })
 }
 
 /** `POST /runs` — start a fresh run from a title/description + optional workspace. */

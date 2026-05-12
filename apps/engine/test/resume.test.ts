@@ -12,6 +12,7 @@ import { Repos } from "../src/db/repositories.js"
 import { runWorkflow } from "../src/workflow.ts"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
+import { retryRetainedRunInProcess } from "../src/core/runService.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { buildWorkflowResumeInput, loadResumeReadiness, performResume } from "../src/core/resume.js"
@@ -536,6 +537,149 @@ test("performResume keeps a persisted plan on run-scope provisioning resume when
         resumed.events.filter(event => event.type === "run_resumed").map(event => event.type),
         ["run_resumed"],
       )
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("REQ-2 AC-2.2/AC-2.3: retryRetainedRunInProcess starts recovery on the retained branch without a second resume call", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Retained Retry", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `retained-retry-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `retained-retry-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      repos.setRunSupabaseBranch(run.id, {
+        ref: "br_retained",
+        name: "wave-1",
+        lifecycleState: "retained-for-diagnosis",
+      })
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: "execution",
+        recovery_status: "blocked",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Supabase provisioning failed during validation.",
+        recovery_payload_json: buildSupabaseProvisioningRecoveryPayload({
+          runId: run.id,
+          workspaceId: ws.id,
+          workspaceKey: ws.key,
+          projectRef: "proj_test",
+          waveId: "W1",
+          waveNumber: 1,
+          branchRef: "br_retained",
+          failedStep: "validate",
+          failureCause: "Validation failed",
+          userMessage: "Supabase provisioning failed. Operator recovery action is required.",
+        }),
+      })
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Supabase provisioning failed during validation.",
+        detail: "seeded retained diagnosis recovery",
+        evidencePaths: [layout.runDir(ctx)],
+      })
+
+      const result = await retryRetainedRunInProcess(repos, {
+        runId: run.id,
+        resumeRunImpl: async input => {
+          await performResume({
+            ...input,
+            workflowRunner: async () => {},
+          })
+        },
+      })
+
+      assert.equal(result.ok, true)
+      for (let i = 0; i < 50; i++) {
+        if (repos.getRun(run.id)?.status === "completed") break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+
+      const resumed = repos.getRun(run.id)
+      assert.equal(repos.listExternalRemediations(run.id).length, 1)
+      assert.equal(repos.listExternalRemediations(run.id)[0]?.summary, "Operator retried the retained diagnosis branch.")
+      assert.equal(repos.listLogsForRun(run.id).some(log => log.event_type === "run_resumed"), true)
+      assert.equal(resumed?.status, "completed")
+      assert.equal(resumed?.recovery_status, null)
+      assert.equal(resumed?.supabase_branch_ref, "br_retained")
+      assert.equal(resumed?.supabase_branch_lifecycle_state, "retained-for-diagnosis")
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("REQ-2 AC-2.4: retryRetainedRunInProcess returns the authoritative current state when the run is no longer retained for diagnosis", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Retained Retry Conflict", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `retained-retry-conflict-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `retained-retry-conflict-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      repos.updateRun(run.id, {
+        status: "failed",
+        current_stage: "execution",
+        recovery_status: "failed",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Run has already moved on.",
+      })
+      await writeRecoveryRecord(ctx, {
+        status: "failed",
+        cause: "stage_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Run has already moved on.",
+        detail: "seeded stale retained retry conflict",
+        evidencePaths: [layout.runDir(ctx)],
+      })
+
+      const result = await retryRetainedRunInProcess(repos, { runId: run.id })
+
+      assert.deepEqual(result, {
+        ok: false,
+        status: 409,
+        error: "retry_retained_conflict",
+        code: "retry_retained_conflict",
+        message: "retry-retained is only available while the run is retained for diagnosis.",
+        currentState: {
+          status: "failed",
+          recoveryStatus: "failed",
+          supabaseBranchLifecycleState: null,
+        },
+      })
+      assert.equal(repos.listExternalRemediations(run.id).length, 0)
+      assert.equal(repos.listLogsForRun(run.id).some(log => log.event_type === "run_resumed"), false)
     } finally {
       db.close()
     }

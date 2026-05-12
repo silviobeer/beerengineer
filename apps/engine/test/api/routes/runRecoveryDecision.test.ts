@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { handleGetRecovery, handleResumeRun } from "../../../src/api/routes/runs.js"
+import { handleGetRecovery, handleResumeRun, handleRetryRetainedRecovery } from "../../../src/api/routes/runs.js"
 import { writeRecoveryRecord } from "../../../src/core/recovery.js"
 import { buildSupabaseProvisioningRecoveryPayload } from "../../../src/core/supabase/recoveryPayload.js"
 import { layout } from "../../../src/core/workspaceLayout.js"
@@ -246,5 +246,79 @@ test("REQ-1 AC-1.1: retained diagnosis conflict is specialized and does not repl
   } finally {
     retained.cleanup()
     generic.cleanup()
+  }
+})
+
+test("REQ-2 AC-2.1: non-retained recovery detail does not advertise retry-retained", async () => {
+  const fx = setupFixture()
+  try {
+    fx.repos.updateRun(fx.run.id, {
+      status: "blocked",
+      current_stage: "execution",
+      recovery_status: "blocked",
+      recovery_scope: "run",
+      recovery_scope_ref: null,
+      recovery_summary: "Generic blocked recovery",
+    })
+    await writeRecoveryRecord(fx.ctx, {
+      status: "blocked",
+      cause: "stage_error",
+      scope: { type: "run", runId: fx.run.id },
+      summary: "Generic blocked recovery",
+      detail: "seeded generic recovery",
+      evidencePaths: [layout.runDir(fx.ctx)],
+    })
+
+    const { res, state } = captureRes()
+    handleGetRecovery(fx.repos, res, fx.run.id)
+
+    assert.equal(state.status, 200)
+    assert.deepEqual(parseBody(state), {
+      recovery: {
+        status: "blocked",
+        scope: "run",
+        scopeRef: null,
+        summary: "Generic blocked recovery",
+        recovery_user_message: null,
+        decision: null,
+        resumable: true,
+        remediations: [],
+      },
+    })
+  } finally {
+    fx.cleanup()
+  }
+})
+
+test("REQ-2 AC-2.4: stale retry-retained requests return a conflict with the authoritative current state and start no recovery work", async () => {
+  const fx = setupFixture()
+  try {
+    await seedRetainedDiagnosisRun(fx)
+    fx.repos.updateRun(fx.run.id, {
+      status: "failed",
+      recovery_status: "failed",
+      recovery_summary: "Run has already moved on.",
+      recovery_payload_json: null,
+    })
+    fx.repos.clearRunSupabaseBranch(fx.run.id)
+
+    const { res, state } = captureRes()
+    await handleRetryRetainedRecovery(fx.repos, jsonReq({}), res, fx.run.id)
+
+    assert.equal(state.status, 409)
+    assert.deepEqual(parseBody(state), {
+      error: "retry_retained_conflict",
+      code: "retry_retained_conflict",
+      message: "retry-retained is only available while the run is retained for diagnosis.",
+      currentState: {
+        status: "failed",
+        recoveryStatus: "failed",
+        supabaseBranchLifecycleState: null,
+      },
+    })
+    assert.equal(fx.repos.listExternalRemediations(fx.run.id).length, 0)
+    assert.equal(fx.repos.listLogsForRun(fx.run.id).some(log => log.event_type === "run_resumed"), false)
+  } finally {
+    fx.cleanup()
   }
 })
