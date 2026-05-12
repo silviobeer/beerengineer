@@ -890,7 +890,7 @@ test("REQ-3 AC-3.2/AC-3.3/AC-3.4: clearAndFreshRunInProcess detaches the retaine
   })
 })
 
-test("REQ-3 AC-3.5/AC-3.6: clear-and-fresh warns on cleanup failure and re-checks retained eligibility before remediation side effects", async () => {
+test("REQ-3 AC-3.5: clear-and-fresh warns on cleanup failure while fresh continuation still proceeds", async () => {
   await withTmpCwd(async () => {
     const repoRoot = join(process.cwd(), "repo")
     mkdirSync(repoRoot, { recursive: true })
@@ -980,7 +980,33 @@ test("REQ-3 AC-3.5/AC-3.6: clear-and-fresh warns on cleanup failure and re-check
         }),
         true,
       )
+    } finally {
+      db.close()
+    }
+  })
+})
 
+test("REQ-3 AC-3.6: clear-and-fresh re-checks retained eligibility before remediation side effects", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(ws.id, { projectRef: "proj_test", region: "us-east-1", dbMode: "direct" })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Clear And Fresh Conflict", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `clear-and-fresh-conflict-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `clear-and-fresh-conflict-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
       repos.setRunSupabaseBranch(run.id, {
         ref: "br_retained",
         name: "wave-1",
@@ -1033,6 +1059,7 @@ test("REQ-3 AC-3.5/AC-3.6: clear-and-fresh warns on cleanup failure and re-check
           supabaseBranchLifecycleState: null,
         },
       })
+      assert.equal(repos.listExternalRemediations(run.id).length, 0)
     } finally {
       db.close()
     }

@@ -767,6 +767,70 @@ function throwClearAndFreshPreconditionError(): never {
   throw new Error(CLEAR_AND_FRESH_PRECONDITION_ERROR)
 }
 
+type ResumeReadinessResult = Awaited<ReturnType<typeof loadResumeReadiness>>
+
+type ClearAndFreshCapabilityContext = {
+  ready: true
+  capabilitiesResult: WorkflowCapabilityBag
+  supabaseHook?: SupabaseWorkflowHook
+}
+
+function clearAndFreshReadinessFailure(
+  readiness: ResumeReadinessResult,
+): PreparedForegroundClearAndFreshRunResult | null {
+  if (readiness.kind === "not_found") return { ok: false, status: 404, error: "run_not_found" }
+  if (readiness.kind === "not_resumable") {
+    return retainedDiagnosisRecoveryDecision(readiness.run)
+      ? { ok: false, status: 409, error: readiness.reason }
+      : clearAndFreshConflict(readiness.run)
+  }
+  if (readiness.kind !== "ready") return clearAndFreshConflict(readiness.run)
+  if (retainedDiagnosisRecoveryDecision(readiness.run) == null) return clearAndFreshConflict(readiness.run)
+  return null
+}
+
+function clearAndFreshPreconditionFailureResult(
+  repos: Repos,
+  runId: string,
+): PreparedForegroundClearAndFreshRunResult {
+  const currentRun = repos.getRun(runId)
+  return currentRun
+    ? clearAndFreshConflict(currentRun)
+    : { ok: false, status: 404, error: "run_not_found" }
+}
+
+function resolveClearAndFreshCapabilityContext(
+  repos: Repos,
+  input: Pick<
+    Parameters<typeof prepareForegroundClearAndFreshRun>[2],
+    "runId" | "supabaseAdapterFactory" | "capabilityResolver"
+  >,
+  run: RunRow,
+): PreparedForegroundClearAndFreshRunResult | ClearAndFreshCapabilityContext {
+  const workspace = repos.getWorkspace(run.workspace_id)
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
+
+  const runAfterCapabilityCheck = repos.getRun(input.runId)
+  if (!runAfterCapabilityCheck) return { ok: false, status: 404, error: "run_not_found" }
+  if (retainedDiagnosisRecoveryDecision(runAfterCapabilityCheck) == null) {
+    return clearAndFreshConflict(runAfterCapabilityCheck)
+  }
+
+  return {
+    ready: true,
+    capabilitiesResult,
+    supabaseHook: buildSupabaseWorkflowHook(repos, run.workspace_id, workspace, capabilitiesResult.supabaseAdapterFactory),
+  }
+}
+
 function cleanupFailureReason(value: unknown): string {
   if (typeof value === "string" && value.trim()) return value
   if (value instanceof Error && value.message.trim()) return value.message
@@ -1828,39 +1892,15 @@ export async function prepareForegroundClearAndFreshRun(
   },
 ): Promise<PreparedForegroundClearAndFreshRunResult> {
   const readiness = await loadResumeReadiness(repos, input.runId)
-  if (readiness.kind === "not_found") return { ok: false, status: 404, error: "run_not_found" }
-  if (readiness.kind === "not_resumable") {
-    if (retainedDiagnosisRecoveryDecision(readiness.run)) {
-      return { ok: false, status: 409, error: readiness.reason }
-    }
-    return clearAndFreshConflict(readiness.run)
-  }
-  if (readiness.kind !== "ready") return clearAndFreshConflict(readiness.run)
-  if (!retainedDiagnosisRecoveryDecision(readiness.run)) return clearAndFreshConflict(readiness.run)
-  const workspace = repos.getWorkspace(readiness.run.workspace_id)
-  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
-    repos,
-    workspace,
-    supabaseAdapterFactory: input.supabaseAdapterFactory,
-  })
-  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
-  const blocker = workflowCapabilityOwnershipBlocker()
-  if (blocker) return blocker
-  const runAfterCapabilityCheck = repos.getRun(input.runId)
-  if (!runAfterCapabilityCheck) return { ok: false, status: 404, error: "run_not_found" }
-  if (retainedDiagnosisRecoveryDecision(runAfterCapabilityCheck) == null) {
-    return clearAndFreshConflict(runAfterCapabilityCheck)
-  }
-  const supabaseHook = buildSupabaseWorkflowHook(
-    repos,
-    readiness.run.workspace_id,
-    workspace,
-    capabilitiesResult.supabaseAdapterFactory,
-  )
+  const readinessFailure = clearAndFreshReadinessFailure(readiness)
+  if (readinessFailure) return readinessFailure
+
+  const capabilityContext = resolveClearAndFreshCapabilityContext(repos, input, readiness.run)
+  if (!capabilityContext.ready) return capabilityContext
 
   let prepared: PreparedForegroundResumeRunResult
   try {
-    await runClearAndFreshBeforeResume(repos, input.runId, supabaseHook)
+    await runClearAndFreshBeforeResume(repos, input.runId, capabilityContext.supabaseHook)
     prepared = await prepareForegroundResumeRun(repos, io, {
       runId: input.runId,
       summary: CLEAR_AND_FRESH_REMEDIATION_SUMMARY,
@@ -1869,7 +1909,7 @@ export async function prepareForegroundClearAndFreshRun(
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       onItemColumnChanged: input.onItemColumnChanged,
-      capabilityResolver: () => capabilitiesResult,
+      capabilityResolver: () => capabilityContext.capabilitiesResult,
       admissionController: input.admissionController,
       resumeRunImpl: input.resumeRunImpl,
       persistItemDecision: false,
@@ -1877,10 +1917,7 @@ export async function prepareForegroundClearAndFreshRun(
     })
   } catch (error) {
     if (error instanceof Error && error.message === CLEAR_AND_FRESH_PRECONDITION_ERROR) {
-      const currentRun = repos.getRun(input.runId)
-      return currentRun
-        ? clearAndFreshConflict(currentRun)
-        : { ok: false, status: 404, error: "run_not_found" }
+      return clearAndFreshPreconditionFailureResult(repos, input.runId)
     }
     throw error
   }
