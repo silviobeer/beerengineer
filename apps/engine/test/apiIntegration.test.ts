@@ -149,6 +149,26 @@ test("OpenAPI and prose document recovery_user_message on board and run DTOs", (
   assert.match(contract, /clients should render that engine-provided copy before generic fallback text/)
 })
 
+test("REQ-1 contract documents retained diagnosis operator decisions on resume and recovery", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    paths: Record<string, { post?: { responses?: Record<string, { content?: { "application/json"?: { schema?: unknown } } }> } }>
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  const resumeConflict = openapi.paths["/runs/{id}/resume"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+  assert.ok(resumeConflict)
+  assert.match(JSON.stringify(resumeConflict), /ResumeOperatorDecisionConflict/)
+  assert.ok(openapi.components.schemas.RecoveryDetail.properties?.decision)
+  assert.ok(openapi.components.schemas.ResumeOperatorDecisionConflict)
+  assert.ok(openapi.components.schemas.RunRecoveryDecision)
+  assert.match(contract, /operator_decision_required/)
+  assert.match(contract, /retained_diagnosis_branch/)
+  assert.match(contract, /retry-retained/)
+  assert.match(contract, /clear-and-fresh/)
+  assert.match(contract, /decision: RunRecoveryDecision \| null/)
+})
+
 test("PROJ-9 REQ-4 rollout contract documents consumer surfaces, freshness, and board budget", () => {
   const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
 

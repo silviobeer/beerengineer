@@ -355,7 +355,21 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "Conflict — generic resume blocker or an explicit retained-diagnosis operator decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResumeOperatorDecisionConflict"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -763,7 +777,21 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "Conflict — generic resume blocker or an explicit retained-diagnosis operator decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResumeOperatorDecisionConflict"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -1686,7 +1714,21 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "Conflict — generic resume blocker or an explicit retained-diagnosis operator decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResumeOperatorDecisionConflict"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -4354,6 +4396,67 @@
           }
         }
       },
+      "RunRecoveryDecision": {
+        "type": "object",
+        "required": [
+          "kind",
+          "reason",
+          "nextActions",
+          "branchRef"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "operator_decision_required"
+          },
+          "reason": {
+            "type": "string",
+            "const": "retained_diagnosis_branch"
+          },
+          "nextActions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "retry-retained",
+                "clear-and-fresh"
+              ]
+            }
+          },
+          "branchRef": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The retained branch currently blocking resume when the provider exposed one."
+          }
+        }
+      },
+      "ResumeOperatorDecisionConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "decision"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "operator_decision_required"
+          },
+          "code": {
+            "type": "string",
+            "const": "operator_decision_required"
+          },
+          "message": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/RunRecoveryDecision"
+          }
+        }
+      },
       "RecoveryDetail": {
         "type": "object",
         "required": [
@@ -4397,6 +4500,16 @@
               "null"
             ],
             "description": "Projected user-facing recovery message to display before generic fallback copy when present."
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunRecoveryDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "resumable": {
             "type": "boolean"
