@@ -29,7 +29,7 @@ function wave(): WaveDefinition {
   }
 }
 
-test("REQ-1 AC-1.1/AC-1.2: branch-backed post-create flow completes when the hook factory also exposes a shared management client", async () => {
+test("REQ-2 AC-2.2: branch-backed post-create flow completes when the hook factory also exposes a shared management client", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-wave-gate-post-create-"))
   const db = initDatabase(join(dir, "db.sqlite"))
   const repos = new Repos(db)
@@ -140,7 +140,68 @@ test("REQ-1 AC-1.1/AC-1.2: branch-backed post-create flow completes when the hoo
   }
 })
 
-test("REQ-1 AC-1.3: legitimate post-create handoff failures remain surfaced after branch creation succeeds", async () => {
+test("REQ-2 AC-2.1: a malformed post-create dependency bundle returns a structured handoff failure after branch creation succeeds", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-wave-gate-post-create-malformed-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const secretStorePath = join(dir, "secrets.json")
+  const previousSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  process.env.BEERENGINEER_SECRET_STORE_PATH = secretStorePath
+  storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp_wave_gate_post_create_malformed", { storePath: secretStorePath })
+
+  const malformedManagementClient = new SupabaseManagementClient({
+    token: "sbp_wave_gate_post_create_malformed",
+    baseUrl: "https://example.test",
+    fetch: (async () => {
+      throw new Error("malformed handoff client should fail before fetch")
+    }) as typeof fetch,
+  })
+
+  try {
+    const result = await provisionWaveIfDbRelevant({
+      wave: wave(),
+      adapter: {
+        provisionBranch: async () => ({ ok: true, context: { branchRef: "br_wave" } }),
+        pollBranchStatus: async context => {
+          assert.equal(context.branchRef, "br_wave")
+          return { ok: true, context: { status: "ready" } }
+        },
+        validateBranch: async () => {
+          assert.fail("validateBranch should not run after handoff failure")
+        },
+        destroyBranch: async () => ({ ok: true }),
+        migrateProduction: async () => ({ ok: true }),
+        reconcile: async () => ({ ok: true }),
+      },
+      handoffClient: {
+        getProjectKeys: malformedManagementClient.getProjectKeys.bind(undefined),
+        getBranchConnectionString: malformedManagementClient.getBranchConnectionString.bind(undefined),
+      },
+      context: {
+        workspaceId: "workspace-malformed",
+        workspaceKey: "demo",
+        workspaceRoot: dir,
+        runId: "run-malformed",
+        itemId: "item-malformed",
+        projectId: "project-1",
+        projectRef: "proj_1",
+        parentBranchRef: "br_parent",
+        dbMode: "branching",
+      },
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.failedStep, "handoff")
+    assert.equal(result.branchRef, "br_wave")
+    assert.match(result.failureCause, /(reading 'request'|request is not a function)/)
+  } finally {
+    if (previousSecretStorePath == null) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStorePath
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 AC-2.1: legitimate post-create handoff failures remain surfaced after branch creation succeeds", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-wave-gate-post-create-failure-"))
   const db = initDatabase(join(dir, "db.sqlite"))
   const repos = new Repos(db)
