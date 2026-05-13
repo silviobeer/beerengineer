@@ -270,6 +270,14 @@ async function loadConcept(context: WorkflowContext): Promise<Concept & { hasUi?
   }
 }
 
+function itemHasUiForRouting(
+  itemConcept: Concept & { hasUi?: boolean | null },
+  projects: Project[],
+): boolean {
+  if (itemConcept.hasUi === false) return false
+  return projects.some(project => project.hasUi === true)
+}
+
 const loadWireframes = (context: WorkflowContext) =>
   loadStageArtifact<WireframeArtifact>(context, "visual-companion", "wireframes.json")
 
@@ -393,7 +401,7 @@ export async function runWorkflow(item: Item, options?: {
     emitWorkflowPreviewPort(context, activeRun)
     const itemConcept = await loadConcept(context)
     assertWorkflowNotCancelled()
-    const itemHasUi = projects.some(project => project.hasUi === true)
+    const itemHasUi = itemHasUiForRouting(itemConcept, projects)
     const itemSnapshot = buildItemSnapshot(codebaseSnapshot, itemHasUi, options?.workspaceRoot)
     const { wireframes, design } = await resolveDesignPrepArtifacts(
       context,

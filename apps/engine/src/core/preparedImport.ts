@@ -314,7 +314,11 @@ function loadConceptFromSource(
     ? conceptFromMarkdown(markdownConcept, item)
     : { summary: item.title, problem: item.description ?? "", users: [], constraints: [] }
   const inferredHasUi = hasUiSignal(sourceDir, files)
-  const concept = { ...(maybeConcept(conceptJson.value) ?? fallbackConcept), hasUi: inferredHasUi }
+  const explicitHasUi = isRecord(conceptJson.value) && conceptJson.value.hasUi === false ? false : undefined
+  const concept = {
+    ...(maybeConcept(conceptJson.value) ?? fallbackConcept),
+    hasUi: explicitHasUi === false ? false : inferredHasUi,
+  }
   return { concept, markdownConcept, inferredHasUi }
 }
 
@@ -443,7 +447,12 @@ export function loadPreparedImportBundle(
   projects = addProjectsFromPrdFilenames(projects, prdsByProjectId, concept, inferredHasUi, warnings)
   projects = projects.map(project => ({ ...project, hasUi: project.hasUi === true || inferredHasUi }))
 
-  return { concept: { ...concept, hasUi: projects.some(project => project.hasUi === true) }, projects, prdsByProjectId, warnings }
+  return {
+    concept: { ...concept, hasUi: concept.hasUi === false ? false : projects.some(project => project.hasUi === true) },
+    projects,
+    prdsByProjectId,
+    warnings,
+  }
 }
 
 function needsLlmFallback(bundle: PreparedImportBundle, sourceDir: string): boolean {
@@ -479,7 +488,10 @@ function mergeLlmNormalizedBundle(
     ? normalized.warnings.map(warning => stringValue(warning)).filter(Boolean)
     : []
   return {
-    concept: { ...concept, hasUi: (projects.length > 0 ? projects : current.projects).some(project => project.hasUi === true) },
+    concept: {
+      ...concept,
+      hasUi: concept.hasUi === false ? false : (projects.length > 0 ? projects : current.projects).some(project => project.hasUi === true),
+    },
     projects: projects.length > 0 ? projects : current.projects,
     prdsByProjectId: { ...current.prdsByProjectId, ...prdsByProjectId },
     warnings: [...current.warnings, ...warnings],
