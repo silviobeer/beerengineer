@@ -1546,7 +1546,6 @@ function skipCurrentStageWorkerIsLive(
 ): boolean {
   const lease = inspectWorkerLease(repos, run.id)
   if (!lease) return false
-  if (lease.workerOwnerKind === "api" && lease.workerInstanceId !== input.apiWorkerInstanceId) return false
   return input.now - lease.heartbeatAt < STALE_WORKER_HEARTBEAT_MS
 }
 
@@ -1556,6 +1555,7 @@ export function skipCurrentStageInProcess(
     runId: string
     now?: () => number
     apiWorkerInstanceId?: string
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): SkipCurrentStageResult {
   const run = repos.getRun(input.runId)
@@ -1594,6 +1594,15 @@ export function skipCurrentStageInProcess(
     recovery_payload_json: null,
   })
   if (!hasOtherLiveRunForItem(repos, run)) repos.setItemCurrentStage(run.item_id, null)
+  const item = repos.getItem(run.item_id)
+  if (item) {
+    input.onItemColumnChanged?.({
+      itemId: item.id,
+      from: item.current_column,
+      to: item.current_column,
+      phaseStatus: item.phase_status,
+    })
+  }
   repos.appendLog({
     runId: run.id,
     stageRunId: activeStageRun.id,

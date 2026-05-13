@@ -451,8 +451,9 @@ export async function handleSkipCurrentStageRecovery(
   _req: IncomingMessage,
   res: ServerResponse,
   runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
 ): Promise<void> {
-  const result = skipCurrentStageInProcess(repos, { runId })
+  const result = skipCurrentStageInProcess(repos, { runId, onItemColumnChanged })
   if (!result.ok) {
     return json(res, result.status, skipCurrentStageFailureBody(result))
   }

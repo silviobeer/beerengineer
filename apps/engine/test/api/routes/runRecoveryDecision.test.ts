@@ -391,6 +391,7 @@ test("REQ-2 AC-1/AC-2: skip-current-stage accepts an eligible current stage, mar
     const fx = setupFixture()
     try {
       const stageRun = seedCurrentStage(fx)
+      fx.repos.setItemColumn(fx.item.id, "implementation", "running")
       fx.repos.setItemCurrentStage(fx.item.id, "execution")
       if (leaseMode === "stale_lease") {
         claimWorkerLease(fx.repos, {
@@ -401,8 +402,9 @@ test("REQ-2 AC-1/AC-2: skip-current-stage accepts an eligible current stage, mar
         })
       }
 
+      const broadcasts: Array<{ itemId: string; from: string; to: string; phaseStatus: string }> = []
       const { res, state } = captureRes()
-      await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), res, fx.run.id)
+      await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), res, fx.run.id, payload => broadcasts.push(payload))
 
       assert.equal(state.status, 200)
       assert.deepEqual(parseBody(state), {
@@ -420,6 +422,12 @@ test("REQ-2 AC-1/AC-2: skip-current-stage accepts an eligible current stage, mar
       assert.equal(run?.recovery_scope_ref, "execution")
       assert.match(run?.recovery_summary ?? "", /skipped current stage/i)
       assert.equal(fx.repos.getItem(fx.item.id)?.current_stage, null)
+      assert.deepEqual(broadcasts, [{
+        itemId: fx.item.id,
+        from: "implementation",
+        to: "implementation",
+        phaseStatus: "running",
+      }])
 
       const stageRuns = fx.repos.listStageRunsForRun(fx.run.id)
       assert.equal(stageRuns.length, 1)
@@ -456,6 +464,7 @@ test("REQ-2 AC-3: skip-current-stage rejects terminal, already-skipped, and live
     { label: "failed", stageStatus: "failed" as const },
     { label: "skipped", stageStatus: "skipped" as const },
     { label: "live-worker", stageStatus: "running" as const, liveLease: true },
+    { label: "live-foreign-api-worker", stageStatus: "running" as const, liveLease: true, workerOwnerKind: "api" as const, workerInstanceId: "api-foreign" },
   ]) {
     const fx = setupFixture()
     try {
@@ -463,8 +472,8 @@ test("REQ-2 AC-3: skip-current-stage rejects terminal, already-skipped, and live
       if (input.liveLease) {
         claimWorkerLease(fx.repos, {
           runId: fx.run.id,
-          workerInstanceId: "cli-live",
-          workerOwnerKind: "cli",
+          workerInstanceId: input.workerInstanceId ?? "cli-live",
+          workerOwnerKind: input.workerOwnerKind ?? "cli",
           now: Date.now(),
         })
       }
