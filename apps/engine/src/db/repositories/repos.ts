@@ -818,9 +818,23 @@ export class Repos {
       .run(sessions.stageAgentSessionId, sessions.reviewerSessionId, now(), id)
   }
 
-  completeStageRun(id: string, status: "completed" | "failed", errorMessage?: string | null): void {
+  completeStageRun(id: string, status: "completed" | "failed" | "skipped", errorMessage?: string | null): void {
     const timestamp = now()
     this.run("UPDATE stage_runs SET status = ?, completed_at = ?, error_message = ?, updated_at = ? WHERE id = ?", status, timestamp, errorMessage ?? null, timestamp, id)
+  }
+
+  clearRunWorkerLease(id: string): void {
+    this.run(
+      `UPDATE runs
+       SET worker_instance_id = NULL,
+           worker_owner_kind = NULL,
+           worker_started_at = NULL,
+           worker_heartbeat_at = NULL,
+           updated_at = ?
+       WHERE id = ?`,
+      now(),
+      id,
+    )
   }
 
   listStageRunsForRun(runId: string): StageRunRow[] {

@@ -20,6 +20,7 @@ import {
   handleGetRecovery,
   handleSupabaseReadinessRetry,
   handlePostMessage,
+  handleSkipCurrentStageRecovery,
   handleListRuns,
   handleRetryRetainedRecovery,
   handleResumeRun,
@@ -157,6 +158,7 @@ const RUN_ROUTE_DEFINITIONS = [
   { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", surfacePath: "/runs/{id}/resume" },
   { pattern: /^\/runs\/([^/]+)\/replan$/, method: "POST", surfacePath: "/runs/{id}/replan" },
   { pattern: /^\/runs\/([^/]+)\/supabase-readiness\/retry$/, method: "POST", surfacePath: "/runs/{id}/supabase-readiness/retry" },
+  { pattern: /^\/runs\/([^/]+)\/recovery\/skip-current-stage$/, method: "POST", surfacePath: "/runs/{id}/recovery/skip-current-stage" },
   { pattern: /^\/runs\/([^/]+)\/recovery\/retry-retained$/, method: "POST", surfacePath: "/runs/{id}/recovery/retry-retained" },
   { pattern: /^\/runs\/([^/]+)\/recovery\/clear-and-fresh$/, method: "POST", surfacePath: "/runs/{id}/recovery/clear-and-fresh" },
   { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", surfacePath: "/runs/{id}/recovery" },
@@ -364,9 +366,10 @@ function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Ar
     { ...RUN_ROUTE_DEFINITIONS[10], handle: runId => handleResumeRun(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
     { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleReplanRun(deps.repos, context.req, context.res, runId) },
     { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleRetryRetainedRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleClearAndFreshRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[15], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleSkipCurrentStageRecovery(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleRetryRetainedRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[15], handle: runId => handleClearAndFreshRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[16], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
   ]
 }
 

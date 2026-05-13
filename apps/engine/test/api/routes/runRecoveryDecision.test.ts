@@ -5,10 +5,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { handleClearAndFreshRecovery, handleGetRecovery, handleResumeRun, handleRetryRetainedRecovery } from "../../../src/api/routes/runs.js"
+import { handleClearAndFreshRecovery, handleGetRecovery, handleResumeRun, handleRetryRetainedRecovery, handleSkipCurrentStageRecovery } from "../../../src/api/routes/runs.js"
 import { writeRecoveryRecord } from "../../../src/core/recovery.js"
 import { buildSupabaseProvisioningRecoveryPayload } from "../../../src/core/supabase/recoveryPayload.js"
 import { layout } from "../../../src/core/workspaceLayout.js"
+import { claimWorkerLease } from "../../../src/core/workerLease.js"
 import { initDatabase } from "../../../src/db/connection.js"
 import { Repos } from "../../../src/db/repositories.js"
 
@@ -98,6 +99,30 @@ async function seedRetainedDiagnosisRun(fx: ReturnType<typeof setupFixture>): Pr
     detail: "seeded retained diagnosis recovery",
     evidencePaths: [layout.runDir(fx.ctx)],
   })
+}
+
+function seedCurrentStage(
+  fx: ReturnType<typeof setupFixture>,
+  input: {
+    stageKey?: string
+    runStatus?: string
+    stageStatus?: "running" | "completed" | "failed" | "skipped"
+  } = {},
+) {
+  const stageKey = input.stageKey ?? "execution"
+  const runStatus = input.runStatus ?? "blocked"
+  const stageRun = fx.repos.createStageRun({
+    runId: fx.run.id,
+    stageKey,
+  })
+  if (input.stageStatus && input.stageStatus !== "running") {
+    fx.repos.completeStageRun(stageRun.id, input.stageStatus)
+  }
+  fx.repos.updateRun(fx.run.id, {
+    status: runStatus,
+    current_stage: stageKey,
+  })
+  return stageRun
 }
 
 test("REQ-1 AC-1.1/AC-1.2/AC-1.4: retained diagnosis resume returns an explicit operator-decision conflict without side effects", async () => {
@@ -355,6 +380,127 @@ test("REQ-3 AC-3.6: stale clear-and-fresh requests return a conflict with the au
       fx.repos.listLogsForRun(fx.run.id).some(log => log.event_type === "supabase_branch_lifecycle"),
       false,
     )
+  } finally {
+    fx.cleanup()
+  }
+})
+
+test("REQ-2 AC-1/AC-2: skip-current-stage accepts an eligible current stage, marks it skipped, and keeps the run paused", async () => {
+  const freshLeaseTime = Date.now() - 5 * 60_000
+  for (const leaseMode of ["no_lease", "stale_lease"] as const) {
+    const fx = setupFixture()
+    try {
+      const stageRun = seedCurrentStage(fx)
+      if (leaseMode === "stale_lease") {
+        claimWorkerLease(fx.repos, {
+          runId: fx.run.id,
+          workerInstanceId: "cli-stale",
+          workerOwnerKind: "cli",
+          now: freshLeaseTime,
+        })
+      }
+
+      const { res, state } = captureRes()
+      await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), res, fx.run.id)
+
+      assert.equal(state.status, 200)
+      assert.deepEqual(parseBody(state), {
+        ok: true,
+        runId: fx.run.id,
+        status: "blocked",
+        recoveryStatus: "blocked",
+      })
+
+      const run = fx.repos.getRun(fx.run.id)
+      assert.equal(run?.status, "blocked")
+      assert.equal(run?.current_stage, "execution")
+      assert.equal(run?.recovery_status, "blocked")
+      assert.equal(run?.recovery_scope, "stage")
+      assert.equal(run?.recovery_scope_ref, "execution")
+      assert.match(run?.recovery_summary ?? "", /skipped current stage/i)
+
+      const stageRuns = fx.repos.listStageRunsForRun(fx.run.id)
+      assert.equal(stageRuns.length, 1)
+      assert.equal(stageRuns[0]?.id, stageRun.id)
+      assert.equal(stageRuns[0]?.status, "skipped")
+      assert.ok(stageRuns[0]?.completed_at)
+    } finally {
+      fx.cleanup()
+    }
+  }
+})
+
+test("REQ-2 AC-3: skip-current-stage rejects runs with no current stage and leaves state unchanged", async () => {
+  const fx = setupFixture()
+  try {
+    const before = fx.repos.getRun(fx.run.id)
+    const beforeStageRuns = fx.repos.listStageRunsForRun(fx.run.id)
+
+    const { res, state } = captureRes()
+    await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), res, fx.run.id)
+
+    assert.equal(state.status, 409)
+    assert.equal(parseBody(state).error, "skip_current_stage_not_allowed")
+    assert.deepEqual(fx.repos.getRun(fx.run.id), before)
+    assert.deepEqual(fx.repos.listStageRunsForRun(fx.run.id), beforeStageRuns)
+  } finally {
+    fx.cleanup()
+  }
+})
+
+test("REQ-2 AC-3: skip-current-stage rejects terminal, already-skipped, and live-worker current stages without mutating the run", async () => {
+  for (const input of [
+    { label: "completed", stageStatus: "completed" as const },
+    { label: "failed", stageStatus: "failed" as const },
+    { label: "skipped", stageStatus: "skipped" as const },
+    { label: "live-worker", stageStatus: "running" as const, liveLease: true },
+  ]) {
+    const fx = setupFixture()
+    try {
+      seedCurrentStage(fx, { stageStatus: input.stageStatus })
+      if (input.liveLease) {
+        claimWorkerLease(fx.repos, {
+          runId: fx.run.id,
+          workerInstanceId: "cli-live",
+          workerOwnerKind: "cli",
+          now: Date.now(),
+        })
+      }
+      const before = fx.repos.getRun(fx.run.id)
+      const beforeStageRuns = fx.repos.listStageRunsForRun(fx.run.id)
+
+      const { res, state } = captureRes()
+      await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), res, fx.run.id)
+
+      assert.equal(state.status, 409, input.label)
+      assert.equal(parseBody(state).error, "skip_current_stage_not_allowed", input.label)
+      assert.deepEqual(fx.repos.getRun(fx.run.id), before, input.label)
+      assert.deepEqual(fx.repos.listStageRunsForRun(fx.run.id), beforeStageRuns, input.label)
+    } finally {
+      fx.cleanup()
+    }
+  }
+})
+
+test("REQ-2 edge: a second skip-current-stage request is rejected as already skipped and preserves the paused state", async () => {
+  const fx = setupFixture()
+  try {
+    seedCurrentStage(fx)
+
+    const first = captureRes()
+    await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), first.res, fx.run.id)
+    assert.equal(first.state.status, 200)
+
+    const afterFirstRun = fx.repos.getRun(fx.run.id)
+    const afterFirstStageRuns = fx.repos.listStageRunsForRun(fx.run.id)
+
+    const second = captureRes()
+    await handleSkipCurrentStageRecovery(fx.repos, jsonReq({}), second.res, fx.run.id)
+
+    assert.equal(second.state.status, 409)
+    assert.equal(parseBody(second.state).error, "skip_current_stage_not_allowed")
+    assert.deepEqual(fx.repos.getRun(fx.run.id), afterFirstRun)
+    assert.deepEqual(fx.repos.listStageRunsForRun(fx.run.id), afterFirstStageRuns)
   } finally {
     fx.cleanup()
   }
