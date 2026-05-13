@@ -139,6 +139,77 @@ test("prepared import derives a project from a skill pipeline PROJ folder withou
   }
 })
 
+test("prepared import preserves an explicit top-level backend-only signal from concept.json", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-prepared-backend-only-"))
+  try {
+    mkdirSync(join(dir, "5_mockups"), { recursive: true })
+    writeFileSync(
+      join(dir, "concept.json"),
+      JSON.stringify({
+        summary: "Prepared backend item",
+        problem: "Skip design prep",
+        users: ["operator"],
+        constraints: ["local only"],
+        hasUi: false,
+      }),
+    )
+    writeFileSync(
+      join(dir, "projects.json"),
+      JSON.stringify([
+        {
+          id: "P01",
+          name: "Core",
+          description: "Core project",
+          hasUi: true,
+          concept: { summary: "Core", problem: "", users: [], constraints: [] },
+        },
+      ]),
+    )
+    writeFileSync(join(dir, "5_mockups", "P01-overview.html"), "<main>UI evidence that should not override concept.hasUi=false</main>")
+
+    const bundle = loadPreparedImportBundle(dir, { title: "Item", description: "Desc" })
+
+    assert.equal(bundle.concept.hasUi, false)
+    assert.equal(bundle.projects[0]?.hasUi, true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("prepared import does not synthesize a backend-only top-level signal when concept.hasUi is omitted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-prepared-hasui-omitted-"))
+  try {
+    writeFileSync(
+      join(dir, "concept.json"),
+      JSON.stringify({
+        summary: "Prepared backend item",
+        problem: "Keep design prep when the top-level signal is missing",
+        users: ["operator"],
+        constraints: ["local only"],
+      }),
+    )
+    writeFileSync(
+      join(dir, "projects.json"),
+      JSON.stringify([
+        {
+          id: "P01",
+          name: "Core",
+          description: "Core project",
+          hasUi: false,
+          concept: { summary: "Core", problem: "", users: [], constraints: [] },
+        },
+      ]),
+    )
+
+    const bundle = loadPreparedImportBundle(dir, { title: "Item", description: "Desc" })
+
+    assert.equal(bundle.concept.hasUi, undefined)
+    assert.equal(bundle.projects[0]?.hasUi, false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("prepared import ignores malformed JSON and invalid PRD stories", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-prepared-malformed-"))
   try {

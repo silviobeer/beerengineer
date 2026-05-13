@@ -1613,6 +1613,71 @@
         }
       }
     },
+    "/runs/{id}/recovery/skip-current-stage": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Skip the current stuck stage without advancing the run.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The current stage was marked skipped and the run remains paused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "recoveryStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "runId",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict — the run has no eligible current stage to skip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkipCurrentStageConflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{id}/recovery/retry-retained": {
       "parameters": [
         {
@@ -4618,6 +4683,37 @@
           },
           "decision": {
             "$ref": "#/components/schemas/RunRecoveryDecision"
+          }
+        }
+      },
+      "SkipCurrentStageConflict": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "reason"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "skip_current_stage_not_allowed"
+          },
+          "code": {
+            "type": "string",
+            "const": "skip_current_stage_not_allowed"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_current_stage",
+              "current_stage_terminal",
+              "current_stage_skipped",
+              "current_stage_actively_worked"
+            ]
           }
         }
       },
