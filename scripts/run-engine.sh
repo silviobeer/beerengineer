@@ -15,6 +15,13 @@ RESTART_DELAY=3
 
 cd "$REPO_ROOT"
 
+# Auto-detect common tool directories and add to PATH
+for dir in "$HOME/.npm-global/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+  if [ -d "$dir" ] && [ -r "$dir" ] && [[ ":$PATH:" != *":$dir:"* ]]; then
+    export PATH="$PATH:$dir"
+  fi
+done
+
 echo "[engine-supervisor] starting (log: $LOG_FILE)" >&2
 
 while true; do
