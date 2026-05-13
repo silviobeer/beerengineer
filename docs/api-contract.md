@@ -17,6 +17,9 @@ consumed by tooling.
 - All ids are opaque strings.
 - All timestamps are ISO 8601 UTC.
 - All text fields are **resolved display text**. No `you >` placeholders.
+- Localhost writes are admitted over loopback without token management. Legacy
+  `x-beerengineer-token` headers remain optional compatibility input, not a
+  requirement for the supported local flow.
 - Errors: standard HTTP codes plus a short JSON body `{ error: string, code?: string }`. Codes used: `bad_request`, `not_found`, `forbidden`, `invalid_transition`, `prompt_not_open`, `run_blocked`.
 
 ---
@@ -28,17 +31,17 @@ consumed by tooling.
 - `GET /health` → `200 { ok: true, service: "beerengineer-engine", uptimeMs: number, db: "ok" }`; if the engine process answers but the local SQLite probe fails, returns `503 { ok: false, service: "beerengineer-engine", uptimeMs: number, db: "failed" }`. No workspace/project data or external integrations are checked.
 - `GET /ready` → workflow readiness. Returns `200` only when the DB probe is ok, startup lost-worker recovery has completed, graceful shutdown is not in flight, and the lightweight worker-lease write sentinel succeeds. Returns `503` with the same shape when any readiness precondition fails. Response: `{ ok, service, uptimeMs, db: "ok" | "failed", startupRecovery: "complete" | "pending", shutdown: "idle" | "in_progress", leaseWrite: "ok" | "failed" | "skipped", effectiveWorkerCap: number }`. `/ready` does not create run/item/history rows and does not check Git, LLM, workspace, setup, or Supabase readiness.
 - `GET /setup/status` (existing)
-- `POST /setup/init` — token-protected app-state initialization. Creates missing app config, data directory, and SQLite state. Existing valid config is preserved; invalid existing config returns `409`.
+- `POST /setup/init` — app-state initialization for localhost callers. Creates missing app config, data directory, and SQLite state. Existing valid config is preserved; invalid existing config returns `409`.
 - `GET /setup/config` — effective setup/settings config view. Supports optional `workspaceKey=<key>` for workspace-scoped Telegram inbound status with field-level provenance, inheritance/override semantics, readiness blockers, secret redaction, last baseline webhook outcome, last Telegram provider webhook snapshot, and distinct live-verification state (`not-run`, `pending`, `succeeded`, `failed`, `timed_out`). Also includes engine-owned `setupDisplayModes.workspacePresence` and `setupDisplayModes.secretsStub` facts, each with `mode`, `detail`, and `freshness { strategy, invalidatedBy[] }`. Secret fields are returned only as refs or redacted presence metadata, never plaintext values.
-- `PATCH /setup/config` — token-protected partial app-config update. Returns `200` when all fields are saved, `207` when some fields are rejected, and `409` when setup has not been initialized yet. `allowedRoots` must be absolute non-root paths without traversal segments.
-- `POST /setup/telegram/webhook` — token-protected Telegram webhook registration/update. Supports optional `workspaceKey=<key>` to resolve workspace overrides before calling Telegram. Performs local callback validation first, then returns the resulting baseline readiness, provider webhook snapshot, and the still-separate live-verification state.
-- `POST /setup/telegram/verification` — token-protected live Telegram verification trigger. Supports optional `workspaceKey=<key>`. Starts a reply-based verification round-trip only when baseline setup is ready and returns the distinct live-verification state without collapsing it into baseline readiness.
+- `PATCH /setup/config` — partial app-config update for localhost callers. Returns `200` when all fields are saved, `207` when some fields are rejected, and `409` when setup has not been initialized yet. `allowedRoots` must be absolute non-root paths without traversal segments.
+- `POST /setup/telegram/webhook` — Telegram webhook registration/update for localhost callers. Supports optional `workspaceKey=<key>` to resolve workspace overrides before calling Telegram. Performs local callback validation first, then returns the resulting baseline readiness, provider webhook snapshot, and the still-separate live-verification state.
+- `POST /setup/telegram/verification` — live Telegram verification trigger for localhost callers. Supports optional `workspaceKey=<key>`. Starts a reply-based verification round-trip only when baseline setup is ready and returns the distinct live-verification state without collapsing it into baseline readiness.
 - `GET /setup/git-readiness?workspaceId=&workspaceKey=` — Git identity readiness. Without a workspace identifier, returns global readiness: Git install state, global identity, app-level default, available actions, workflow blocker state, and an engine-owned `displayMode` fact (`mode`, `detail`, `freshness`). With a workspace identifier, resolves the registered workspace root server-side and returns repo-local/global/app-default sources plus effective workflow identity and the same engine-owned `displayMode` fact.
-- `POST /setup/git-identity` — token-protected save of beerengineer_ app-level Git identity default. Stores display name, email, and `localOnly` in app config. Does not write global Git config.
-- `POST /setup/git-identity/repair` — token-protected workspace-local identity repair. Request identifies a workspace by `workspaceId` or `workspaceKey` and sends identity data. The engine ignores any request-body path/root fields and resolves the filesystem root from the workspace registry before running `git config --local`.
-- `POST /setup/recheck` — token-protected setup/doctor recheck. Request may include `{ group }` to limit checks to one known setup group; response contains a fresh setup report or a typed error.
+- `POST /setup/git-identity` — save of beerengineer_ app-level Git identity default for localhost callers. Stores display name, email, and `localOnly` in app config. Does not write global Git config.
+- `POST /setup/git-identity/repair` — workspace-local identity repair for localhost callers. Request identifies a workspace by `workspaceId` or `workspaceKey` and sends identity data. The engine ignores any request-body path/root fields and resolves the filesystem root from the workspace registry before running `git config --local`.
+- `POST /setup/recheck` — setup/doctor recheck for localhost callers. Request may include `{ group }` to limit checks to one known setup group; response contains a fresh setup report or a typed error.
 - `GET /setup/secrets/:ref` — redacted metadata for one URL-encoded secret ref.
-- `POST /setup/secrets/:ref` — token-protected secret action. Supported actions are `replace`, `disable`, `reactivate`, `delete`, and `test`; responses never include plaintext secret values.
+- `POST /setup/secrets/:ref` — secret action for localhost callers. Supported actions are `replace`, `disable`, `reactivate`, `delete`, and `test`; responses never include plaintext secret values.
 - `GET /update/status` — read-only updater status snapshot (current version, DB path source/warnings, managed install paths, preflight summary, cached latest release if present, whether an update is available, the latest managed backup manifest if any, readiness/auth summary for engine/DB/GitHub/LLM/Sonar, and the latest persisted attempt)
 - `GET /update/preflight` — fast updater probe `{ idle, activeRuns, lockHeld, lockStale, pid, httpPort }`
 - `POST /update/check` — hits GitHub and returns current vs latest release metadata. Read-only despite being `POST`; intended to bypass caches and refresh the 60s on-disk release cache.
@@ -46,7 +49,7 @@ consumed by tooling.
 - Optional integrity gate: when `BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256` is set in the updater process environment, the downloaded GitHub tarball must match that SHA-256 or the update fails closed before unpack/install.
 - Tarball downloads also fail closed if the redirect chain leaves the trusted host set for the selected release source. Managed updates accept the initial tarball host plus GitHub's standard `codeload.github.com` host, and they record the final tarball URL alongside the SHA-256 in update-attempt metadata for audit.
 - Post-restart validation is stricter than bare `/health`: the detached switcher also requires `GET /update/status` to succeed, report the expected target version, and report `readiness.engineStarted = ok` plus `readiness.dbOk = ok`. If that contract is not met, the update is treated as a rollback-worthy core failure rather than a warning-only success.
-- `POST /update/shutdown` — token-protected graceful engine shutdown. Requires `{ operationId }` matching the held update lock and returns `202 { operationId, state: "shutting_down" }` before the process exits.
+- `POST /update/shutdown` — graceful engine shutdown for localhost callers. Requires `{ operationId }` matching the held update lock and returns `202 { operationId, state: "shutting_down" }` before the process exits.
 - `POST /update/rollback` — currently reserved. It returns `409 { error: "post-migration-rollback-unsupported", code: "post-migration-rollback-unsupported" }`.
 - `GET /update/history` — recent persisted update attempts plus recent managed backup manifests
   Terminal states now include `succeeded`, `succeeded-with-warning`, `succeeded-degraded`, `failed-rolled-back`, `failed-no-rollback`, and `aborted-dry-run`.
@@ -497,11 +500,10 @@ Per the plan, "browser-side conveniences that exist only in `apps/ui` should
 die with the UI unless we explicitly want to preserve them." Items in this
 category discovered during the audit:
 
-- **CSRF token sourcing from `~/.local/state/beerengineer/api.token`** in
-  `apps/ui/app/api/_lib/engine.ts`. This is a UI-side convenience for
-  injecting the engine's token header; the mechanism itself (token file,
-  `x-beerengineer-token` header) is engine-owned and stays. The file reader
-  is UI-local and goes away with the UI.
+- **Legacy localhost token lookup** in `apps/ui/app/api/_lib/engine.ts`.
+  This was a UI-side convenience for injecting `x-beerengineer-token`.
+  Supported localhost flows are now tokenless, so the lookup is compatibility
+  baggage rather than part of the primary contract.
 - **Direct-SQLite live views** in `apps/ui/lib/live-*.ts`. Dies with the UI.
   Any functionality we still want lives as a future HTTP read endpoint, not
   as a recreated SQLite client in the new UI.

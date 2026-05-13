@@ -187,9 +187,14 @@ Alternatively, start the HTTP API and drive from another tool:
 ```bash
 npm run start:api                        # listens on :4100
 curl -X POST http://localhost:4100/runs \
-  -H 'x-beerengineer-token: <token>' \
+  -H 'content-type: application/json' \
   -d '{"title":"My feature","description":"…"}'
 ```
+
+For the supported localhost flow, the engine accepts loopback requests
+without token management. Legacy callers may still send
+`x-beerengineer-token` for compatibility, but new local setup/start
+usage does not require reading, exporting, or copying one.
 
 ## Usage (most common commands)
 
@@ -296,13 +301,11 @@ the recommended operator path — use `beerengineer update` for managed hosts.
 
 - Config file: `$XDG_CONFIG_HOME/beerengineer-nodejs/config.json`
 - Data dir: `$XDG_DATA_HOME/beerengineer-nodejs/` (SQLite + WAL, plus app-level state)
-- API token file: `$XDG_STATE_HOME/beerengineer/api.token`
 - Per-workspace config: `<workspace>/.beerengineer/workspace.json`
 - Per-workspace run/worktree artefacts: `<workspace>/.beerengineer/`
 
 Common env vars:
 
-- `BEERENGINEER_API_TOKEN` — override the generated CSRF token
 - `BEERENGINEER_UI_ORIGIN` — allowed CORS origin
 - `HOST`, `PORT` — API bind (default `127.0.0.1:4100`)
 - `ANTHROPIC_API_KEY` — required when any role uses `claude:sdk`
@@ -323,6 +326,12 @@ Common env vars:
   directory (absolute, or relative to `cwd`)
 - `BEERENGINEER_HOSTED_RETRY_DELAYS_MS` — comma-separated retry delays
   for hosted CLI invocations (default `2000,8000`)
+
+Legacy compatibility / remote-mode env vars:
+
+- `BEERENGINEER_API_TOKEN` — optional compatibility secret for older or
+  non-loopback callers that still send `x-beerengineer-token`; the
+  standard localhost operator flow does not use it
 
 For the full picture of harness profiles, runtime policies, prompt
 contracts, and how context flows into every LLM call, see

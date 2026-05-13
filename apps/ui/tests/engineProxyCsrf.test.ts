@@ -35,7 +35,6 @@ describe("engine mutation proxy CSRF guard", () => {
   it("rejects non-JSON write bodies before forwarding the engine token", async () => {
     const fetchSpy = vi.fn();
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
-    process.env.BEERENGINEER_API_TOKEN = "secret-token";
 
     const res = await proxyEnginePatch(
       new Request("http://localhost:3000/api/settings/config", {
@@ -54,8 +53,7 @@ describe("engine mutation proxy CSRF guard", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("forwards same-origin JSON writes with the server-side engine token", async () => {
-    process.env.BEERENGINEER_API_TOKEN = "secret-token";
+  it("forwards same-origin JSON writes without injecting a localhost token", async () => {
     process.env.BEERENGINEER_ENGINE_URL = "http://127.0.0.1:4999";
     const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
@@ -77,14 +75,12 @@ describe("engine mutation proxy CSRF guard", () => {
       method: "POST",
       headers: expect.objectContaining({
         "Content-Type": "application/json",
-        "x-beerengineer-token": "secret-token",
       }),
       body: JSON.stringify({ group: "supabase" }),
     }));
   });
 
   it("accepts LAN/Tailscale origins from the Host header when Next normalizes request.url", async () => {
-    process.env.BEERENGINEER_API_TOKEN = "secret-token";
     process.env.BEERENGINEER_ENGINE_URL = "http://127.0.0.1:4999";
     const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
@@ -106,7 +102,7 @@ describe("engine mutation proxy CSRF guard", () => {
     expect(fetchSpy).toHaveBeenCalledWith("http://127.0.0.1:4999/runs/run-1/answer", expect.objectContaining({
       method: "POST",
       headers: expect.objectContaining({
-        "x-beerengineer-token": "secret-token",
+        "Content-Type": "application/json",
       }),
     }));
   });

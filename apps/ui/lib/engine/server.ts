@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
 import {
@@ -10,25 +7,6 @@ import {
   normalizeRunEntryFreshness,
 } from "@/lib/runEntryFacts";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
-
-function tokenPath(): string {
-  const envPath = process.env.BEERENGINEER_API_TOKEN_FILE;
-  if (envPath) return resolve(envPath);
-  const xdgState = process.env.XDG_STATE_HOME;
-  const base = xdgState ? resolve(xdgState) : join(homedir(), ".local", "state");
-  return join(base, "beerengineer", "api.token");
-}
-
-function readToken(): string | null {
-  const direct = process.env.BEERENGINEER_API_TOKEN;
-  if (direct) return direct;
-  try {
-    const raw = readFileSync(tokenPath(), "utf8").trim();
-    return raw || null;
-  } catch {
-    return null;
-  }
-}
 
 export async function fetchItem(itemId: string): Promise<ItemDetailDTO> {
   const url = `${engineBaseUrl()}/items/${encodeURIComponent(itemId)}`;
@@ -110,12 +88,9 @@ export async function postItemAction(
   body: Record<string, string> = {},
 ): Promise<ActionResult> {
   const url = `${engineBaseUrl()}/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`;
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  const token = readToken();
-  if (token) headers["x-beerengineer-token"] = token;
   const res = await fetch(url, {
     method: "POST",
-    headers,
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
   });

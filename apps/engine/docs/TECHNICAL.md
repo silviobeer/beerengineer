@@ -15,7 +15,7 @@ specifics. Use this file to navigate, not to memorise.
 ```
                 ┌──────────────────────────────────────────────┐
    CLI / UI ──► │  HTTP/SSE API (src/api)         :4100        │
-                │  CSRF token auth + OpenAPI 3.1               │
+                │  loopback trust boundary + OpenAPI 3.1       │
                 └──────────────────────┬───────────────────────┘
                                        │
                 ┌──────────────────────▼───────────────────────┐
@@ -93,7 +93,9 @@ apps/engine/
   and `wasSoleLiveRun`).
 - **Idempotent migrations** via `ALTER TABLE … IF NOT EXISTS`-style guards
   in `src/db/connection.ts`. No separate migration files.
-- **Single CSRF token** for the API. Local-only tool; no user accounts.
+- **Loopback trust boundary** for standard localhost API use. Legacy
+  token inputs remain compatibility-only; local operators do not manage
+  a required API token. No user accounts.
 - **Canonical event names everywhere.** Engine, CLI, UI all use the same
   vocabulary: `phase_started`, `item_column_changed`, `run_finished`, etc.
   See [`docs/messaging-levels.md`](../../../docs/messaging-levels.md).
