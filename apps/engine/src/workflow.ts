@@ -270,6 +270,12 @@ async function loadConcept(context: WorkflowContext): Promise<Concept & { hasUi?
   }
 }
 
+function itemHasUiForRouting(
+  itemConcept: Concept & { hasUi?: boolean | null },
+): boolean {
+  return itemConcept.hasUi !== false
+}
+
 const loadWireframes = (context: WorkflowContext) =>
   loadStageArtifact<WireframeArtifact>(context, "visual-companion", "wireframes.json")
 
@@ -393,7 +399,7 @@ export async function runWorkflow(item: Item, options?: {
     emitWorkflowPreviewPort(context, activeRun)
     const itemConcept = await loadConcept(context)
     assertWorkflowNotCancelled()
-    const itemHasUi = projects.some(project => project.hasUi === true)
+    const itemHasUi = itemHasUiForRouting(itemConcept)
     const itemSnapshot = buildItemSnapshot(codebaseSnapshot, itemHasUi, options?.workspaceRoot)
     const { wireframes, design } = await resolveDesignPrepArtifacts(
       context,
@@ -509,18 +515,19 @@ async function resolveDesignPrepArtifacts(
   if (!itemHasUi) return { wireframes: undefined, design: undefined }
   if (itemResumePlan.skipDesignPrep) return { wireframes: undefined, design: undefined }
   const { shouldRunVisualCompanion, shouldRunFrontendDesign } = buildDesignPrepPlan(context, itemResumePlan)
+  const designPrepProjects = projects.map(project => ({ ...project, hasUi: true }))
   const references = loadItemWorkspaceReferences(context)
   const wireframes = shouldRunVisualCompanion
     ? await withStageLifecycle(
         "visual-companion",
-        () => visualCompanion(context, { itemConcept, projects, references }, stageLlm, itemSnapshot),
+        () => visualCompanion(context, { itemConcept, projects: designPrepProjects, references }, stageLlm, itemSnapshot),
         {},
       )
     : await loadWireframes(context)
   const design = shouldRunFrontendDesign
     ? await withStageLifecycle(
         "frontend-design",
-        () => frontendDesign(context, { itemConcept, projects, wireframes, references }, stageLlm, itemSnapshot),
+        () => frontendDesign(context, { itemConcept, projects: designPrepProjects, wireframes, references }, stageLlm, itemSnapshot),
         {},
       )
     : await loadDesign(context)
