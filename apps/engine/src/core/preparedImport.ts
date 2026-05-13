@@ -295,6 +295,18 @@ export function deriveProjectStartStages(bundle: PreparedImportBundle): Record<s
   ) as Record<string, "requirements" | "architecture">
 }
 
+function resolveImportedConceptHasUi(explicitHasUi: boolean | undefined, inferredHasUi: boolean): boolean | undefined {
+  if (explicitHasUi === false) return false
+  if (explicitHasUi === true || inferredHasUi) return true
+  return undefined
+}
+
+function mergeConceptHasUi(conceptHasUi: boolean | undefined, projects: Project[]): boolean | undefined {
+  if (conceptHasUi === false) return false
+  if (conceptHasUi === true) return true
+  return projects.some(project => project.hasUi === true) ? true : undefined
+}
+
 function loadConceptFromSource(
   sourceDir: string,
   item: Pick<Item, "title" | "description">,
@@ -319,7 +331,7 @@ function loadConceptFromSource(
     : undefined
   const concept = {
     ...(maybeConcept(conceptJson.value) ?? fallbackConcept),
-    hasUi: explicitHasUi === false ? false : (explicitHasUi === true || inferredHasUi ? true : undefined),
+    hasUi: resolveImportedConceptHasUi(explicitHasUi, inferredHasUi),
   }
   return { concept, markdownConcept, inferredHasUi }
 }
@@ -452,9 +464,7 @@ export function loadPreparedImportBundle(
   return {
     concept: {
       ...concept,
-      hasUi: concept.hasUi === false ? false : (
-        concept.hasUi === true || projects.some(project => project.hasUi === true) ? true : undefined
-      ),
+      hasUi: mergeConceptHasUi(concept.hasUi, projects),
     },
     projects,
     prdsByProjectId,
@@ -497,11 +507,7 @@ function mergeLlmNormalizedBundle(
   return {
     concept: {
       ...concept,
-      hasUi: concept.hasUi === false ? false : (
-        concept.hasUi === true || (projects.length > 0 ? projects : current.projects).some(project => project.hasUi === true)
-          ? true
-          : undefined
-      ),
+      hasUi: mergeConceptHasUi(concept.hasUi, projects.length > 0 ? projects : current.projects),
     },
     projects: projects.length > 0 ? projects : current.projects,
     prdsByProjectId: { ...current.prdsByProjectId, ...prdsByProjectId },
