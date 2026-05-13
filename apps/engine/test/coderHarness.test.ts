@@ -109,3 +109,46 @@ exit 1
     resetCodexSandboxPolicyForTests()
   }
 })
+
+test("runCoderHarness accepts opencode for execution stories", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-coder-harness-opencode-"))
+  const binDir = join(dir, "bin")
+  const previousPath = process.env.PATH
+
+  try {
+    seedCleanGitRepo(dir)
+    makeStubBin(
+      binDir,
+      "opencode",
+      `
+cat >/dev/null
+printf '%s\n' '{"type":"step_start","sessionID":"sess-123"}'
+printf '%s\n' '{"type":"text","part":{"text":"{\\"summary\\":\\"OpenCode execution completed.\\",\\"testsRun\\":[{\\"command\\":\\"npm test\\",\\"status\\":\\"passed\\"}],\\"implementationNotes\\":[],\\"blockers\\":[]}"}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"input":12,"output":34}}}'
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    const result = await runCoderHarness({
+      harness: {
+        kind: "hosted",
+        harness: "opencode",
+        runtime: "cli",
+        provider: "openrouter",
+        model: "qwen/qwen3-coder-plus",
+        workspaceRoot: dir,
+      },
+      runtimePolicy: { mode: "safe-workspace-write" },
+      baselinePath: join(dir, "baseline.json"),
+      storyContext: minimalStoryContext(dir),
+    })
+
+    assert.equal(result.summary, "OpenCode execution completed.")
+    assert.deepEqual(result.testsRun, [{ command: "npm test", status: "passed" }])
+    assert.equal(result.sessionId, "sess-123")
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

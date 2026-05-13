@@ -187,7 +187,13 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
         string,
         { harness: KnownHarness; provider?: string; model?: string; runtime?: InvocationRuntime }
       >
-      const selected = roles[input.role] ?? roles.coder
+      const executionOverrides = input.stage === "execution"
+        ? input.harnessProfile.stageOverrides?.execution as Record<
+          string,
+          { harness: KnownHarness; provider?: string; model?: string; runtime?: InvocationRuntime }
+        > | undefined
+        : undefined
+      const selected = executionOverrides?.[input.role] ?? roles[input.role] ?? roles.coder
       const runtime: InvocationRuntime = selected.runtime ?? "cli"
       return {
         kind: "hosted",
@@ -201,7 +207,7 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
   }
 }
 
-function logResolution(stage: StageId, role: HarnessRole, harness: ResolvedHarness, policy: RuntimePolicy): void {
+export function emitHarnessResolution(stage: StageId, role: HarnessRole, harness: ResolvedHarness, policy: RuntimePolicy): void {
   const run = getActiveRun()
   if (!run) return
   if (harness.kind === "fake") {
@@ -225,7 +231,7 @@ function createHostedStageAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Stag
     throw new Error(`Stage ${stage} requested fake provider via hosted path`)
   }
   const policy = stageAuthoringPolicy(llm.runtimePolicy, stage)
-  logResolution(stage, "coder", harness, policy)
+  emitHarnessResolution(stage, "coder", harness, policy)
   return new HostedStageAdapter<S, A>({
     stageId: stage,
     harness: harness.harness,
@@ -243,7 +249,7 @@ function createHostedReviewAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Rev
     throw new Error(`Stage ${stage} requested fake provider via hosted path`)
   }
   const policy = reviewerPolicy(llm.runtimePolicy, stage)
-  logResolution(stage, "reviewer", harness, policy)
+  emitHarnessResolution(stage, "reviewer", harness, policy)
   return new HostedReviewAdapter<S, A>({
     stageId: stage,
     harness: harness.harness,

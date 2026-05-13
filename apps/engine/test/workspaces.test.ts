@@ -1,8 +1,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { delimiter, join } from "node:path"
 import { spawnSync } from "node:child_process"
 
 import {
@@ -69,6 +69,20 @@ function readyReport(): SetupReport {
   }
 }
 
+function readyReportWithOpenCode(): SetupReport {
+  const report = readyReport()
+  const openCode = report.groups.find(group => group.id === "llm.opencode")
+  assert.ok(openCode)
+  openCode.passed = 2
+  openCode.satisfied = true
+  openCode.ideal = true
+  openCode.checks = [
+    { id: "llm.opencode.cli", label: "OpenCode CLI", status: "ok" },
+    { id: "llm.opencode.auth", label: "OpenCode auth", status: "ok" },
+  ]
+  return report
+}
+
 test("validateHarnessProfile rejects missing harnesses and accepts fast mode", () => {
   const report = readyReport()
   assert.equal(validateHarnessProfile({ mode: "fast" }, report).ok, true)
@@ -84,6 +98,208 @@ test("validateHarnessProfile rejects missing harnesses and accepts fast mode", (
   )
   assert.equal(missing.ok, false)
   assert.match(missing.error?.detail ?? "", /opencode/)
+})
+
+test("registerWorkspace persists execution-only opencode overrides and rejects unsupported execution override runtimes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-opencode-self-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const config = { ...defaultAppConfig(), allowedRoots: [dir] }
+  const report = readyReportWithOpenCode()
+  const claudeRole = { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" } as const
+  const codexRole = { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" } as const
+  const opencodeRole = { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" } as const
+  const profiles = [
+    {
+      key: "coder-opencode",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: claudeRole,
+          reviewer: claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            coder: opencodeRole,
+          },
+        },
+      },
+      expectedExecution: { coder: opencodeRole },
+    },
+    {
+      key: "reviewer-opencode",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: claudeRole,
+          reviewer: claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            reviewer: opencodeRole,
+          },
+        },
+      },
+      expectedExecution: { reviewer: opencodeRole },
+    },
+    {
+      key: "merge-opencode",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: claudeRole,
+          reviewer: codexRole,
+          "merge-resolver": claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            "merge-resolver": opencodeRole,
+          },
+        },
+      },
+      expectedExecution: { "merge-resolver": opencodeRole },
+    },
+    {
+      key: "all-opencode",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: claudeRole,
+          reviewer: codexRole,
+          "merge-resolver": claudeRole,
+        },
+        stageOverrides: {
+          execution: {
+            coder: opencodeRole,
+            reviewer: opencodeRole,
+            "merge-resolver": opencodeRole,
+          },
+        },
+      },
+      expectedExecution: { coder: opencodeRole, reviewer: opencodeRole, "merge-resolver": opencodeRole },
+    },
+  ] as const
+
+  try {
+    const repos = new Repos(db)
+    for (const entry of profiles) {
+      const path = join(dir, entry.key)
+      const result = await registerWorkspace(
+        {
+          path,
+          key: entry.key,
+          harnessProfile: entry.harnessProfile,
+          sonar: { enabled: false },
+          git: { init: false },
+        },
+        { repos, config, appReport: report },
+      )
+      assert.equal(result.ok, true, entry.key)
+      const persisted = JSON.parse(readFileSync(join(path, ".beerengineer", "workspace.json"), "utf8")) as {
+        harnessProfile: {
+          mode: string
+          roles: Record<string, unknown>
+          stageOverrides?: { execution?: Record<string, unknown> }
+        }
+      }
+      assert.equal(persisted.harnessProfile.mode, "self")
+      assert.deepEqual(persisted.harnessProfile.roles, entry.harnessProfile.roles)
+      assert.deepEqual(persisted.harnessProfile.stageOverrides?.execution, entry.expectedExecution)
+    }
+
+    for (const [label, harnessProfile] of [
+      [
+        "top-level coder opencode",
+        {
+          mode: "self",
+          roles: {
+            coder: opencodeRole,
+            reviewer: claudeRole,
+          },
+        },
+      ],
+      [
+        "opencode preset mode",
+        {
+          mode: "opencode",
+          roles: {
+            coder: { provider: "openrouter", model: "qwen/qwen3-coder-plus" },
+            reviewer: { provider: "openrouter", model: "deepseek/deepseek-v4-pro" },
+          },
+        },
+      ],
+      [
+        "coder sdk",
+        {
+          mode: "self",
+          roles: {
+            coder: claudeRole,
+            reviewer: claudeRole,
+          },
+          stageOverrides: {
+            execution: {
+              coder: { ...opencodeRole, runtime: "sdk" },
+            },
+          },
+        },
+      ],
+      [
+        "reviewer sdk",
+        {
+          mode: "self",
+          roles: {
+            coder: claudeRole,
+            reviewer: claudeRole,
+          },
+          stageOverrides: {
+            execution: {
+              reviewer: { ...opencodeRole, runtime: "sdk" },
+            },
+          },
+        },
+      ],
+      [
+        "merge-resolver sdk",
+        {
+          mode: "self",
+          roles: {
+            coder: claudeRole,
+            reviewer: codexRole,
+            "merge-resolver": claudeRole,
+          },
+          stageOverrides: {
+            execution: {
+              "merge-resolver": { ...opencodeRole, runtime: "sdk" },
+            },
+          },
+        },
+      ],
+    ] as const) {
+      const key = label.replaceAll(/[^a-z]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()
+      const path = join(dir, key)
+      const result = await registerWorkspace(
+        {
+          path,
+          key,
+          harnessProfile,
+          sonar: { enabled: false },
+          git: { init: false },
+        },
+        { repos, config, appReport: report },
+      )
+      assert.equal(result.ok, false, label)
+      if (label.includes("sdk")) {
+        assert.equal(result.error, "profile_references_unavailable_runtime")
+        assert.match(result.detail ?? "", /opencode:sdk/)
+      } else {
+        assert.equal(result.error, "unsupported_harness_selection")
+        assert.match(result.detail ?? "", /coder/)
+      }
+      assert.equal(existsSync(join(path, ".beerengineer", "workspace.json")), false)
+    }
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("previewWorkspace detects greenfield vs brownfield and registration state", async () => {
@@ -440,7 +656,7 @@ test("runWorkspacePreflight reports scanner readiness from PATH", async () => {
   writeFileSync(join(stubBin, "sonar-scanner"), "#!/bin/sh\necho 'SonarScanner 9.9.0'\n", "utf8")
   chmodSync(join(stubBin, "sonar-scanner"), 0o755)
   const prevPath = process.env.PATH
-  process.env.PATH = `${stubBin}:${prevPath ?? ""}`
+  process.env.PATH = `${stubBin}${delimiter}${prevPath ?? ""}`
 
   try {
     const report = await runWorkspacePreflight(dir)
@@ -607,6 +823,47 @@ test("readWorkspaceConfig upgrades codex CLI workspaces with write-capable execu
     const config = await import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(root))
     assert.equal(config?.schemaVersion, 2)
     assert.equal(config?.runtimePolicy.coderExecution, "unsafe-autonomous-write")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("readWorkspaceConfig rejects malformed self execution stageOverrides role entries", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  try {
+    const root = join(dir, "invalid-self-overrides")
+    mkdirSync(join(root, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(root, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "invalid-self-overrides",
+        name: "Invalid Self Overrides",
+        harnessProfile: {
+          mode: "self",
+          roles: {
+            coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+            reviewer: { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" },
+          },
+          stageOverrides: {
+            execution: {
+              coder: [],
+            },
+          },
+        },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "unsafe-autonomous-write",
+        },
+        sonar: { enabled: false },
+        reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const config = await import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(root))
+    assert.equal(config, null)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -790,6 +1047,113 @@ test("resolveMergeConflictsViaLlm refuses sdk runtime with an actionable reason"
     assert.match(result.reason, /sdk is not implemented/)
     assert.match(result.reason, /merge-resolver/)
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resolveMergeConflictsViaLlm supports opencode for merge resolution", async () => {
+  const { resolveMergeConflictsViaLlm } = await import("../src/core/mergeResolver.js")
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-resolver-opencode-"))
+  const binDir = join(dir, "bin")
+  const repoDir = join(dir, "repo")
+  const previousPath = process.env.PATH
+  try {
+    mkdirSync(binDir, { recursive: true })
+    mkdirSync(repoDir, { recursive: true })
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "base\n", "utf8")
+    spawnSync("git", ["add", "README.md"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "base"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "-b", "feature"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "feature\n", "utf8")
+    spawnSync("git", ["commit", "-am", "feature"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "main"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "main\n", "utf8")
+    spawnSync("git", ["commit", "-am", "main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["merge", "feature"], { cwd: repoDir, encoding: "utf8" })
+
+    const stubPath = join(binDir, "opencode")
+    writeFileSync(stubPath, `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'EOF' > README.md
+resolved
+EOF
+printf '%s\n' '{"type":"step_start","sessionID":"merge-123"}'
+printf '%s\n' '{"type":"text","part":{"text":"{\\"summary\\":\\"resolved\\",\\"resolvedFiles\\":[\\"README.md\\"]}"}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"input":9,"output":11}}}'
+`, "utf8")
+    chmodSync(stubPath, 0o755)
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`
+
+    const result = resolveMergeConflictsViaLlm({
+      workspaceRoot: repoDir,
+      mergeMessage: "test merge",
+      harness: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus" },
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(readFileSync(join(repoDir, "README.md"), "utf8"), "resolved\n")
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resolveMergeConflictsViaLlm omits opencode --model when provider is missing", async () => {
+  const { resolveMergeConflictsViaLlm } = await import("../src/core/mergeResolver.js")
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-resolver-opencode-providerless-"))
+  const binDir = join(dir, "bin")
+  const repoDir = join(dir, "repo")
+  const previousPath = process.env.PATH
+  try {
+    mkdirSync(binDir, { recursive: true })
+    mkdirSync(repoDir, { recursive: true })
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "base\n", "utf8")
+    spawnSync("git", ["add", "README.md"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "base"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "-b", "feature"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "feature\n", "utf8")
+    spawnSync("git", ["commit", "-am", "feature"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["checkout", "main"], { cwd: repoDir, encoding: "utf8" })
+    writeFileSync(join(repoDir, "README.md"), "main\n", "utf8")
+    spawnSync("git", ["commit", "-am", "main"], { cwd: repoDir, encoding: "utf8" })
+    spawnSync("git", ["merge", "feature"], { cwd: repoDir, encoding: "utf8" })
+
+    const argvPath = join(dir, "argv.txt")
+    const stubPath = join(binDir, "opencode")
+    writeFileSync(stubPath, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > ${JSON.stringify(argvPath)}
+cat >/dev/null
+cat <<'EOF' > README.md
+resolved
+EOF
+printf '%s\n' '{"type":"step_start","sessionID":"merge-456"}'
+printf '%s\n' '{"type":"text","part":{"text":"{\\"summary\\":\\"resolved\\",\\"resolvedFiles\\":[\\"README.md\\"]}"}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"input":9,"output":11}}}'
+`, "utf8")
+    chmodSync(stubPath, 0o755)
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`
+
+    const result = resolveMergeConflictsViaLlm({
+      workspaceRoot: repoDir,
+      mergeMessage: "test merge",
+      harness: { harness: "opencode", model: "qwen/qwen3-coder-plus" },
+    })
+
+    assert.equal(result.ok, true)
+    const argv = readFileSync(argvPath, "utf8")
+    assert.doesNotMatch(argv, /--model/)
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
     rmSync(dir, { recursive: true, force: true })
   }
 })

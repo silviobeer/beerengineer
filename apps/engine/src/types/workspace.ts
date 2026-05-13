@@ -65,6 +65,12 @@ export type SelfHarnessRoleRef = RoleModelRef & {
   runtime?: InvocationRuntime
 }
 
+export type ExecutionStageHarnessOverrides = {
+  coder?: SelfHarnessRoleRef
+  reviewer?: SelfHarnessRoleRef
+  "merge-resolver"?: SelfHarnessRoleRef
+}
+
 export type HarnessProfile =
   | { mode: "codex-first" }
   | { mode: "claude-first" }
@@ -94,6 +100,14 @@ export type HarnessProfile =
          * self-mode operators can mix harnesses or runtimes per role.
          */
         "merge-resolver"?: SelfHarnessRoleRef
+      }
+      /**
+       * Optional execution-only overrides. This keeps execution parity
+       * configuration inside the existing workspace harness-profile model
+       * without widening non-execution stage behavior.
+       */
+      stageOverrides?: {
+        execution?: ExecutionStageHarnessOverrides
       }
     }
 
@@ -277,6 +291,7 @@ export type RegisterErrorCode =
   | "path_missing_parent"
   | "path_not_directory"
   | "key_conflict"
+  | "unsupported_harness_selection"
   | "profile_references_unavailable_harness"
   | "profile_references_unavailable_runtime"
   | "scaffold_failed"
@@ -309,7 +324,7 @@ export type ValidationResult = {
   ok: boolean
   warnings: string[]
   error?: {
-    code: Extract<RegisterErrorCode, "profile_references_unavailable_harness" | "profile_references_unavailable_runtime">
+    code: Extract<RegisterErrorCode, "profile_references_unavailable_harness" | "profile_references_unavailable_runtime" | "unsupported_harness_selection">
     detail: string
   }
 }

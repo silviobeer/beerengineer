@@ -247,6 +247,58 @@ test("PROJ-8-PRD-3-US-1 item-action starts resolve an explicit null capability b
   }
 })
 
+test("REQ-2 AC-2.3: start_implementation rejects unsupported OpenCode role selection before creating a run", () => {
+  const { dir, db, repos } = tempRepos("be2-opencode-start-block-")
+  const repoRoot = join(dir, "repo")
+  seedGitRepo(repoRoot)
+  try {
+    mkdirSync(join(repoRoot, ".beerengineer"), { recursive: true })
+    writeFileSync(join(repoRoot, ".beerengineer", "workspace.json"), JSON.stringify({
+      schemaVersion: 2,
+      key: "local",
+      name: "Local",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3-coder-plus", runtime: "cli" },
+          reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "cli" },
+        },
+      },
+      runtimePolicy: {
+        stageAuthoring: "safe-readonly",
+        reviewer: "safe-readonly",
+        coderExecution: "safe-workspace-write",
+      },
+      sonar: { enabled: false },
+      reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+      createdAt: 123,
+    }, null, 2))
+
+    const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Blocked item", description: "invalid opencode scope" })
+    repos.setItemColumn(item.id, "requirements", "draft")
+
+    const prepared = prepareForegroundItemRun(repos, makeIo(), {
+      itemId: item.id,
+      action: "start_implementation",
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: fakeScheduler(),
+    })
+
+    assert.equal(prepared.ok, false)
+    if (prepared.ok) return
+    assert.equal(prepared.error, "unsupported_harness_selection")
+    assert.equal(prepared.code, "unsupported_harness_selection")
+    assert.equal(prepared.role, "coder")
+    assert.match(prepared.message, /coder/)
+    assert.equal(repos.listRuns().length, 0)
+  } finally {
+    db.close()
+    removeTempDir(dir)
+  }
+})
+
 test("REQ-2 AC-2.3: direct-mode item-action starts are admitted without a persistent test branch", () => {
   const { dir, db, repos } = tempRepos("be2-capability-direct-")
   const repoRoot = join(dir, "repo")
