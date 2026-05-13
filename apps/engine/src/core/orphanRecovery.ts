@@ -265,6 +265,7 @@ async function resolveCandidateOutcomes(
       repos.getRun(candidate.run.id) ?? candidate.run,
       input,
       autoResume,
+      candidate.eligibility,
     )
     outcomes.push(outcome)
     appendStartupRecoveryLog(repos, outcome, error)
@@ -301,31 +302,23 @@ async function resolveStartupRecoveryPass(
     now: input.now,
     autoResumeEnabled: autoResume.enabled,
   })
-  const thresholdDeferredCandidates = usesRecoveryThreshold(autoResume)
-    ? candidates.filter(candidate => candidate.hasOpenPrompt)
-    : []
-  const activeCandidates = thresholdDeferredCandidates.length > 0
-    ? candidates.filter(candidate => !candidate.hasOpenPrompt)
+  const thresholdApplies = autoResume.recoveryThreshold != null && Number.isFinite(autoResume.recoveryThreshold)
+  const thresholdCandidates = thresholdApplies
+    ? candidates.map(candidate => {
+      if (!candidate.eligibility.eligible || repos.getOpenPrompt(candidate.run.id) == null) return candidate
+      return {
+        ...candidate,
+        eligibility: { eligible: false, reason: "open_prompt" as const },
+      }
+    })
     : candidates
-  const eligibleCandidates = activeCandidates.filter(
+  const eligibleCandidates = thresholdCandidates.filter(
     (candidate): candidate is StartupRecoveryCandidate & { eligibility: { eligible: true } } => candidate.eligibility.eligible,
   )
   if (eligibleCandidates.length > normalizedRecoveryThreshold(autoResume.recoveryThreshold)) {
-    const outcomes = holdBackEligibleCandidates(repos, activeCandidates, eligibleCandidates)
-    for (const candidate of thresholdDeferredCandidates) {
-      const outcome = openPromptThresholdDeferredOutcome(candidate.run.id)
-      outcomes.push(outcome)
-      appendStartupRecoveryLog(repos, outcome)
-    }
-    return outcomes
+    return holdBackEligibleCandidates(repos, thresholdCandidates, eligibleCandidates)
   }
-  const outcomes = await resolveCandidateOutcomes(repos, activeCandidates, input, autoResume)
-  for (const candidate of thresholdDeferredCandidates) {
-    const outcome = openPromptThresholdDeferredOutcome(candidate.run.id)
-    outcomes.push(outcome)
-    appendStartupRecoveryLog(repos, outcome)
-  }
-  return outcomes
+  return resolveCandidateOutcomes(repos, thresholdCandidates, input, autoResume)
 }
 
 async function resolveStartupRecoveryOutcome(
@@ -333,8 +326,9 @@ async function resolveStartupRecoveryOutcome(
   run: RunRow,
   input: { apiWorkerInstanceId: string; now: number },
   autoResume: StartupAutoResumeOptions,
+  eligibilityOverride?: StartupAutoResumeEligibility,
 ): Promise<{ outcome: StartupRecoveryOutcome; error?: string }> {
-  const eligibility = classifyStartupAutoResumeEligibility({
+  const eligibility = eligibilityOverride ?? classifyStartupAutoResumeEligibility({
     hasOrphanedWorkerLease: hasOrphanedWorkerLease(run, input),
     hasOpenPrompt: repos.getOpenPrompt(run.id) != null,
     autoResumeEnabled: autoResume.enabled,

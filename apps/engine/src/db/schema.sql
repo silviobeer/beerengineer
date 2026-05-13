@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS projects (
 -- disk. The filesystem record is authoritative; these columns power list/board
 -- queries without touching the filesystem. `recovery_scope_ref` holds the
 -- stageId for stage scope or "<wave>/<story>" for story scope.
+-- The canonical recovery HTTP mutation surface persists latest-state updates
+-- through this row projection. Narrow recovery fixes stay scoped to
+-- `recovery_payload_json`, `supabase_branch_ref`, and
+-- `supabase_branch_lifecycle_state`; no generic recovery patch storage exists.
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),

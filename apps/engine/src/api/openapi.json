@@ -1494,10 +1494,10 @@
         "tags": [
           "Runs"
         ],
-        "summary": "Recovery detail for a blocked/failed run.",
+        "summary": "Recovery detail and currently available recovery actions for a run.",
         "responses": {
           "200": {
-            "description": "Recovery detail or `null`.",
+            "description": "Recovery detail or `null` when no persisted recovery or current-stage action facts are available.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1523,6 +1523,80 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Canonical recovery mutation surface.",
+        "description": "Single canonical recovery-action family. `skip_current_stage`, `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are implemented on this route. `resume`, `replan`, and `retry_supabase_readiness` remain reserved here.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recovery action accepted or resolved as an idempotent no-op on the canonical surface.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryActionResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Recovery action request rejected before execution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryActionRejection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryActionRejection"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Recovery action is incompatible with the run's current recovery state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryActionRejection"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Named recovery action reserved but not yet implemented on the canonical recovery surface.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryActionRejection"
+                }
+              }
+            }
           }
         }
       }
@@ -4605,6 +4679,35 @@
             "type": "string",
             "nullable": true
           },
+          "recoveryStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "fresh_path_recovery",
+              "retained_path_recovery",
+              null
+            ]
+          },
+          "supabaseBranchLifecycleState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "availableActions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "skip_current_stage",
+                "recover_fresh_branch",
+                "retry_retained",
+                "clear_and_fresh"
+              ]
+            }
+          },
           "recovery_user_message": {
             "type": [
               "string",
@@ -4629,6 +4732,412 @@
             "type": "array",
             "items": {
               "type": "object"
+            }
+          }
+        }
+      },
+      "RecoveryActionRequest": {
+        "description": "Single canonical recovery-action family. Clear actions accept only `{ action }`; the other implemented and reserved actions keep their documented parameters.",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear_recovery_payload",
+                  "clear_supabase_branch_ref",
+                  "clear_supabase_branch_lifecycle_state"
+                ],
+                "description": "Narrow latest-state clear actions on the run row. These requests accept only `{ action }`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "resume",
+                  "replan",
+                  "retry_supabase_readiness",
+                  "skip_current_stage",
+                  "recover_fresh_branch",
+                  "retry_retained",
+                  "clear_and_fresh"
+                ],
+                "description": "Single canonical recovery-action family. `skip_current_stage`, `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh` are implemented actions. `resume`, `replan`, and `retry_supabase_readiness` remain reserved on this route."
+              },
+              "summary": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "reviewNotes": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "RecoveryActionResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "latestState",
+              "currentStage",
+              "stageStatus",
+              "runStatus",
+              "recoveryStatus"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "skip_current_stage"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "accepted"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "currentStage": {
+                "type": "string"
+              },
+              "stageStatus": {
+                "type": "string",
+                "enum": [
+                  "skipped"
+                ]
+              },
+              "runStatus": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "latestState",
+              "recoveryStatus",
+              "supabaseBranchLifecycleState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "recover_fresh_branch",
+                  "retry_retained",
+                  "clear_and_fresh"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "accepted"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery",
+                  "retained_path_recovery"
+                ]
+              },
+              "supabaseBranchLifecycleState": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery",
+                  "retained_path_recovery"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "reason",
+              "latestState",
+              "recoveryStatus",
+              "supabaseBranchLifecycleState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear_and_fresh"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "noop"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "already_on_fresh_path"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery"
+                ]
+              },
+              "supabaseBranchLifecycleState": {
+                "type": "string",
+                "enum": [
+                  "fresh_path_recovery"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "latestState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear_recovery_payload",
+                  "clear_supabase_branch_ref",
+                  "clear_supabase_branch_lifecycle_state"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "accepted"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "reason",
+              "latestState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear_recovery_payload",
+                  "clear_supabase_branch_ref",
+                  "clear_supabase_branch_lifecycle_state"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "noop"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "already_clear"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              }
+            }
+          }
+        ]
+      },
+      "RecoveryLatestState": {
+        "type": "object",
+        "required": [
+          "recoveryPayloadJson",
+          "supabaseBranchRef",
+          "supabaseBranchLifecycleState"
+        ],
+        "properties": {
+          "recoveryPayloadJson": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supabaseBranchRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supabaseBranchLifecycleState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RecoveryActionRejection": {
+        "type": "object",
+        "required": [
+          "ok",
+          "error",
+          "code",
+          "reason",
+          "message"
+        ],
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "recovery_action_required",
+              "unsupported_recovery_action",
+              "recovery_action_invalid_request",
+              "run_not_found",
+              "recovery_action_reserved",
+              "recovery_action_ineligible"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "bad_request",
+              "not_found",
+              "not_implemented",
+              "invalid_transition"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "resume",
+              "replan",
+              "retry_supabase_readiness",
+              "skip_current_stage",
+              "recover_fresh_branch",
+              "retry_retained",
+              "clear_and_fresh",
+              "clear_recovery_payload",
+              "clear_supabase_branch_ref",
+              "clear_supabase_branch_lifecycle_state"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "action_required",
+              "unsupported_action",
+              "unexpected_fields",
+              "action_not_implemented",
+              "run_not_found",
+              "incompatible_recovery_state",
+              "no_current_stage",
+              "current_stage_not_active",
+              "current_stage_worker_active",
+              "current_stage_terminal",
+              "current_stage_already_skipped"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }

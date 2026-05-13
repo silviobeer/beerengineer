@@ -102,17 +102,24 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 - `GET /runs/:id`
 - `GET /runs/:id/tree`
 - `GET /runs/:id/recovery`
-- `POST /runs/:id/recovery/retry-retained`
-  - Request: `{}`.
-  - Response: `{ ok, runId, status, recoveryStatus }`.
-  - Starts recovery work on the same retained diagnosis branch through the existing resume orchestration. No follow-up `POST /runs/:id/resume` call is required after this action is accepted.
-  - `409 { error: "retry_retained_conflict", code: "retry_retained_conflict", message, currentState }` when the run's current authoritative state is no longer eligible for retained-branch retry. `currentState` includes `status`, `recoveryStatus`, and `supabaseBranchLifecycleState`. This conflict is side-effect free: the engine does not create a remediation row or start recovery work.
-- `POST /runs/:id/recovery/clear-and-fresh`
-  - Request: `{}`.
-  - Response: `{ ok, runId, status, recoveryStatus }`.
-  - Detaches the retained diagnosis branch from the run, starts best-effort cleanup for that branch, and immediately re-enters the normal run-scoped recovery pipeline on the fresh path. No follow-up `POST /runs/:id/resume` call is required after this action is accepted.
-  - Cleanup failure is exposed through the normal recovery observability surfaces as a warning; it does not roll back the accepted run-side transition.
-  - `409 { error: "clear_and_fresh_conflict", code: "clear_and_fresh_conflict", message, currentState }` when the run's current authoritative state is no longer eligible for retained-branch clearing. `currentState` includes `status`, `recoveryStatus`, and `supabaseBranchLifecycleState`. This conflict is side-effect free: the engine does not create a remediation row, start cleanup, or start recovery work.
+  - Recovery detail now includes additive `recoveryStatus`, `supabaseBranchLifecycleState`, and `availableActions` facts.
+  - When a run has a current stage, the engine may expose recovery detail solely to advertise current-stage skip availability even if no recovery is currently persisted.
+  - For the named path-changing recovery flow, the contract-defined post-action values are `fresh_path_recovery` and `retained_path_recovery`.
+  - `availableActions` is authoritative engine output for the compatible named recovery actions at the run's current persisted state.
+- `POST /runs/:id/recovery`
+  - Canonical recovery mutation surface for named recovery, skip, and narrow clear actions.
+  - The implemented skip action is `skip_current_stage`; it records the active current stage as skipped and leaves the run blocked for manual review without auto-advancing.
+  - The implemented named path-changing actions are `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh`.
+  - `recover_fresh_branch` persists the contract's `fresh_path_recovery` state for a fresh-eligible blocked Supabase provisioning run.
+  - `retry_retained` persists the contract's `retained_path_recovery` state for a retained-diagnosis blocked Supabase provisioning run.
+  - `clear_and_fresh` clears the retained branch attachment for that same retained-diagnosis incident and persists `fresh_path_recovery`; repeating it returns `outcome: "noop"` with `reason: "already_on_fresh_path"`.
+  - `skip_current_stage` is offered only when the run has an active non-terminal current stage that is not already recorded as skipped and no live worker still holds the stage lease; ineligible requests reject with specific reasons such as `no_current_stage`, `current_stage_not_active`, `current_stage_worker_active`, `current_stage_terminal`, and `current_stage_already_skipped`.
+  - Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged.
+  - Reserved setup actions still keep `resume`, `replan`, and `retry_supabase_readiness` on the same canonical family with a specific `action_not_implemented` rejection.
+  - The implemented clear actions are `clear_recovery_payload`, `clear_supabase_branch_ref`, and `clear_supabase_branch_lifecycle_state`.
+  - Those narrow actions persist latest-state changes on the `runs` row only, scoped to `recovery_payload_json`, `supabase_branch_ref`, and `supabase_branch_lifecycle_state`.
+  - Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear.
+  - Implemented clear actions accept only `{ action }`; extra mutation fields or attempts to clear additional fields in the same request are rejected with `400 bad_request`, `reason: "unexpected_fields"`, and no state change.
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`

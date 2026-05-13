@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import { readApiTokenFile } from "../../api/tokenFile.js"
 import { ask, close } from "../../sim/human.js"
 import { createCliIO } from "../../core/ioCli.js"
 import type { ItemAction, ItemActionResult } from "../../core/itemActions.js"
@@ -33,7 +34,7 @@ import {
 import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ReplanFlags, ResumeFlags } from "../types.js"
-import { deriveRunStatus, resolveItemReference, resolveSelectedWorkspace } from "../common.js"
+import { deriveRunStatus, EXIT_TRANSPORT, resolveItemReference, resolveSelectedWorkspace } from "../common.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../../setup/config.js"
 import type { AppConfig } from "../../setup/types.js"
 
@@ -62,6 +63,32 @@ type SuccessfulPreparedImportRunResult = Extract<
 type PreparedImportCliStart =
   | { ok: true; workspace: WorkspaceRow }
   | { ok: false; exitCode: number }
+
+type RecoveryActionCliResult =
+  | {
+      ok: true
+      runId: string
+      action: string
+      outcome: "accepted" | "noop"
+      reason?: string
+      currentStage?: string
+      stageStatus?: "skipped"
+      runStatus?: string
+      recoveryStatus?: string | null
+      supabaseBranchLifecycleState?: string | null
+    }
+  | {
+      ok: false
+      error: string
+      code: string
+      reason: string
+      message: string
+      action?: string
+    }
+
+type RecoveryRequestResult =
+  | { ok: true; payload: Extract<RecoveryActionCliResult, { ok: true }> }
+  | { ok: false; exitCode: number; payload?: Extract<RecoveryActionCliResult, { ok: false }> | null }
 
 const CLI_RUN_DEATH_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
@@ -246,6 +273,82 @@ function printRunReplanFailure(result: Awaited<ReturnType<typeof replanRunInProc
       console.error(`Replan failed: ${result.message ?? result.error}`)
       return 1
   }
+}
+
+async function postRunRecoveryAction(runId: string, action: string): Promise<RecoveryRequestResult> {
+  const token = process.env.BEERENGINEER_API_TOKEN ?? readApiTokenFile()
+  if (!token) {
+    console.error("  Missing engine API token. Start the engine or export BEERENGINEER_API_TOKEN.")
+    return { ok: false, exitCode: EXIT_TRANSPORT }
+  }
+
+  const envPort = Number(process.env.BEERENGINEER_ENGINE_PORT ?? "")
+  const overrides = resolveOverrides()
+  const config = resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
+  const port = Number.isInteger(envPort) && envPort > 0 ? envPort : config.enginePort
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/runs/${runId}/recovery`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-beerengineer-token": token,
+      },
+      body: JSON.stringify({ action }),
+    })
+  } catch {
+    console.error(`  Could not reach the local engine API on http://127.0.0.1:${port}.`)
+    console.error("  Start it with: beerengineer start")
+    return { ok: false, exitCode: EXIT_TRANSPORT }
+  }
+
+  const payload = await response.json().catch(() => null) as RecoveryActionCliResult | null
+  if (!response.ok || !payload?.ok) {
+    return {
+      ok: false,
+      exitCode: response.status === 404 ? 1 : 75,
+      payload: payload && !payload.ok ? payload : null,
+    }
+  }
+
+  return { ok: true, payload }
+}
+
+function printRecoveryActionAccepted(
+  payload: Extract<RecoveryActionCliResult, { ok: true }>,
+  options: { summaryLine?: string; legacyStateLine?: boolean } = {},
+): number {
+  if (options.summaryLine) console.log(`  ${options.summaryLine}`)
+  else console.log("  recovery action applied")
+  console.log(`  run-id: ${payload.runId}`)
+  console.log(`  action: ${payload.action}`)
+  console.log(`  outcome: ${payload.outcome}`)
+  if (payload.reason) console.log(`  reason: ${payload.reason}`)
+  if (payload.currentStage) console.log(`  stage: ${payload.currentStage}`)
+  if (options.legacyStateLine && payload.runStatus && payload.recoveryStatus) {
+    console.log(`  state: ${payload.runStatus} / ${payload.recoveryStatus}`)
+  } else {
+    if (payload.runStatus) console.log(`  run-status: ${payload.runStatus}`)
+    if (payload.recoveryStatus) console.log(`  recovery-status: ${payload.recoveryStatus}`)
+  }
+  if (payload.supabaseBranchLifecycleState) {
+    console.log(`  supabase-branch-lifecycle-state: ${payload.supabaseBranchLifecycleState}`)
+  }
+  return 0
+}
+
+function printRecoveryActionRejected(
+  runId: string,
+  action: string,
+  result: Extract<RecoveryRequestResult, { ok: false }>,
+): number {
+  const payload = result.payload
+  if (!payload) return result.exitCode
+  if (payload.action) console.error(`  action: ${payload.action}`)
+  else console.error(`  action: ${action}`)
+  if (payload.reason) console.error(`  reason: ${payload.reason}`)
+  console.error(`  ${payload.message ?? `Recovery request failed for run ${runId}.`}`)
+  return result.exitCode
 }
 
 function describeRunRecoveryState(repos: Repos, run: RunRow): string {
@@ -993,6 +1096,27 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
   } finally {
     db.close()
   }
+}
+
+export async function runSkipCurrentStageCommand(runId: string | undefined): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run skip-current-stage <run-id>")
+    return 2
+  }
+  const result = await postRunRecoveryAction(runId, "skip_current_stage")
+  if (!result.ok) return printRecoveryActionRejected(runId, "skip_current_stage", result)
+  return printRecoveryActionAccepted(result.payload, { summaryLine: "current stage skipped", legacyStateLine: true })
+}
+
+export async function runRunRecoveryActionCommand(runId: string | undefined, action: string | undefined): Promise<number> {
+  if (!runId || !action) {
+    console.error("  Usage: beerengineer run recovery <run-id> <action>")
+    return 2
+  }
+
+  const result = await postRunRecoveryAction(runId, action)
+  if (!result.ok) return printRecoveryActionRejected(runId, action, result)
+  return printRecoveryActionAccepted(result.payload)
 }
 
 export async function runRunResumeCommand(runId: string | undefined, resumeFlags?: ResumeFlags): Promise<number> {
