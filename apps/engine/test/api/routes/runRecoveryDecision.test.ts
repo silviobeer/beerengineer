@@ -391,6 +391,7 @@ test("REQ-2 AC-1/AC-2: skip-current-stage accepts an eligible current stage, mar
     const fx = setupFixture()
     try {
       const stageRun = seedCurrentStage(fx)
+      fx.repos.setItemCurrentStage(fx.item.id, "execution")
       if (leaseMode === "stale_lease") {
         claimWorkerLease(fx.repos, {
           runId: fx.run.id,
@@ -418,6 +419,7 @@ test("REQ-2 AC-1/AC-2: skip-current-stage accepts an eligible current stage, mar
       assert.equal(run?.recovery_scope, "stage")
       assert.equal(run?.recovery_scope_ref, "execution")
       assert.match(run?.recovery_summary ?? "", /skipped current stage/i)
+      assert.equal(fx.repos.getItem(fx.item.id)?.current_stage, null)
 
       const stageRuns = fx.repos.listStageRunsForRun(fx.run.id)
       assert.equal(stageRuns.length, 1)

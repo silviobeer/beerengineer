@@ -1516,6 +1516,12 @@ function latestCurrentStageRun(repos: Repos, run: RunRow): StageRunRow | null {
   return null
 }
 
+function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
+  return repos
+    .listRunsForItem(run.item_id)
+    .some(candidate => candidate.id !== run.id && (candidate.status === "running" || candidate.status === "blocked"))
+}
+
 function skipCurrentStageConflict(
   reason: SkipCurrentStageRejectionReason,
   message: string,
@@ -1587,6 +1593,7 @@ export function skipCurrentStageInProcess(
     recovery_summary: `Operator skipped current stage "${currentStage}". Run remains paused for follow-up.`,
     recovery_payload_json: null,
   })
+  if (!hasOtherLiveRunForItem(repos, run)) repos.setItemCurrentStage(run.item_id, null)
   repos.appendLog({
     runId: run.id,
     stageRunId: activeStageRun.id,
