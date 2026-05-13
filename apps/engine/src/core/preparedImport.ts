@@ -10,7 +10,7 @@ import type { WorkflowContext } from "./workspaceLayout.js"
 import { layout } from "./workspaceLayout.js"
 
 export type PreparedImportBundle = {
-  concept: Concept & { hasUi: boolean }
+  concept: Concept & { hasUi?: boolean }
   projects: Project[]
   prdsByProjectId: Record<string, PRD>
   warnings: string[]
@@ -300,7 +300,7 @@ function loadConceptFromSource(
   item: Pick<Item, "title" | "description">,
   files: string[],
   warnings: string[],
-): { concept: Concept & { hasUi: boolean }; markdownConcept: string; inferredHasUi: boolean } {
+): { concept: Concept & { hasUi?: boolean }; markdownConcept: string; inferredHasUi: boolean } {
   const conceptJson = readJsonFile<unknown>(join(sourceDir, "concept.json"))
   if (conceptJson.malformed) {
     warnings.push("concept.json present but unparseable; fell back to markdown or item metadata.")
@@ -314,10 +314,12 @@ function loadConceptFromSource(
     ? conceptFromMarkdown(markdownConcept, item)
     : { summary: item.title, problem: item.description ?? "", users: [], constraints: [] }
   const inferredHasUi = hasUiSignal(sourceDir, files)
-  const explicitHasUi = isRecord(conceptJson.value) && conceptJson.value.hasUi === false ? false : undefined
+  const explicitHasUi = isRecord(conceptJson.value) && typeof conceptJson.value.hasUi === "boolean"
+    ? conceptJson.value.hasUi
+    : undefined
   const concept = {
     ...(maybeConcept(conceptJson.value) ?? fallbackConcept),
-    hasUi: explicitHasUi === false ? false : inferredHasUi,
+    hasUi: explicitHasUi === false ? false : (explicitHasUi === true || inferredHasUi ? true : undefined),
   }
   return { concept, markdownConcept, inferredHasUi }
 }
@@ -448,7 +450,12 @@ export function loadPreparedImportBundle(
   projects = projects.map(project => ({ ...project, hasUi: project.hasUi === true || inferredHasUi }))
 
   return {
-    concept: { ...concept, hasUi: concept.hasUi === false ? false : projects.some(project => project.hasUi === true) },
+    concept: {
+      ...concept,
+      hasUi: concept.hasUi === false ? false : (
+        concept.hasUi === true || projects.some(project => project.hasUi === true) ? true : undefined
+      ),
+    },
     projects,
     prdsByProjectId,
     warnings,
@@ -490,7 +497,11 @@ function mergeLlmNormalizedBundle(
   return {
     concept: {
       ...concept,
-      hasUi: concept.hasUi === false ? false : (projects.length > 0 ? projects : current.projects).some(project => project.hasUi === true),
+      hasUi: concept.hasUi === false ? false : (
+        concept.hasUi === true || (projects.length > 0 ? projects : current.projects).some(project => project.hasUi === true)
+          ? true
+          : undefined
+      ),
     },
     projects: projects.length > 0 ? projects : current.projects,
     prdsByProjectId: { ...current.prdsByProjectId, ...prdsByProjectId },

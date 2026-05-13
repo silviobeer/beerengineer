@@ -662,41 +662,48 @@ test("runWorkflow still enters design-prep when concept.hasUi is ambiguous or om
     seedCleanGitRepo(repoRoot)
 
     for (const conceptHasUi of [undefined, null, "false"] as const) {
-      const runIdSuffix = conceptHasUi === undefined ? "missing" : String(conceptHasUi).replaceAll(/[^a-z0-9]+/gi, "-")
-      const ctx = {
-        workspaceId: `ambiguous-ui-i-${runIdSuffix}`,
-        workspaceRoot: repoRoot,
-        runId: `run-ambiguous-${runIdSuffix}`,
-      }
-      seedBrainstormArtifacts(ctx, { conceptHasUi, projectHasUi: true })
+      for (const projectHasUi of [false, true] as const) {
+        const runIdSuffix = conceptHasUi === undefined ? "missing" : String(conceptHasUi).replaceAll(/[^a-z0-9]+/gi, "-")
+        const projectSuffix = projectHasUi ? "project-ui" : "project-backend"
+        const ctx = {
+          workspaceId: `ambiguous-ui-i-${runIdSuffix}-${projectSuffix}`,
+          workspaceRoot: repoRoot,
+          runId: `run-ambiguous-${runIdSuffix}-${projectSuffix}`,
+        }
+        seedBrainstormArtifacts(ctx, { conceptHasUi, projectHasUi })
 
-      const { io, events } = makeIO({
-        brainstorm: [],
-        requirements: [
-          "Document backend API behavior.",
-          "Keep the validation path unchanged.",
-          "Sharpen the edge-case AC.",
-        ],
-        qa: "accept",
-        mergeGate: "promote",
-      })
+        const { io, events } = makeIO({
+          brainstorm: [],
+          requirements: [
+            "Document backend API behavior.",
+            "Keep the validation path unchanged.",
+            "Sharpen the edge-case AC.",
+          ],
+          qa: "accept",
+          mergeGate: "promote",
+        })
 
-      await runWithWorkflowIO(io, () =>
-        runWithActiveRun({ runId: ctx.runId, itemId: `I-${runIdSuffix}`, title: "Ambiguous UI" }, () =>
-          runWorkflow(
-            { id: `I-${runIdSuffix}`, title: "Ambiguous UI", description: "Keep design prep" },
-            {
-              workspaceRoot: repoRoot,
-              resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" },
-            },
+        await runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: ctx.runId, itemId: `I-${runIdSuffix}-${projectSuffix}`, title: "Ambiguous UI" }, () =>
+            runWorkflow(
+              { id: `I-${runIdSuffix}-${projectSuffix}`, title: "Ambiguous UI", description: "Keep design prep" },
+              {
+                workspaceRoot: repoRoot,
+                resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" },
+              },
+            ),
           ),
-        ),
-      )
+        )
 
-      const startedStages = events
-        .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
-        .map(event => event.stageKey)
-      assert.equal(startedStages[0], "visual-companion", `expected design-prep for concept.hasUi=${String(conceptHasUi)}`)
+        const startedStages = events
+          .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+          .map(event => event.stageKey)
+        assert.equal(
+          startedStages[0],
+          "visual-companion",
+          `expected design-prep for concept.hasUi=${String(conceptHasUi)} and project.hasUi=${String(projectHasUi)}`,
+        )
+      }
     }
   })
 })
