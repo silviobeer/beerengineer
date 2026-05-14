@@ -1,9 +1,10 @@
 import type { ServerResponse } from "node:http"
 import { URL } from "node:url"
 
-import { json, requireCsrfToken } from "./http.js"
+import { json, requireCsrfToken, requireLoopbackOrToken } from "./http.js"
 import { buildHealthResponse, buildReadyResponse } from "./health.js"
 import { handleCreatePreparedImportItem, handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
+import { handleListPrompts } from "./routes/prompts.js"
 import {
   handleAnswer,
   handleClearAndFreshRecovery,
@@ -104,6 +105,7 @@ const OPENAPI_ROUTE = {
 const TOP_LEVEL_ROUTE_KEYS = [
   "GET /runs",
   "POST /runs",
+  "GET /prompts",
   "POST /items/import-prepared",
   "GET /board",
   "GET /setup/status",
@@ -294,6 +296,7 @@ function topLevelRouteHandlers(
   return {
     "GET /runs": () => handleListRuns(deps.repos, context.res),
     "POST /runs": () => handleCreateRun(deps.repos, context.req, context.res, payload => deps.board.broadcastItemColumnChanged(payload)),
+    "GET /prompts": () => handleListPrompts(deps.repos, context.url, context.res),
     "POST /items/import-prepared": () => handleCreatePreparedImportItem(deps.repos, context.req, context.res, payload => deps.board.broadcastItemColumnChanged(payload)),
     "GET /board": () => handleGetBoard(deps.db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
@@ -366,8 +369,10 @@ function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Ar
     { ...RUN_ROUTE_DEFINITIONS[10], handle: runId => handleResumeRun(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
     { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleReplanRun(deps.repos, context.req, context.res, runId) },
     { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
-    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleMutateRecovery(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleRetryRetainedRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleClearAndFreshRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[15], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[16], handle: runId => handleMutateRecovery(deps.repos, context.req, context.res, runId) },
   ]
 }
 
@@ -546,6 +551,11 @@ export function registerApiRoutes(
     const context: RouteContext = { req, res, url, path, appConfig }
 
     if (await handlePreCsrfRoutes(context, deps)) return
+
+    if (context.path === "/prompts" && context.req.method === "GET" && !requireLoopbackOrToken(req, deps.apiToken)) {
+      json(res, 403, { error: "forbidden", code: "non_local_mutation_forbidden" })
+      return
+    }
 
     if (!requireCsrfToken(req, deps.apiToken)) {
       json(res, 403, { error: "forbidden", code: "non_local_mutation_forbidden" })

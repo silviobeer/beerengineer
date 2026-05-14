@@ -6,11 +6,13 @@ import { test } from "node:test"
 
 import {
   mutateRunRecoveryActionInProcess,
+  projectRunRecoverySurface,
   type RunRecoveryActionRequest,
 } from "../src/core/runService.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { projectStageLogRow } from "../src/core/messagingProjection.js"
+import { buildSupabaseProvisioningRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 
 type OpenApiDocument = {
   components?: {
@@ -224,6 +226,83 @@ test("REQ-2 skip_current_stage rejects ineligible requests with specific reasons
   })
 })
 
+test("REQ-2 recovery read projection advertises canonical clear actions from current latest state", () => {
+  withRepos(repos => {
+    const { workspace, run } = createRunFixture(repos)
+    repos.updateRun(run.id, {
+      status: "blocked",
+      recovery_status: "blocked",
+      recovery_scope: "run",
+      recovery_scope_ref: null,
+      recovery_summary: "Recovery is available.",
+    })
+    repos.setRunRecoveryPayloadJson(run.id, buildSupabaseProvisioningRecoveryPayload({
+      runId: run.id,
+      workspaceId: workspace.id,
+      workspaceKey: workspace.key,
+      projectRef: "proj_demo",
+      waveId: "W1",
+      waveNumber: 1,
+      failedStep: "validate",
+      failureCause: "Validation failed before any retained branch was selected.",
+      userMessage: "Operator recovery is required.",
+    }))
+    repos.setRunRecoverySupabaseLifecycleState(run.id, "provisioning")
+
+    assert.deepEqual(projectRunRecoverySurface(repos, repos.getRun(run.id)!), {
+      recoveryStatus: null,
+      supabaseBranchLifecycleState: "provisioning",
+      availableActions: [
+        "recover_fresh_branch",
+        "clear_recovery_payload",
+        "clear_supabase_branch_lifecycle_state",
+      ],
+    })
+  })
+})
+
+test("REQ-2 repeated recover_fresh_branch becomes a canonical noop instead of a conflict", () => {
+  withRepos(repos => {
+    const { workspace, run } = createRunFixture(repos)
+    repos.updateRun(run.id, {
+      status: "blocked",
+      recovery_status: "blocked",
+      recovery_scope: "run",
+      recovery_scope_ref: null,
+      recovery_summary: "Recovery is available.",
+    })
+    repos.setRunRecoveryPayloadJson(run.id, buildSupabaseProvisioningRecoveryPayload({
+      runId: run.id,
+      workspaceId: workspace.id,
+      workspaceKey: workspace.key,
+      projectRef: "proj_demo",
+      waveId: "W1",
+      waveNumber: 1,
+      failedStep: "validate",
+      failureCause: "Validation failed before any retained branch was selected.",
+      userMessage: "Operator recovery is required.",
+    }))
+    repos.setRunRecoverySupabaseLifecycleState(run.id, "provisioning")
+
+    assert.equal(mutate(repos, run.id, { action: "recover_fresh_branch" }).ok, true)
+
+    assert.deepEqual(mutate(repos, run.id, { action: "recover_fresh_branch" }), {
+      ok: true,
+      runId: run.id,
+      action: "recover_fresh_branch",
+      outcome: "noop",
+      reason: "already_on_fresh_path",
+      latestState: {
+        recoveryPayloadJson: repos.getRun(run.id)?.recovery_payload_json ?? null,
+        supabaseBranchRef: null,
+        supabaseBranchLifecycleState: "provisioning",
+      },
+      recoveryStatus: "fresh_path_recovery",
+      supabaseBranchLifecycleState: "fresh_path_recovery",
+    })
+  })
+})
+
 test("SETUP-1 runs route delegates recovery mutations to the authoritative service seam instead of mutating repos directly", () => {
   const runs = readFileSync(new URL("../src/api/routes/runs.ts", import.meta.url), "utf8")
   const start = runs.indexOf("export async function handleMutateRecovery")
@@ -281,6 +360,10 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   const outcomes = result.oneOf?.flatMap(option => option.properties?.outcome?.enum ?? []) ?? []
   assert.ok(outcomes.includes("accepted"))
   assert.ok(outcomes.includes("noop"))
+  const actionEnums = result.oneOf?.flatMap(option => option.properties?.action?.enum ?? []) ?? []
+  assert.ok(actionEnums.includes("recover_fresh_branch"))
+  assert.ok(actionEnums.includes("retry_retained"))
+  assert.ok(actionEnums.includes("clear_recovery_payload"))
   const rejectionErrors = rejection.properties?.error?.enum ?? []
   assert.ok(rejectionErrors.includes("recovery_action_invalid_request"))
   const rejectionReasons = rejection.properties?.reason?.enum ?? []
@@ -300,6 +383,9 @@ test("SETUP-1 OpenAPI and prose reserve the single recovery-action family and it
   assert.match(docs, /skip_current_stage` is offered only when the run has an active non-terminal current stage that is not already recorded as skipped and no live worker still holds the stage lease; ineligible requests reject with specific reasons such as `no_current_stage`, `current_stage_not_active`, `current_stage_worker_active`, `current_stage_terminal`, and `current_stage_already_skipped`\./)
   assert.match(docs, /The implemented named path-changing actions are `recover_fresh_branch`, `retry_retained`, and `clear_and_fresh`\./)
   assert.match(docs, /the contract-defined post-action values are `fresh_path_recovery` and `retained_path_recovery`\./)
+  assert.match(docs, /When no recovery action is currently available, `GET \/runs\/:id\/recovery` still returns an explicit recovery object with `availableActions: \[\]` so consumers do not have to infer emptiness from `null`\./)
+  assert.match(docs, /The recovery read surface also advertises the narrow clear actions whenever their target latest-state field is still present on the run\./)
+  assert.match(docs, /Repeating `recover_fresh_branch` or `clear_and_fresh` after the run is already on the fresh path returns `outcome: "noop"` with `reason: "already_on_fresh_path"`; repeating `retry_retained` after the retained choice is already recorded returns `outcome: "noop"` with `reason: "already_on_retained_path"`\./)
   assert.match(docs, /Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear\./)
   assert.match(docs, /Implemented clear actions accept only `\{ action \}`; extra mutation fields or attempts to clear additional fields in the same request are rejected with `400 bad_request`, `reason: "unexpected_fields"`, and no state change\./)
   assert.match(docs, /Incompatible named requests are rejected with `409` and the machine-readable reason `incompatible_recovery_state`, leaving the run unchanged\./)

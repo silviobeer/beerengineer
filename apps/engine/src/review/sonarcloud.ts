@@ -222,6 +222,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
   return withBranchLock(`${sonar.projectKey}:${input.storyBranch}`, async () => {
     const scan = await runCommand(command, input.workspaceRoot, {
       env: {
+        ...process.env,
         SONAR_TOKEN: token,
       },
     })

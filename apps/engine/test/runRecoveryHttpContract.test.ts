@@ -393,9 +393,19 @@ test("REQ-1 TC-REQ-1-01/05: recovery surface advertises only compatible actions 
     const retained = await getRecovery(base, retainedRunId) as { recovery: { availableActions: string[] } }
     const incompatible = await getRecovery(base, incompatibleRunId) as { recovery: { availableActions: string[] } }
 
-    assert.deepEqual(fresh.recovery.availableActions, ["recover_fresh_branch"])
-    assert.deepEqual(retained.recovery.availableActions, ["retry_retained", "clear_and_fresh"])
-    assert.deepEqual(incompatible.recovery.availableActions, [])
+    assert.deepEqual(fresh.recovery.availableActions, [
+      "recover_fresh_branch",
+      "clear_recovery_payload",
+      "clear_supabase_branch_lifecycle_state",
+    ])
+    assert.deepEqual(retained.recovery.availableActions, [
+      "retry_retained",
+      "clear_and_fresh",
+      "clear_recovery_payload",
+      "clear_supabase_branch_ref",
+      "clear_supabase_branch_lifecycle_state",
+    ])
+    assert.deepEqual(incompatible.recovery.availableActions, ["clear_recovery_payload"])
 
     const retainedBefore = JSON.stringify(await getRecovery(base, retainedRunId))
     const rejectedFreshOnRetained = await postRecovery(base, retainedRunId, { action: "recover_fresh_branch" })
@@ -598,14 +608,40 @@ test("REQ-2 TC-REQ-2-01: recovery read surface offers skip_current_stage only fo
     await waitForHealth(base)
 
     const eligible = await getRecovery(base, fixture.eligibleRunId) as { recovery: { availableActions: string[] } }
-    const noCurrent = await getRecovery(base, fixture.noCurrentRunId) as { recovery: null }
+    const noCurrent = await getRecovery(base, fixture.noCurrentRunId) as {
+      recovery: {
+        status: string | null
+        scope: string | null
+        scopeRef: string | null
+        summary: string | null
+        recoveryStatus: string | null
+        supabaseBranchLifecycleState: string | null
+        availableActions: string[]
+        recovery_user_message: string | null
+        decision: unknown
+        resumable: boolean
+        remediations: unknown[]
+      }
+    }
     const inactive = await getRecovery(base, fixture.inactiveRunId) as { recovery: { availableActions: string[] } }
     const activeLease = await getRecovery(base, fixture.activeLeaseRunId) as { recovery: { availableActions: string[] } }
     const terminal = await getRecovery(base, fixture.terminalRunId) as { recovery: { availableActions: string[] } }
     const skipped = await getRecovery(base, fixture.skippedRunId) as { recovery: { availableActions: string[] } }
 
     assert.deepEqual(eligible.recovery.availableActions, ["skip_current_stage"])
-    assert.equal(noCurrent.recovery, null)
+    assert.deepEqual(noCurrent.recovery, {
+      status: null,
+      scope: null,
+      scopeRef: null,
+      summary: null,
+      recoveryStatus: null,
+      supabaseBranchLifecycleState: null,
+      availableActions: [],
+      recovery_user_message: null,
+      decision: null,
+      resumable: true,
+      remediations: [],
+    })
     assert.deepEqual(inactive.recovery.availableActions, [])
     assert.deepEqual(activeLease.recovery.availableActions, [])
     assert.deepEqual(terminal.recovery.availableActions, [])
@@ -810,6 +846,9 @@ test("REQ-3 TC-REQ3-01/02: each clear action exists as its own HTTP action and m
     for (const testCase of CLEAR_ACTION_CASES) {
       const runId = fixture.populatedRunIds[testCase.action]
       const before = await getSupportedRecoveryState(base, runId)
+      const beforeRead = await getRecovery(base, runId) as { recovery: { availableActions: string[] } }
+
+      assert.ok(beforeRead.recovery.availableActions.includes(testCase.action), `${testCase.action} should be advertised before mutation`)
 
       const accepted = await postRecovery(base, runId, { action: testCase.action })
       assert.equal(accepted.status, 200)
@@ -826,7 +865,9 @@ test("REQ-3 TC-REQ3-01/02: each clear action exists as its own HTTP action and m
       })
 
       const after = await getSupportedRecoveryState(base, runId)
+      const afterRead = await getRecovery(base, runId) as { recovery: { availableActions: string[] } }
       assert.equal(after[testCase.targetKey], null)
+      assert.ok(!afterRead.recovery.availableActions.includes(testCase.action), `${testCase.action} should stop being advertised after mutation`)
 
       for (const key of Object.keys(before) as Array<keyof SupportedRecoveryState>) {
         if (key === testCase.targetKey) continue
@@ -872,6 +913,8 @@ test("REQ-3 TC-REQ3-03/04: clear actions are idempotent both after a successful 
 
       const alreadyClearRunId = fixture.alreadyClearRunIds[testCase.action]
       const beforeNoop = await getSupportedRecoveryState(base, alreadyClearRunId)
+      const beforeNoopRead = await getRecovery(base, alreadyClearRunId) as { recovery: { availableActions: string[] } }
+      assert.ok(!beforeNoopRead.recovery.availableActions.includes(testCase.action), `${testCase.action} should not be advertised when already clear`)
       const firstNoop = await postRecovery(base, alreadyClearRunId, { action: testCase.action })
       assert.equal(firstNoop.status, 200)
       assert.deepEqual(firstNoop.json, {
@@ -888,6 +931,42 @@ test("REQ-3 TC-REQ3-03/04: clear actions are idempotent both after a successful 
       })
       assert.deepEqual(await getSupportedRecoveryState(base, alreadyClearRunId), beforeNoop)
     }
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 TC-REQ-2-12: repeating recover_fresh_branch returns an explicit noop and leaves state unchanged", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-run-recovery-http-"))
+  const dbPath = join(dir, "db.sqlite")
+  const { freshRunId } = seedRecoveryFixtures(dbPath)
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+
+  try {
+    await waitForHealth(base)
+
+    const first = await postRecovery(base, freshRunId, { action: "recover_fresh_branch" })
+    assert.equal(first.status, 200)
+    const afterFirst = JSON.stringify(await getRecovery(base, freshRunId))
+
+    const second = await postRecovery(base, freshRunId, { action: "recover_fresh_branch" })
+    assert.equal(second.status, 200)
+    assert.deepEqual(second.json, {
+      ok: true,
+      runId: freshRunId,
+      action: "recover_fresh_branch",
+      outcome: "noop",
+      reason: "already_on_fresh_path",
+      latestState: {
+        recoveryPayloadJson: (await getSupportedRecoveryState(base, freshRunId)).recovery_payload_json,
+        supabaseBranchRef: null,
+        supabaseBranchLifecycleState: "provisioning",
+      },
+      recoveryStatus: FRESH_PATH_RECOVERY,
+      supabaseBranchLifecycleState: FRESH_PATH_RECOVERY,
+    })
+    assert.equal(JSON.stringify(await getRecovery(base, freshRunId)), afterFirst)
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
