@@ -13,7 +13,9 @@ import { initDatabase } from "../src/db/connection.js"
 const TEST_API_TOKEN = "test-token"
 
 function formatBaseUrl(host: string, port: number): string {
-  return host.includes(":") ? `http://[${host}]:${port}` : `http://${host}:${port}`
+  if (!host.includes(":")) return `http://${host}:${port}`
+  const encodedHost = host.includes("%") ? host.replaceAll("%", "%25") : host
+  return `http://[${encodedHost}]:${port}`
 }
 
 async function reservePort(host: string): Promise<number> {
@@ -31,15 +33,21 @@ async function reservePort(host: string): Promise<number> {
   })
 }
 
-function findNonLoopbackAddress(): string {
-  for (const entries of Object.values(networkInterfaces())) {
+function findNonLoopbackAddress(family: "IPv4" | "IPv6"): string {
+  let linkLocalIpv6: string | null = null
+  for (const [name, entries] of Object.entries(networkInterfaces())) {
     for (const entry of entries ?? []) {
       if (entry.internal) continue
-      if (entry.family !== "IPv4") continue
+      if (entry.family !== family) continue
+      if (family === "IPv6" && entry.address.startsWith("fe80:")) {
+        linkLocalIpv6 ??= `${entry.address}%${name}`
+        continue
+      }
       return entry.address
     }
   }
-  throw new Error("no non-loopback IPv4 address available for auth boundary test")
+  if (family === "IPv6" && linkLocalIpv6) return linkLocalIpv6
+  throw new Error(`no non-loopback ${family} address available for auth boundary test`)
 }
 
 type StartServerOptions = {
@@ -143,6 +151,33 @@ async function postJsonViaHttp(
     req.once("error", reject)
     req.end(payload)
   })
+}
+
+async function initializeSetup(base: string): Promise<void> {
+  const initialized = await fetch(`${base}/setup/init`, { method: "POST" })
+  assert.equal(initialized.status, 200)
+}
+
+async function readVisibleCounts(base: string): Promise<{ runs: number; items: number }> {
+  const [runsRes, itemsRes] = await Promise.all([
+    fetch(`${base}/runs`),
+    fetch(`${base}/items`),
+  ])
+  assert.equal(runsRes.status, 200)
+  assert.equal(itemsRes.status, 200)
+  const runsBody = await runsRes.json() as { runs?: unknown[] }
+  const itemsBody = await itemsRes.json() as { items?: unknown[] }
+  return {
+    runs: runsBody.runs?.length ?? 0,
+    items: itemsBody.items?.length ?? 0,
+  }
+}
+
+function assertRunCreationAccepted(body: unknown): void {
+  const payload = body as { runId?: string; itemId?: string; status?: string }
+  assert.match(payload.runId ?? "", /\S+/)
+  assert.match(payload.itemId ?? "", /\S+/)
+  assert.match(payload.status ?? "", /\S+/)
 }
 
 test("REQ-1 POST /setup/init succeeds for localhost operators without token management", async () => {
@@ -431,7 +466,7 @@ test("REQ-1 no-token localhost setup and run creation also work over IPv6 loopba
 test("REQ-1 non-loopback callers stay blocked without a token even when Host claims localhost", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-runs-non-loopback-"))
   const dbPath = join(dir, "server.sqlite")
-  const nonLoopbackAddress = findNonLoopbackAddress()
+  const nonLoopbackAddress = findNonLoopbackAddress("IPv4")
   initDatabase(dbPath).close()
   const { proc, base } = await startServer({
     BEERENGINEER_UI_DB_PATH: dbPath,
@@ -466,6 +501,207 @@ test("REQ-1 non-loopback callers stay blocked without a token even when Host cla
     assert.deepEqual(JSON.parse(spoofed.body), {
       error: "forbidden",
       code: "non_local_mutation_forbidden",
+    })
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 IPv4 non-loopback POST /runs rejects missing compatibility tokens without creating state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-runs-compat-ipv4-missing-"))
+  const dbPath = join(dir, "server.sqlite")
+  const nonLoopbackAddress = findNonLoopbackAddress("IPv4")
+  initDatabase(dbPath).close()
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, {
+    bindHost: "0.0.0.0",
+    connectHost: nonLoopbackAddress,
+  })
+  try {
+    const port = new URL(base).port
+    await waitForHealth(base)
+    await initializeSetup(`http://127.0.0.1:${port}`)
+    const before = await readVisibleCounts(`http://127.0.0.1:${port}`)
+
+    const rejected = await postJson(base, "/runs", {
+      title: "IPv4 missing token",
+      description: "should be blocked",
+    })
+
+    assert.equal(rejected.status, 403)
+    assert.deepEqual(await rejected.json(), {
+      error: "forbidden",
+      code: "non_local_mutation_forbidden",
+    })
+    assert.deepEqual(await readVisibleCounts(`http://127.0.0.1:${port}`), before)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 IPv4 non-loopback POST /runs rejects incorrect tokens and later accepts the configured token", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-runs-compat-ipv4-token-"))
+  const dbPath = join(dir, "server.sqlite")
+  const nonLoopbackAddress = findNonLoopbackAddress("IPv4")
+  initDatabase(dbPath).close()
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, {
+    bindHost: "0.0.0.0",
+    connectHost: nonLoopbackAddress,
+  })
+  try {
+    const port = new URL(base).port
+    await waitForHealth(base)
+    await initializeSetup(`http://127.0.0.1:${port}`)
+    const before = await readVisibleCounts(`http://127.0.0.1:${port}`)
+
+    const rejected = await postJson(
+      base,
+      "/runs",
+      { title: "IPv4 wrong token", description: "should be blocked" },
+      { "x-beerengineer-token": "wrong-token" },
+    )
+    assert.equal(rejected.status, 403)
+    assert.deepEqual(await rejected.json(), {
+      error: "forbidden",
+      code: "non_local_mutation_forbidden",
+    })
+    assert.deepEqual(await readVisibleCounts(`http://127.0.0.1:${port}`), before)
+
+    const accepted = await postJson(
+      base,
+      "/runs",
+      { title: "IPv4 correct token", description: "should be accepted" },
+      { "x-beerengineer-token": TEST_API_TOKEN },
+    )
+    assert.equal(accepted.status, 202)
+    assertRunCreationAccepted(await accepted.json())
+    assert.deepEqual(await readVisibleCounts(`http://127.0.0.1:${port}`), {
+      runs: before.runs + 1,
+      items: before.items + 1,
+    })
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 IPv6 loopback POST /runs still accepts both current and stale compatibility headers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-runs-compat-loopback-ipv6-"))
+  const dbPath = join(dir, "server.sqlite")
+  initDatabase(dbPath).close()
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, { bindHost: "::1" })
+  try {
+    await waitForHealth(base)
+    await initializeSetup(base)
+    const before = await readVisibleCounts(base)
+
+    const withCurrentToken = await postJson(
+      base,
+      "/runs",
+      { title: "IPv6 loopback current token", description: "compatibility path" },
+      { "x-beerengineer-token": TEST_API_TOKEN },
+    )
+    const withStaleToken = await postJson(
+      base,
+      "/runs",
+      { title: "IPv6 loopback stale token", description: "compatibility path" },
+      { "x-beerengineer-token": "stale-token" },
+    )
+
+    assert.equal(withCurrentToken.status, 202)
+    assert.equal(withStaleToken.status, 202)
+    assertRunCreationAccepted(await withCurrentToken.json())
+    assertRunCreationAccepted(await withStaleToken.json())
+    assert.deepEqual(await readVisibleCounts(base), {
+      runs: before.runs + 2,
+      items: before.items + 2,
+    })
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 IPv6 non-loopback POST /runs rejects missing compatibility tokens without creating state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-runs-compat-ipv6-missing-"))
+  const dbPath = join(dir, "server.sqlite")
+  const nonLoopbackAddress = findNonLoopbackAddress("IPv6")
+  initDatabase(dbPath).close()
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, {
+    bindHost: "::",
+    connectHost: nonLoopbackAddress,
+  })
+  try {
+    const port = new URL(base).port
+    await waitForHealth(base)
+    await initializeSetup(`http://[::1]:${port}`)
+    const before = await readVisibleCounts(`http://[::1]:${port}`)
+
+    const rejected = await postJson(base, "/runs", {
+      title: "IPv6 missing token",
+      description: "should be blocked",
+    })
+
+    assert.equal(rejected.status, 403)
+    assert.deepEqual(await rejected.json(), {
+      error: "forbidden",
+      code: "non_local_mutation_forbidden",
+    })
+    assert.deepEqual(await readVisibleCounts(`http://[::1]:${port}`), before)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 IPv6 non-loopback POST /runs accepts the configured compatibility token", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-runs-compat-ipv6-token-"))
+  const dbPath = join(dir, "server.sqlite")
+  const nonLoopbackAddress = findNonLoopbackAddress("IPv6")
+  initDatabase(dbPath).close()
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, {
+    bindHost: "::",
+    connectHost: nonLoopbackAddress,
+  })
+  try {
+    const port = new URL(base).port
+    await waitForHealth(base)
+    await initializeSetup(`http://[::1]:${port}`)
+    const before = await readVisibleCounts(`http://[::1]:${port}`)
+
+    const accepted = await postJson(
+      base,
+      "/runs",
+      { title: "IPv6 correct token", description: "should be accepted" },
+      { "x-beerengineer-token": TEST_API_TOKEN },
+    )
+
+    assert.equal(accepted.status, 202)
+    assertRunCreationAccepted(await accepted.json())
+    assert.deepEqual(await readVisibleCounts(`http://[::1]:${port}`), {
+      runs: before.runs + 1,
+      items: before.items + 1,
     })
   } finally {
     await stopServer(proc)
