@@ -23,6 +23,7 @@ import {
   mutateRunRecoveryActionInProcess,
   projectRunRecoverySurface,
   replanRunInProcess,
+  skipCurrentStageInProcess,
   retryRetainedRunInProcess,
   resumeRunInProcess,
   startRunFromIdea,
@@ -53,6 +54,7 @@ function contentTypeFor(path: string): string {
 type ResumeRunFailure = Exclude<Awaited<ReturnType<typeof resumeRunInProcess>>, { ok: true }>
 type RetryRetainedRunFailure = Exclude<Awaited<ReturnType<typeof retryRetainedRunInProcess>>, { ok: true }>
 type ClearAndFreshRunFailure = Exclude<Awaited<ReturnType<typeof clearAndFreshRunInProcess>>, { ok: true }>
+type SkipCurrentStageFailure = Exclude<ReturnType<typeof skipCurrentStageInProcess>, { ok: true }>
 
 function resumeFailureBody(result: ResumeRunFailure): Record<string, unknown> {
   if (isWorkflowCapabilityBlockedResult(result)) {
@@ -109,6 +111,18 @@ function clearAndFreshFailureBody(result: ClearAndFreshRunFailure): Record<strin
       code: result.code,
       message: result.message,
       currentState: result.currentState,
+    }
+  }
+  return { error: result.error }
+}
+
+function skipCurrentStageFailureBody(result: SkipCurrentStageFailure): Record<string, unknown> {
+  if ("code" in result) {
+    return {
+      error: result.error,
+      code: result.code,
+      message: result.message,
+      reason: result.reason,
     }
   }
   return { error: result.error }
@@ -499,6 +513,25 @@ export async function handleClearAndFreshRecovery(
     runId: result.runId,
     status: run?.status ?? "running",
     recoveryStatus: run?.recovery_status ?? null,
+  })
+}
+
+export async function handleSkipCurrentStageRecovery(
+  repos: Repos,
+  _req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const result = skipCurrentStageInProcess(repos, { runId, onItemColumnChanged })
+  if (!result.ok) {
+    return json(res, result.status, skipCurrentStageFailureBody(result))
+  }
+  json(res, 200, {
+    ok: true,
+    runId: result.runId,
+    status: result.status,
+    recoveryStatus: result.recoveryStatus,
   })
 }
 

@@ -111,6 +111,42 @@ function seedCleanGitRepo(root: string): void {
   spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: root, encoding: "utf8" })
 }
 
+function seedBrainstormArtifacts(
+  ctx: { workspaceId: string; workspaceRoot: string; runId: string },
+  options: { conceptHasUi?: boolean | null | string; projectHasUi?: boolean },
+): void {
+  const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
+  mkdirSync(brainstormDir, { recursive: true })
+  const concept = {
+    summary: "Backend-only import",
+    problem: "Avoid design-prep for backend-only scope",
+    users: ["Operator"],
+    constraints: ["No UI work"],
+  } as {
+    summary: string
+    problem: string
+    users: string[]
+    constraints: string[]
+    hasUi?: boolean | null | string
+  }
+  if (options.conceptHasUi !== undefined) concept.hasUi = options.conceptHasUi
+  writeFileSync(join(brainstormDir, "concept.json"), JSON.stringify(concept, null, 2))
+  writeFileSync(join(brainstormDir, "projects.json"), JSON.stringify([
+    {
+      id: "P01",
+      name: "Core API",
+      description: "Backend workflow",
+      hasUi: options.projectHasUi === true,
+      concept: {
+        summary: "Core API",
+        problem: "Need backend changes",
+        users: ["Operator"],
+        constraints: ["No UI work"],
+      },
+    },
+  ], null, 2))
+}
+
 test("workflowLlmForWorkspace points all workflow LLM roles at the item worktree", () => {
   const rootConfig = {
     workspaceRoot: "/repo",
@@ -570,6 +606,151 @@ test("runWorkflow blocks resume when design-prep freeze and brainstorm project i
     )
 
     assert.ok(events.some(event => event.type === "run_blocked"))
+  })
+})
+
+test("runWorkflow routes explicit backend-only brainstorm artifacts directly to requirements", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    seedCleanGitRepo(repoRoot)
+
+    const ctx = { workspaceId: "backend-only-i-1", workspaceRoot: repoRoot, runId: "run-backend-only" }
+    seedBrainstormArtifacts(ctx, { conceptHasUi: false, projectHasUi: true })
+
+    const { io, events, promptLog } = makeIO({
+      brainstorm: [],
+      requirements: [
+        "Document backend API behavior.",
+        "Keep the validation path unchanged.",
+        "Sharpen the edge-case AC.",
+      ],
+      qa: "accept",
+      mergeGate: "promote",
+    })
+
+    await runWithWorkflowIO(io, () =>
+      runWithActiveRun({ runId: ctx.runId, itemId: "I-1", title: "Backend Only" }, () =>
+        runWorkflow(
+          { id: "I-1", title: "Backend Only", description: "Skip design prep" },
+          {
+            workspaceRoot: repoRoot,
+            resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" },
+          },
+        ),
+      ),
+    )
+
+    const startedStages = events
+      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+      .map(event => event.stageKey)
+    assert.equal(startedStages[0], "requirements")
+    assert.equal(startedStages.includes("visual-companion"), false)
+    assert.equal(startedStages.includes("frontend-design"), false)
+    assert.equal(
+      promptLog.some(prompt => /wireframes or mockups|design system, brand direction/i.test(prompt)),
+      false,
+      "backend-only items must not prompt for design-prep confirmation",
+    )
+  })
+})
+
+test("runWorkflow still enters design-prep when concept.hasUi is ambiguous or omitted", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    seedCleanGitRepo(repoRoot)
+
+    for (const conceptHasUi of [undefined, null, "false"] as const) {
+      for (const projectHasUi of [false, true] as const) {
+        const runIdSuffix = conceptHasUi === undefined ? "missing" : String(conceptHasUi).replaceAll(/[^a-z0-9]+/gi, "-")
+        const projectSuffix = projectHasUi ? "project-ui" : "project-backend"
+        const ctx = {
+          workspaceId: `ambiguous-ui-i-${runIdSuffix}-${projectSuffix}`,
+          workspaceRoot: repoRoot,
+          runId: `run-ambiguous-${runIdSuffix}-${projectSuffix}`,
+        }
+        seedBrainstormArtifacts(ctx, { conceptHasUi, projectHasUi })
+
+        const { io, events } = makeIO({
+          brainstorm: [],
+          requirements: [
+            "Document backend API behavior.",
+            "Keep the validation path unchanged.",
+            "Sharpen the edge-case AC.",
+          ],
+          qa: "accept",
+          mergeGate: "promote",
+        })
+
+        await runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: ctx.runId, itemId: `I-${runIdSuffix}-${projectSuffix}`, title: "Ambiguous UI" }, () =>
+            runWorkflow(
+              { id: `I-${runIdSuffix}-${projectSuffix}`, title: "Ambiguous UI", description: "Keep design prep" },
+              {
+                workspaceRoot: repoRoot,
+                resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" },
+              },
+            ),
+          ),
+        )
+
+        const startedStages = events
+          .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+          .map(event => event.stageKey)
+        assert.equal(
+          startedStages[0],
+          "visual-companion",
+          `expected design-prep for concept.hasUi=${String(conceptHasUi)} and project.hasUi=${String(projectHasUi)}`,
+        )
+      }
+    }
+  })
+})
+
+test("runWorkflow re-entry at visual-companion still bypasses design-prep when concept.hasUi is false", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    seedCleanGitRepo(repoRoot)
+
+    const ctx = { workspaceId: "backend-only-rerun-i-rerun", workspaceRoot: repoRoot, runId: "run-backend-only-rerun" }
+    seedBrainstormArtifacts(ctx, { conceptHasUi: false, projectHasUi: true })
+
+    const { io, events, promptLog } = makeIO({
+      brainstorm: [],
+      requirements: [
+        "Document backend API behavior.",
+        "Keep the validation path unchanged.",
+        "Sharpen the edge-case AC.",
+      ],
+      qa: "accept",
+      mergeGate: "promote",
+    })
+
+    await runWithWorkflowIO(io, () =>
+      runWithActiveRun({ runId: ctx.runId, itemId: "I-rerun", title: "Backend Only Rerun" }, () =>
+        runWorkflow(
+          { id: "I-rerun", title: "Backend Only Rerun", description: "Skip design prep on rerun" },
+          {
+            workspaceRoot: repoRoot,
+            resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "visual-companion" },
+          },
+        ),
+      ),
+    )
+
+    const startedStages = events
+      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+      .map(event => event.stageKey)
+    assert.equal(startedStages[0], "requirements")
+    assert.equal(startedStages.includes("visual-companion"), false)
+    assert.equal(startedStages.includes("frontend-design"), false)
+    assert.equal(
+      promptLog.some(prompt => /wireframes or mockups|design system, brand direction/i.test(prompt)),
+      false,
+      "backend-only reruns must not re-enter design-prep prompts",
+    )
   })
 })
 

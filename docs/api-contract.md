@@ -120,6 +120,11 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - Those narrow actions persist latest-state changes on the `runs` row only, scoped to `recovery_payload_json`, `supabase_branch_ref`, and `supabase_branch_lifecycle_state`.
   - Implemented clear actions return `outcome: "accepted"` when they changed latest state and `outcome: "noop"` with `reason: "already_clear"` when the targeted field was already clear.
   - Implemented clear actions accept only `{ action }`; extra mutation fields or attempts to clear additional fields in the same request are rejected with `400 bad_request`, `reason: "unexpected_fields"`, and no state change.
+- `POST /runs/:id/recovery/skip-current-stage`
+  - Convenience shortcut for `POST /runs/:id/recovery` with `{ action: "skip_current_stage" }`.
+  - Request: no request body.
+  - Response: `{ ok, runId, status, recoveryStatus }`.
+  - `409 { error: "skip_current_stage_not_allowed", code: "skip_current_stage_not_allowed", message, reason }` — same eligibility rules as the canonical endpoint.
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
@@ -131,7 +136,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - `409 { error: "replan_plan_missing", message }` when the run has not yet produced a persisted plan.
   - `409 { error: "replan_run_active", currentStatus, workerHeartbeatAt, hint }` when the run is still active; `hint` is the pause-first guidance and `workerHeartbeatAt` is an ISO 8601 UTC timestamp or `null`.
 
-`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text. `GET /runs/:id` also exposes `execution_harness_selections: Array<{ role, harness, runtime, provider, model }> | null` so operators can verify role/harness identity for execution without inspecting internal state. `GET /runs/:id/recovery` also exposes `decision: RunRecoveryDecision | null`; retained-diagnosis runs set `decision.reason = "retained_diagnosis_branch"`, enumerate both operator choices in `decision.nextActions`, and set `resumable = false` until one of those choices is taken. `POST /runs/:id/recovery/retry-retained` re-enters recovery on the retained branch through the normal run-scoped recovery pipeline, while `POST /runs/:id/recovery/clear-and-fresh` discards the retained target and immediately resumes on the fresh path.
+`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text. `GET /runs/:id` also exposes `execution_harness_selections: Array<{ role, harness, runtime, provider, model }> | null` so operators can verify role/harness identity for execution without inspecting internal state. `GET /runs/:id/recovery` also exposes `decision: RunRecoveryDecision | null`; retained-diagnosis runs set `decision.reason = "retained_diagnosis_branch"`, enumerate both operator choices in `decision.nextActions`, and set `resumable = false` until one of those choices is taken.
 
 ### Conversation (run-scoped)
 

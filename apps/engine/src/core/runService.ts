@@ -36,10 +36,7 @@ import { discardSupabaseBranchFromRunRecovery } from "./supabase/runRecoveryActi
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 import { inspectWorkerLease, STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
-import {
-  parseSupabaseProvisioningRecoveryPayload,
-  updateSupabaseProvisioningRecoveryPayload,
-} from "./supabase/recoveryPayload.js"
+
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -172,6 +169,24 @@ export type ClearAndFreshRunResult =
       currentState: RetryRetainedCurrentState
     }
   | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type SkipCurrentStageRejectionReason =
+  | "no_current_stage"
+  | "current_stage_terminal"
+  | "current_stage_skipped"
+  | "current_stage_actively_worked"
+
+export type SkipCurrentStageResult =
+  | { ok: true; runId: string; status: RunRow["status"]; recoveryStatus: RunRow["recovery_status"] }
+  | {
+      ok: false
+      status: 409
+      error: "skip_current_stage_not_allowed"
+      code: "skip_current_stage_not_allowed"
+      message: string
+      reason: SkipCurrentStageRejectionReason
+    }
+  | { ok: false; status: 404; error: "run_not_found" }
 
 export type ReplanRunResult =
   | { ok: true; runId: string }
@@ -1709,6 +1724,118 @@ export async function clearAndFreshRunInProcess(
   }
   fireInBackground(io, "clearAndFreshRunInProcess", prepared.start)
   return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
+function latestCurrentStageRun(repos: Repos, run: RunRow): StageRunRow | null {
+  if (!run.current_stage?.trim()) return null
+  const currentStage = run.current_stage.trim()
+  for (const stageRun of repos.listStageRunsForRun(run.id).slice().reverse()) {
+    if (stageRun.stage_key === currentStage) return stageRun
+  }
+  return null
+}
+
+function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
+  return repos
+    .listRunsForItem(run.item_id)
+    .some(candidate => candidate.id !== run.id && (candidate.status === "running" || candidate.status === "blocked"))
+}
+
+function skipCurrentStageConflict(
+  reason: SkipCurrentStageRejectionReason,
+  message: string,
+): Extract<SkipCurrentStageResult, { ok: false; error: "skip_current_stage_not_allowed" }> {
+  return {
+    ok: false,
+    status: 409,
+    error: "skip_current_stage_not_allowed",
+    code: "skip_current_stage_not_allowed",
+    message,
+    reason,
+  }
+}
+
+function skipCurrentStageWorkerIsLive(
+  repos: Repos,
+  run: RunRow,
+  input: {
+    now: number
+    apiWorkerInstanceId: string
+  },
+): boolean {
+  const lease = inspectWorkerLease(repos, run.id)
+  if (!lease) return false
+  return input.now - lease.heartbeatAt < STALE_WORKER_HEARTBEAT_MS
+}
+
+export function skipCurrentStageInProcess(
+  repos: Repos,
+  input: {
+    runId: string
+    now?: () => number
+    apiWorkerInstanceId?: string
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  },
+): SkipCurrentStageResult {
+  const run = repos.getRun(input.runId)
+  if (!run) return { ok: false, status: 404, error: "run_not_found" }
+
+  const currentStage = run.current_stage?.trim() ?? ""
+  if (!currentStage) {
+    return skipCurrentStageConflict("no_current_stage", "skip-current-stage requires a current stage.")
+  }
+
+  const stageRun = latestCurrentStageRun(repos, run)
+  if (stageRun?.status === "skipped") {
+    return skipCurrentStageConflict("current_stage_skipped", "skip-current-stage is unavailable because the current stage is already skipped.")
+  }
+  if (stageRun && (stageRun.status === "completed" || stageRun.status === "failed")) {
+    return skipCurrentStageConflict("current_stage_terminal", "skip-current-stage is unavailable because the current stage is already terminal.")
+  }
+
+  if (skipCurrentStageWorkerIsLive(repos, run, {
+    now: input.now?.() ?? Date.now(),
+    apiWorkerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+  })) {
+    return skipCurrentStageConflict("current_stage_actively_worked", "skip-current-stage is unavailable while a live worker is still active on the current stage.")
+  }
+
+  const activeStageRun = stageRun ?? repos.createStageRun({ runId: run.id, stageKey: currentStage })
+  repos.completeStageRun(activeStageRun.id, "skipped")
+  repos.clearRunWorkerLease(run.id)
+  repos.updateRun(run.id, {
+    status: "blocked",
+    current_stage: currentStage,
+    recovery_status: "blocked",
+    recovery_scope: "stage",
+    recovery_scope_ref: currentStage,
+    recovery_summary: `Operator skipped current stage "${currentStage}". Run remains paused for follow-up.`,
+    recovery_payload_json: null,
+  })
+  if (!hasOtherLiveRunForItem(repos, run)) repos.setItemCurrentStage(run.item_id, null)
+  const item = repos.getItem(run.item_id)
+  if (item) {
+    input.onItemColumnChanged?.({
+      itemId: item.id,
+      from: item.current_column,
+      to: item.current_column,
+      phaseStatus: item.phase_status,
+    })
+  }
+  repos.appendLog({
+    runId: run.id,
+    stageRunId: activeStageRun.id,
+    eventType: "stage_skipped",
+    message: `stage ${currentStage} skipped by operator`,
+    data: { stageRunId: activeStageRun.id, stageKey: currentStage },
+  })
+  const updated = repos.getRun(run.id)!
+  return {
+    ok: true,
+    runId: updated.id,
+    status: updated.status,
+    recoveryStatus: updated.recovery_status,
+  }
 }
 
 export async function resumeRunFromExistingRemediationInProcess(

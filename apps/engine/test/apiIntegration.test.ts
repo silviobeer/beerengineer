@@ -215,6 +215,28 @@ test("REQ-1 contract documents retained diagnosis operator decisions on resume a
   assert.match(contract, /decision: RunRecoveryDecision \| null/)
 })
 
+test("REQ-2 contract documents skip-current-stage as a generic recovery mutation", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    paths: Record<string, {
+      post?: { responses?: Record<string, { content?: { "application/json"?: { schema?: unknown } } }> }
+    }>
+    components: { schemas: Record<string, unknown> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  const success = openapi.paths["/runs/{id}/recovery/skip-current-stage"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema
+  const conflict = openapi.paths["/runs/{id}/recovery/skip-current-stage"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema
+
+  assert.ok(success)
+  assert.ok(conflict)
+  assert.match(JSON.stringify(success), /"recoveryStatus":\{"type":\["string","null"\]\}/)
+  assert.match(JSON.stringify(conflict), /SkipCurrentStageConflict/)
+  assert.ok(openapi.components.schemas.SkipCurrentStageConflict)
+  assert.match(contract, /skip-current-stage/)
+  assert.match(contract, /POST \/runs\/:id\/recovery\/skip-current-stage/)
+  assert.match(contract, /skip_current_stage_not_allowed/)
+})
+
 test("PROJ-9 REQ-4 rollout contract documents consumer surfaces, freshness, and board budget", () => {
   const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
 
@@ -408,6 +430,81 @@ test("GET /health returns service, uptime, and DB reachability without a token",
     assert.equal(typeof body.uptimeMs, "number")
     assert.ok(Number.isFinite(body.uptimeMs))
     assert.ok(body.uptimeMs >= 0)
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("POST /runs/:id/recovery/skip-current-stage uses the same empty request shape for different eligible stages and leaves both runs paused", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: mkdtempSync(join(tmpdir(), "be2-skip-current-stage-")) })
+  const stageKeys = ["brainstorm", "execution"] as const
+  const runIds: string[] = []
+
+  for (const stageKey of stageKeys) {
+    const item = repos.createItem({ workspaceId: workspace.id, title: `Skip ${stageKey}`, description: stageKey })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title, owner: "api" })
+    repos.createStageRun({ runId: run.id, stageKey })
+    repos.updateRun(run.id, {
+      status: "blocked",
+      current_stage: stageKey,
+    })
+    runIds.push(run.id)
+  }
+  db.close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+  })
+  try {
+    await waitForHealth(base)
+
+    for (const [index, runId] of runIds.entries()) {
+      const skipRes = await fetch(`${base}/runs/${runId}/recovery/skip-current-stage`, {
+        method: "POST",
+        headers: authHeaders({ "content-type": "application/json" }),
+        body: "{}",
+      })
+      assert.equal(skipRes.status, 200)
+      const skipBody = await skipRes.json() as {
+        ok: boolean
+        runId: string
+        status: string
+        recoveryStatus: string | null
+      }
+      assert.deepEqual(skipBody, {
+        ok: true,
+        runId,
+        status: "blocked",
+        recoveryStatus: "blocked",
+      })
+
+      const runRes = await fetch(`${base}/runs/${runId}`)
+      assert.equal(runRes.status, 200)
+      const runBody = await runRes.json() as {
+        id: string
+        status: string
+        current_stage: string | null
+        recovery_status: string | null
+      }
+      assert.equal(runBody.id, runId)
+      assert.equal(runBody.status, "blocked")
+      assert.equal(runBody.current_stage, stageKeys[index])
+      assert.equal(runBody.recovery_status, "blocked")
+
+      const treeRes = await fetch(`${base}/runs/${runId}/tree`)
+      assert.equal(treeRes.status, 200)
+      const treeBody = await treeRes.json() as {
+        stageRuns: Array<{ stage_key: string; status: string }>
+      }
+      assert.deepEqual(treeBody.stageRuns.map(stageRun => ({
+        stage_key: stageRun.stage_key,
+        status: stageRun.status,
+      })), [{ stage_key: stageKeys[index], status: "skipped" }])
+    }
   } finally {
     await stopServer(proc)
   }

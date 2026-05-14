@@ -858,6 +858,20 @@ export class Repos {
     this.run("UPDATE stage_runs SET status = ?, completed_at = ?, error_message = ?, updated_at = ? WHERE id = ?", status, timestamp, errorMessage ?? null, timestamp, id)
   }
 
+  clearRunWorkerLease(id: string): void {
+    this.run(
+      `UPDATE runs
+       SET worker_instance_id = NULL,
+           worker_owner_kind = NULL,
+           worker_started_at = NULL,
+           worker_heartbeat_at = NULL,
+           updated_at = ?
+       WHERE id = ?`,
+      now(),
+      id,
+    )
+  }
+
   listStageRunsForRun(runId: string): StageRunRow[] {
     return this.getAll("SELECT * FROM stage_runs WHERE run_id = ? ORDER BY created_at ASC", runId)
   }
