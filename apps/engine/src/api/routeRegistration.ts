@@ -90,6 +90,10 @@ type RouteContext = {
   appConfig: ReturnType<ApiRouteDependencies["loadEffectiveConfig"]>
 }
 
+function requestBaseUrl(host: string, port: number): string {
+  return host.includes(":") ? `http://[${host}]:${port}` : `http://${host}:${port}`
+}
+
 const WEBHOOK_TELEGRAM_ROUTE = {
   method: "POST",
   surfacePath: "/webhooks/telegram",
@@ -538,7 +542,7 @@ export function registerApiRoutes(
   lifecycle: ApiLifecycleView,
 ): void {
   shell.setRequestHandler(async (req, res) => {
-    const url = new URL(req.url!, `http://${deps.host}:${deps.port}`)
+    const url = new URL(req.url!, requestBaseUrl(deps.host, deps.port))
     const path = url.pathname
     const appConfig = deps.loadEffectiveConfig()
     attachRouteContext(req, appConfig, deps, lifecycle)

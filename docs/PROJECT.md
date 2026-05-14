@@ -1,7 +1,7 @@
 # Project — Features
 
-**Last updated:** 2026-05-07
-**Features implemented:** 6
+**Last updated:** 2026-05-14
+**Features implemented:** 7
 
 ---
 
@@ -128,5 +128,25 @@
 **PRDs:** [PRD-1](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-1-worker-lease-lifecycle.md), [PRD-2](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-2-lost-worker-recovery.md), [PRD-3](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-3-readiness-resume-surface-contract.md)
 
 **QA:** Final QA found one High bug where heartbeat fatal state stopped the lease interval but not the workflow body; it was fixed by cooperative workflow cancellation at stage/workflow boundaries. Verification passed `npm run typecheck`, the focused worker lease/recovery/readiness suite, `test/resume.test.ts`, and `test/apiIntegration.test.ts`.
+
+---
+
+## Loopback Auth Bypass
+
+**Status:** QA-passed; two follow-up cleanups noted below.
+
+**Purpose:** Make the local beerengineer_ experience work without API-token management. A non-technical operator can run the engine over localhost — initialize setup, start runs — without ever reading, exporting, copying, or matching an API token, while callers reaching the engine over a non-loopback address still pass a real token check.
+
+**Scope:** Ships tokenless admission for loopback mutating requests on both IPv4 and IPv6, preserved token enforcement for non-loopback callers, correct IPv6 host handling at the HTTP request boundary, and an auth-boundary test suite covering loopback admission and non-loopback rejection. Out of scope: removing the API-token plumbing entirely, changing the CLI's token-aware behavior, real remote-mode authentication, and webhook authentication (which stays on its own secret-based path).
+
+**User stories implemented:**
+- REQ-1: Fresh local operation succeeds without token setup — over loopback, `POST /setup/init` and `POST /runs` work with no token file, no `BEERENGINEER_API_TOKEN`, and no `x-beerengineer-token` header; a stale or wrong header on loopback is treated the same as no header.
+- REQ-2: Non-loopback compatibility remains token-protected — callers outside loopback still need the configured token; a missing or wrong token returns HTTP 403 and creates no run or item, on both IPv4 and IPv6.
+
+**QA:** QA passed against the acceptance criteria for both requirements. The auth-boundary tests in `apps/engine/test/setupApi.test.ts` exercise IPv4 and IPv6 loopback admission, stale-header equivalence, and non-loopback rejection.
+
+**Known limitations:**
+- Some durable in-repo guidance — the engine and UI `CLAUDE.md` files and a helper comment in the token-file module — still describes the older model where every mutating route requires a token. Until those are updated, treat the published API contract and the route implementation as authoritative.
+- The non-loopback tests need the machine running them to expose real non-loopback IPv4 and IPv6 addresses. On CI or QA hosts without them, those tests can fail for environment reasons rather than a real regression.
 
 ---
