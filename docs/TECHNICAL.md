@@ -93,6 +93,41 @@ Engine API start/resume
 - **Startup recovery** — API-owned runs from previous engine instances are recovered immediately on boot; CLI-owned runs are recovered by heartbeat age so independent terminal workers are not misclassified just because the API server restarted.
 - **Readiness split** — `/health` stays small process/DB liveness; `/ready` proves startup recovery completed, shutdown is idle, the DB is reachable, and the lease-style sentinel write path works.
 
+### Loopback Auth Bypass
+
+The engine decides API authentication at the HTTP request boundary, from the
+caller's transport address rather than from a header alone. Loopback callers
+(IPv4 and IPv6) are admitted for mutating requests without a token; callers
+from any non-loopback address still go through the existing token check. Setup
+initialization, run creation, SQLite writes, and board/SSE projections are
+unchanged once a request is admitted.
+
+```text
+incoming request
+   -> classify peer address (loopback vs non-loopback)
+        loopback     -> admit mutating request, token check skipped
+        non-loopback -> require engine token -> 403 if missing/wrong
+   -> route handler (unchanged)
+```
+
+- **Loopback is tokenless** — over loopback, `POST /setup/init` and `POST /runs`
+  succeed with no token file, no `BEERENGINEER_API_TOKEN`, and no
+  `x-beerengineer-token` header. A stale or wrong header on loopback is treated
+  the same as no header.
+- **Non-loopback stays gated** — a non-loopback caller still needs the
+  configured token; a missing or wrong token returns HTTP 403 with
+  `code: "non_local_mutation_forbidden"` and creates no run or item. A spoofed
+  `Host` header does not change this — classification is from the peer address.
+- **IPv6 hosts are handled correctly** — `requestBaseUrl` in
+  `apps/engine/src/api/routeRegistration.ts` brackets IPv6 hosts
+  (`http://[host]:port`) when constructing the request URL, so IPv6 loopback
+  and non-loopback callers are classified the same way as IPv4.
+- **Token plumbing is compatibility-only** — the token file,
+  `BEERENGINEER_API_TOKEN`, and `x-beerengineer-token` remain available for
+  non-loopback callers and unchanged legacy local callers, but are no longer
+  part of the supported localhost setup or run-start path. Webhook
+  authentication is separate and unchanged.
+
 ## Data Model
 
 - **Release Target:** resolved GitHub repository, stable release tag, version, tarball URL, and trusted download metadata for one install attempt.
@@ -261,7 +296,7 @@ repository, HTTP routing, CLI, workflow runtime, and `node:test` infrastructure.
 
 The public install path assumes GitHub Releases publish the POSIX and PowerShell bootstrap assets and a stable release tarball. A successful managed install creates the local app-data layout, runs setup through the managed wrapper, attempts engine start, and either starts the UI or prints the exact UI command and URL.
 
-For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/reads app config, SQLite state, and secret-store files under OS-aware app paths unless overridden by environment variables. Mutating HTTP calls require the engine token; browser clients should call the Next.js proxy routes instead of the engine directly.
+For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/reads app config, SQLite state, and secret-store files under OS-aware app paths unless overridden by environment variables. Mutating HTTP calls from loopback are admitted without a token; calls from a non-loopback address still require the engine token. Browser clients should call the Next.js proxy routes instead of the engine directly.
 
 ## Gotchas
 
