@@ -28,6 +28,9 @@
       "name": "Items"
     },
     {
+      "name": "Prompts"
+    },
+    {
       "name": "Runs"
     },
     {
@@ -1291,6 +1294,60 @@
                       "$ref": "#/components/schemas/WorkflowGitBlocked"
                     }
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prompts": {
+      "get": {
+        "tags": [
+          "Prompts"
+        ],
+        "summary": "List the canonical inbox of currently open prompts.",
+        "description": "Protected by the standard localhost admission policy despite being read-only. Callers must request `status=open`; unsupported statuses return `400 unsupported_prompt_status` instead of broadening this surface into prompt history.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only `open` is supported on this surface."
+          },
+          {
+            "name": "workspaceKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional workspace filter. When omitted, returns open prompts across all workspaces."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canonical open prompts inbox.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptInboxResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Caller did not satisfy the standard localhost admission policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4362,6 +4419,54 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/PromptAction"
+            }
+          }
+        }
+      },
+      "PromptInboxItem": {
+        "type": "object",
+        "required": [
+          "promptId",
+          "runId",
+          "workspaceKey",
+          "text",
+          "createdAt"
+        ],
+        "properties": {
+          "promptId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "workspaceKey": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PromptAction"
+            }
+          }
+        }
+      },
+      "PromptInboxResponse": {
+        "type": "object",
+        "required": [
+          "prompts"
+        ],
+        "properties": {
+          "prompts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PromptInboxItem"
             }
           }
         }

@@ -67,13 +67,17 @@ function isLoopbackAddress(address: string | undefined): boolean {
     || address === "::ffff:127.0.0.1"
 }
 
-export function requireCsrfToken(req: IncomingMessage, token: string): boolean {
-  if (!MUTATING_METHODS.has(req.method ?? "")) return true
+export function requireLoopbackOrToken(req: IncomingMessage, token: string): boolean {
   if (isLoopbackAddress(req.socket.remoteAddress)) return true
   if (!token) return false
   const header = req.headers["x-beerengineer-token"]
   const value = Array.isArray(header) ? header[0] : header
   return typeof value === "string" && value === token
+}
+
+export function requireCsrfToken(req: IncomingMessage, token: string): boolean {
+  if (!MUTATING_METHODS.has(req.method ?? "")) return true
+  return requireLoopbackOrToken(req, token)
 }
 
 export function writeSse(res: ServerResponse, event: string, data: unknown): boolean {

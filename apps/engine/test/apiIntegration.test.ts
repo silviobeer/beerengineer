@@ -87,6 +87,31 @@ test("PROJ-3-PRD-2 AC-13 setup and settings API contracts stay documented", () =
   assert.match(openapi, /WorkspaceRegistrationResponse/)
 })
 
+test("REQ-1 prompts inbox contract is documented in OpenAPI and prose", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    paths: Record<string, { get?: { parameters?: Array<{ name?: string }>; responses?: Record<string, unknown> } }>
+    components: { schemas: Record<string, { properties?: Record<string, unknown>; required?: string[] }> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  const route = openapi.paths["/prompts"]?.get
+  const item = openapi.components.schemas.PromptInboxItem
+  const response = openapi.components.schemas.PromptInboxResponse
+
+  assert.ok(route)
+  assert.deepEqual(route?.parameters?.map(parameter => parameter.name), ["status", "workspaceKey"])
+  assert.ok(route?.responses?.["200"])
+  assert.ok(route?.responses?.["400"])
+  assert.ok(route?.responses?.["403"])
+  assert.deepEqual(item.required, ["promptId", "runId", "workspaceKey", "text", "createdAt"])
+  assert.ok(item.properties?.actions)
+  assert.deepEqual(response.required, ["prompts"])
+  assert.ok(response.properties?.prompts)
+  assert.match(contract, /GET \/prompts\?status=open&workspaceKey=/)
+  assert.match(contract, /Unsupported or missing `status` values return `400/)
+  assert.match(contract, /`PromptInboxItem` includes at minimum `\{ promptId, runId, workspaceKey, text, createdAt \}`/)
+})
+
 test("GET /health OpenAPI contract documents service, uptime, and DB status", () => {
   const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
     paths: {
