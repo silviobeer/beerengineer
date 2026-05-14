@@ -133,7 +133,7 @@ export type WorkflowEvent =
       runId: string
       action: string
       outcome: "accepted" | "noop"
-      reason?: "already_clear"
+      reason?: "already_clear" | "already_on_fresh_path" | "already_on_retained_path"
       latestState: {
         recoveryPayloadJson: string | null
         supabaseBranchRef: string | null

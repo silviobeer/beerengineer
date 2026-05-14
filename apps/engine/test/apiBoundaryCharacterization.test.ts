@@ -747,6 +747,7 @@ test("REQ-10-1 characterizes the touched route matrix and current OpenAPI board 
     assert.deepEqual(Object.keys(openapi.paths["/ready"] ?? {}).sort(), ["get"])
     assert.deepEqual(Object.keys(openapi.paths["/events"] ?? {}).sort(), ["get"])
     assert.deepEqual(Object.keys(openapi.paths["/board"] ?? {}).sort(), ["get"])
+    assert.deepEqual(Object.keys(openapi.paths["/prompts"] ?? {}).sort(), ["get"])
     assert.deepEqual(Object.keys(openapi.paths["/setup/init"] ?? {}).sort(), ["post"])
     assert.deepEqual(Object.keys(openapi.paths["/items/{id}/actions/{action}"] ?? {}).sort(), ["parameters", "post"])
 

@@ -264,7 +264,10 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     runId: row.run_id,
     action: typeof data.action === "string" ? data.action : row.message,
     outcome: data.outcome === "noop" ? "noop" : "accepted",
-    reason: data.reason === "already_clear" ? "already_clear" : undefined,
+    reason:
+      data.reason === "already_clear" || data.reason === "already_on_fresh_path" || data.reason === "already_on_retained_path"
+        ? data.reason
+        : undefined,
     latestState: typeof data.latestState === "object" && data.latestState !== null
       ? data.latestState as Extract<WorkflowEvent, { type: "run_recovery_action" }>["latestState"]
       : {
