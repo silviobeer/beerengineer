@@ -1,9 +1,10 @@
 import type { ServerResponse } from "node:http"
 import { URL } from "node:url"
 
-import { json, requireCsrfToken } from "./http.js"
+import { json, requireCsrfToken, requireLoopbackOrToken } from "./http.js"
 import { buildHealthResponse, buildReadyResponse } from "./health.js"
 import { handleCreatePreparedImportItem, handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
+import { handleListPrompts } from "./routes/prompts.js"
 import {
   handleAnswer,
   handleClearAndFreshRecovery,
@@ -104,6 +105,7 @@ const OPENAPI_ROUTE = {
 const TOP_LEVEL_ROUTE_KEYS = [
   "GET /runs",
   "POST /runs",
+  "GET /prompts",
   "POST /items/import-prepared",
   "GET /board",
   "GET /setup/status",
@@ -294,6 +296,7 @@ function topLevelRouteHandlers(
   return {
     "GET /runs": () => handleListRuns(deps.repos, context.res),
     "POST /runs": () => handleCreateRun(deps.repos, context.req, context.res, payload => deps.board.broadcastItemColumnChanged(payload)),
+    "GET /prompts": () => handleListPrompts(deps.repos, context.url, context.res),
     "POST /items/import-prepared": () => handleCreatePreparedImportItem(deps.repos, context.req, context.res, payload => deps.board.broadcastItemColumnChanged(payload)),
     "GET /board": () => handleGetBoard(deps.db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
@@ -546,6 +549,11 @@ export function registerApiRoutes(
     const context: RouteContext = { req, res, url, path, appConfig }
 
     if (await handlePreCsrfRoutes(context, deps)) return
+
+    if (context.path === "/prompts" && context.req.method === "GET" && !requireLoopbackOrToken(req, deps.apiToken)) {
+      json(res, 403, { error: "forbidden", code: "non_local_mutation_forbidden" })
+      return
+    }
 
     if (!requireCsrfToken(req, deps.apiToken)) {
       json(res, 403, { error: "forbidden", code: "non_local_mutation_forbidden" })

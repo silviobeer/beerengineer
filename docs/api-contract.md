@@ -93,6 +93,16 @@ Workspace status (counts, latest run) is returned as part of `GET /workspaces/:k
 
 No generic `POST /items/:id/actions` with an action string in the body. Explicit routes only.
 
+### Prompts Inbox
+
+- `GET /prompts?status=open&workspaceKey=`
+  - Protected by the standard localhost admission policy even though it is read-only. Loopback callers do not need a token; non-loopback callers must satisfy the same compatibility token path used by other protected engine endpoints.
+  - Returns the canonical inbox shape `{ prompts: PromptInboxItem[] }`.
+  - `PromptInboxItem` includes at minimum `{ promptId, runId, workspaceKey, text, createdAt }`.
+  - Prompt rows may also include additive `actions: Array<{ label, value }>` when the open prompt exposes structured choices that a client can render directly from the inbox list.
+  - When no open prompts exist for the requested scope, the response is `200 { prompts: [] }`.
+  - Unsupported or missing `status` values return `400 { error: "unsupported_prompt_status", code: "bad_request", message }` rather than broadening this route into a prompt-history API.
+
 ### Runs
 
 - `GET /runs` — returns `{ runs: [...] }`, newest first. Run DTOs include projected `recovery_user_message: string | null` when a lost-worker recovery exists. **No filter parameters today** — `workspace`/`itemId`/`status`/`owner`/`limit`/`cursor` are ignored by the current handler. They will be added when a concrete client surface motivates them; see `apps/engine/src/api/routes/runs.ts:handleListRuns`.
