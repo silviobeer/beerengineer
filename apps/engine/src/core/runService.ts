@@ -36,10 +36,6 @@ import { discardSupabaseBranchFromRunRecovery } from "./supabase/runRecoveryActi
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 import { inspectWorkerLease, STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
-import {
-  parseSupabaseProvisioningRecoveryPayload,
-  updateSupabaseProvisioningRecoveryPayload,
-} from "./supabase/recoveryPayload.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
