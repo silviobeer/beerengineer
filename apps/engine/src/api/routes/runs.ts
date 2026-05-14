@@ -340,6 +340,7 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
   if (!run) return json(res, 404, { error: "run_not_found", code: "not_found" })
   if (!run.recovery_status && !run.current_stage) return json(res, 200, { recovery: null })
   const surface = projectRunRecoverySurface(repos, run)
+  const decision = retainedDiagnosisRecoveryDecision(run)
   json(res, 200, {
     recovery: {
       status: run.recovery_status,

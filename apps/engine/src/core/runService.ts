@@ -30,7 +30,7 @@ import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
 import { recordSupabaseLifecycle } from "./supabase/lifecycleEvents.js"
-import { updateSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
+import { parseSupabaseProvisioningRecoveryPayload, updateSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 import { retainedDiagnosisRecoveryDecision, type RunRecoveryDecision } from "./supabase/recoveryDecision.js"
 import { discardSupabaseBranchFromRunRecovery } from "./supabase/runRecoveryActions.js"
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
@@ -2530,13 +2530,14 @@ export async function prepareForegroundClearAndFreshRun(
   const readiness = await loadResumeReadiness(repos, input.runId)
   const readinessFailure = clearAndFreshReadinessFailure(readiness)
   if (readinessFailure) return readinessFailure
+  if (readiness.kind !== "ready") return { ok: false, status: 409, error: "clear_and_fresh_conflict" } as PreparedForegroundClearAndFreshRunResult
 
-  const capabilityContext = resolveClearAndFreshCapabilityContext(repos, input, readiness.run)
-  if (!capabilityContext.ready) return capabilityContext
+  const capabilityContextResult = resolveClearAndFreshCapabilityContext(repos, input, readiness.run)
+  if (!("ready" in capabilityContextResult)) return capabilityContextResult
 
   let prepared: PreparedForegroundResumeRunResult
   try {
-    await runClearAndFreshBeforeResume(repos, input.runId, capabilityContext.supabaseHook)
+    await runClearAndFreshBeforeResume(repos, input.runId, capabilityContextResult.supabaseHook)
     prepared = await prepareForegroundResumeRun(repos, io, {
       runId: input.runId,
       summary: CLEAR_AND_FRESH_REMEDIATION_SUMMARY,
@@ -2545,7 +2546,7 @@ export async function prepareForegroundClearAndFreshRun(
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       onItemColumnChanged: input.onItemColumnChanged,
-      capabilityResolver: () => capabilityContext.capabilitiesResult,
+      capabilityResolver: () => capabilityContextResult.capabilitiesResult,
       admissionController: input.admissionController,
       resumeRunImpl: input.resumeRunImpl,
       persistItemDecision: false,
