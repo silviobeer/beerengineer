@@ -1561,14 +1561,7 @@
                   "type": "object",
                   "properties": {
                     "recovery": {
-                      "oneOf": [
-                        {
-                          "$ref": "#/components/schemas/RecoveryDetail"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "$ref": "#/components/schemas/RecoveryDetail"
                     }
                   },
                   "required": [
@@ -4755,10 +4748,14 @@
         ],
         "properties": {
           "status": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "blocked",
-              "failed"
+              "failed",
+              null
             ]
           },
           "scope": {
@@ -4809,7 +4806,10 @@
                 "skip_current_stage",
                 "recover_fresh_branch",
                 "retry_retained",
-                "clear_and_fresh"
+                "clear_and_fresh",
+                "clear_recovery_payload",
+                "clear_supabase_branch_ref",
+                "clear_supabase_branch_lifecycle_state"
               ]
             }
           },
@@ -5033,6 +5033,7 @@
               "action": {
                 "type": "string",
                 "enum": [
+                  "recover_fresh_branch",
                   "clear_and_fresh"
                 ]
               },
@@ -5061,6 +5062,60 @@
                 "type": "string",
                 "enum": [
                   "fresh_path_recovery"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "runId",
+              "action",
+              "outcome",
+              "reason",
+              "latestState",
+              "recoveryStatus",
+              "supabaseBranchLifecycleState"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "runId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "retry_retained"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "noop"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "already_on_retained_path"
+                ]
+              },
+              "latestState": {
+                "$ref": "#/components/schemas/RecoveryLatestState"
+              },
+              "recoveryStatus": {
+                "type": "string",
+                "enum": [
+                  "retained_path_recovery"
+                ]
+              },
+              "supabaseBranchLifecycleState": {
+                "type": "string",
+                "enum": [
+                  "retained_path_recovery"
                 ]
               }
             }

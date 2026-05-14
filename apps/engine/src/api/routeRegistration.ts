@@ -369,8 +369,10 @@ function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Ar
     { ...RUN_ROUTE_DEFINITIONS[10], handle: runId => handleResumeRun(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
     { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleReplanRun(deps.repos, context.req, context.res, runId) },
     { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
-    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleMutateRecovery(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleRetryRetainedRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[14], handle: runId => handleClearAndFreshRecovery(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[15], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[16], handle: runId => handleMutateRecovery(deps.repos, context.req, context.res, runId) },
   ]
 }
 

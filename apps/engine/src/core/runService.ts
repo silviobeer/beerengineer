@@ -207,6 +207,7 @@ export const NARROW_RUN_RECOVERY_CLEAR_ACTIONS = [
 export type ReservedRunRecoveryAction = (typeof RESERVED_RUN_RECOVERY_ACTIONS)[number]
 export type ImplementedRunRecoveryAction = (typeof IMPLEMENTED_RUN_RECOVERY_ACTIONS)[number]
 export type NarrowRunRecoveryClearAction = (typeof NARROW_RUN_RECOVERY_CLEAR_ACTIONS)[number]
+export type SupportedRunRecoveryAction = ImplementedRunRecoveryAction | NarrowRunRecoveryClearAction
 export type RunRecoveryAction = ReservedRunRecoveryAction | ImplementedRunRecoveryAction | NarrowRunRecoveryClearAction
 export type RunRecoveryActionRequest = {
   action?: string
@@ -240,7 +241,7 @@ export type SkipCurrentStageEligibilityReason =
 export type RunRecoverySurfaceProjection = {
   recoveryStatus: RecoveryPathStatus | null
   supabaseBranchLifecycleState: RecoveryPathStatus | string | null
-  availableActions: ImplementedRunRecoveryAction[]
+  availableActions: SupportedRunRecoveryAction[]
 }
 
 type RecoveryClearAcceptedResult = {
@@ -276,12 +277,12 @@ type RecoveryNamedAcceptedResult = {
 type RecoveryNamedNoopResult = {
   ok: true
   runId: string
-  action: "clear_and_fresh"
+  action: "recover_fresh_branch" | "retry_retained" | "clear_and_fresh"
   outcome: "noop"
-  reason: "already_on_fresh_path"
+  reason: "already_on_fresh_path" | "already_on_retained_path"
   latestState: RecoveryLatestState
-  recoveryStatus: typeof FRESH_PATH_RECOVERY_STATUS
-  supabaseBranchLifecycleState: typeof FRESH_PATH_RECOVERY_STATUS
+  recoveryStatus: RecoveryPathStatus
+  supabaseBranchLifecycleState: RecoveryPathStatus
 }
 
 type RecoveryActionRejectedResult =
@@ -1942,57 +1943,63 @@ export function projectRunRecoverySurface(
   repos: Repos,
   run: Pick<RunRow, "id" | "status" | "current_stage" | "recovery_status" | "recovery_payload_json" | "supabase_branch_ref" | "supabase_branch_lifecycle_state">,
 ): RunRecoverySurfaceProjection {
-  const availableActions: ImplementedRunRecoveryAction[] = []
+  const availableActions: SupportedRunRecoveryAction[] = []
   if (skipCurrentStageEligibility(repos, run).eligible) {
     availableActions.push("skip_current_stage")
   }
 
   const payload = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
+  let recoveryStatus: RecoveryPathStatus | null = null
+  let supabaseBranchLifecycleState: RecoveryPathStatus | string | null = run.supabase_branch_lifecycle_state
+
   if (!payload) {
-    return {
-      recoveryStatus: null,
-      supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
-      availableActions,
-    }
+    appendAvailableClearActions(run, availableActions)
+    return { recoveryStatus, supabaseBranchLifecycleState, availableActions }
   }
 
   if (payload.operatorAction === "discard") {
-    return {
-      recoveryStatus: FRESH_PATH_RECOVERY_STATUS,
-      supabaseBranchLifecycleState: FRESH_PATH_RECOVERY_STATUS,
-      availableActions,
+    recoveryStatus = FRESH_PATH_RECOVERY_STATUS
+    supabaseBranchLifecycleState = FRESH_PATH_RECOVERY_STATUS
+  } else if (payload.operatorAction === "attach") {
+    recoveryStatus = RETAINED_PATH_RECOVERY_STATUS
+    supabaseBranchLifecycleState = RETAINED_PATH_RECOVERY_STATUS
+  } else if (run.recovery_status === "blocked") {
+    const retainedBranchRef = payload.branchRef ?? run.supabase_branch_ref
+    if (run.supabase_branch_lifecycle_state === "retained-for-diagnosis" && retainedBranchRef) {
+      availableActions.push("retry_retained", "clear_and_fresh")
+    } else {
+      availableActions.push("recover_fresh_branch")
     }
   }
 
-  if (payload.operatorAction === "attach") {
-    return {
-      recoveryStatus: RETAINED_PATH_RECOVERY_STATUS,
-      supabaseBranchLifecycleState: RETAINED_PATH_RECOVERY_STATUS,
-      availableActions,
-    }
-  }
+  appendAvailableClearActions(run, availableActions)
+  return { recoveryStatus, supabaseBranchLifecycleState, availableActions }
+}
 
-  if (run.recovery_status !== "blocked") {
-    return {
-      recoveryStatus: null,
-      supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
-      availableActions,
-    }
-  }
+function appendAvailableClearActions(
+  run: Pick<RunRow, "recovery_payload_json" | "supabase_branch_ref" | "supabase_branch_lifecycle_state">,
+  availableActions: SupportedRunRecoveryAction[],
+): void {
+  if (run.recovery_payload_json !== null) availableActions.push("clear_recovery_payload")
+  if (run.supabase_branch_ref !== null) availableActions.push("clear_supabase_branch_ref")
+  if (run.supabase_branch_lifecycle_state !== null) availableActions.push("clear_supabase_branch_lifecycle_state")
+}
 
-  const retainedBranchRef = payload.branchRef ?? run.supabase_branch_ref
-  if (run.supabase_branch_lifecycle_state === "retained-for-diagnosis" && retainedBranchRef) {
-    return {
-      recoveryStatus: null,
-      supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
-      availableActions: [...availableActions, "retry_retained", "clear_and_fresh"],
-    }
-  }
-
+function pathRecoveryNoop(
+  run: Pick<RunRow, "id" | "recovery_payload_json" | "supabase_branch_ref" | "supabase_branch_lifecycle_state">,
+  action: RecoveryNamedNoopResult["action"],
+  reason: RecoveryNamedNoopResult["reason"],
+  recoveryStatus: RecoveryPathStatus,
+): RecoveryNamedNoopResult {
   return {
-    recoveryStatus: null,
-    supabaseBranchLifecycleState: run.supabase_branch_lifecycle_state,
-    availableActions: [...availableActions, "recover_fresh_branch"],
+    ok: true,
+    runId: run.id,
+    action,
+    outcome: "noop",
+    reason,
+    latestState: recoveryLatestState(run),
+    recoveryStatus,
+    supabaseBranchLifecycleState: recoveryStatus,
   }
 }
 
@@ -2091,17 +2098,14 @@ export function mutateRunRecoveryActionInProcess(
       return result
     }
 
-    if (action === "clear_and_fresh" && surface.recoveryStatus === FRESH_PATH_RECOVERY_STATUS) {
-      const result: RecoveryNamedNoopResult = {
-        ok: true,
-        runId: run.id,
-        action,
-        outcome: "noop",
-        reason: "already_on_fresh_path",
-        latestState: recoveryLatestState(run),
-        recoveryStatus: FRESH_PATH_RECOVERY_STATUS,
-        supabaseBranchLifecycleState: FRESH_PATH_RECOVERY_STATUS,
-      }
+    if ((action === "recover_fresh_branch" || action === "clear_and_fresh") && surface.recoveryStatus === FRESH_PATH_RECOVERY_STATUS) {
+      const result = pathRecoveryNoop(run, action, "already_on_fresh_path", FRESH_PATH_RECOVERY_STATUS)
+      appendRunRecoveryActionLog(repos, result)
+      return result
+    }
+
+    if (action === "retry_retained" && surface.recoveryStatus === RETAINED_PATH_RECOVERY_STATUS) {
+      const result = pathRecoveryNoop(run, action, "already_on_retained_path", RETAINED_PATH_RECOVERY_STATUS)
       appendRunRecoveryActionLog(repos, result)
       return result
     }
