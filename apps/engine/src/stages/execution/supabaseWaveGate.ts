@@ -187,16 +187,23 @@ async function writeWaveHandoff(input: {
       details: `Missing Supabase post-create handoff dependency: ${missingDependencies.join(", ")}`,
     }
   }
+  const workspaceRoot = input.workspaceRoot!
+  const runId = input.runId!
+  const waveId = input.waveId
+  const projectRef = input.projectRef!
+  const branchRef = input.branchRef!
+  const client = input.handoffClient!
+
   try {
-    await ensureSupabaseHandoffGitignore(input.workspaceRoot)
+    await ensureSupabaseHandoffGitignore(workspaceRoot)
     const handoff = await writeSupabaseHandoff({
-      workspaceRoot: input.workspaceRoot,
-      runId: input.runId,
-      waveId: input.waveId,
-      projectRef: input.projectRef,
+      workspaceRoot,
+      runId,
+      waveId,
+      projectRef,
       dbMode: input.dbMode,
-      branchRef: input.branchRef,
-      client: input.handoffClient,
+      branchRef,
+      client,
     })
     return { ok: true, handoffPath: handoff.path }
   } catch (err) {
@@ -204,7 +211,7 @@ async function writeWaveHandoff(input: {
     if ((err as NodeJS.ErrnoException).code === "EEXIST" ||
         errorMessage.includes("already exists")) {
       const { supabaseHandoffPath } = await import("../../core/supabase/handoffWriter.js")
-      return { ok: true, handoffPath: supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId) }
+      return { ok: true, handoffPath: supabaseHandoffPath(workspaceRoot, runId, waveId) }
     }
     return { ok: false, error: "handoff_write_failed", details: errorMessage || String(err) }
   }

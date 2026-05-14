@@ -498,7 +498,7 @@ function mergeLlmNormalizedBundle(
   current: PreparedImportBundle,
   normalized: LlmNormalizedImport,
 ): PreparedImportBundle {
-  const concept = maybeConcept(normalized.concept) ?? current.concept
+  const concept: Concept & { hasUi?: boolean } = maybeConcept(normalized.concept) ?? current.concept
   const projects = normalizedProjects(normalized.projects, concept)
   const prdsByProjectId = normalizedPrds(normalized.prdsByProjectId)
   const warnings = Array.isArray(normalized.warnings)
