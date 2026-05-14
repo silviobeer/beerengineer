@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { request as httpRequest } from "node:http"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer as createNetServer } from "node:net"
 import { tmpdir } from "node:os"
 import { networkInterfaces } from "node:os"
@@ -161,6 +161,32 @@ test("REQ-1 POST /setup/init succeeds for localhost operators without token mana
     const body = await accepted.json() as { ok: boolean; configState: string }
     assert.equal(body.ok, true)
     assert.equal(body.configState, "created")
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-1 POST /setup/init still returns prerequisite failures as non-auth errors on loopback", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-setup-api-invalid-config-"))
+  const dbPath = join(dir, "server.sqlite")
+  const configPath = join(dir, "config.json")
+  initDatabase(dbPath).close()
+  writeFileSync(configPath, "{\n", "utf8")
+  const { proc, base } = await startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  }, { apiToken: null })
+  try {
+    await waitForHealth(base)
+    const rejected = await fetch(`${base}/setup/init`, { method: "POST" })
+    assert.equal(rejected.status, 409)
+    const body = await rejected.json() as { ok?: boolean; reason?: string; error?: string; code?: string }
+    assert.equal(body.ok, false)
+    assert.equal(body.reason, "invalid_config")
+    assert.notEqual(body.error, "forbidden")
+    assert.notEqual(body.code, "non_local_mutation_forbidden")
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
