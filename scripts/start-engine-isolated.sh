@@ -19,6 +19,24 @@ if [[ ! -x "$RUN_ENGINE" ]]; then
   exit 1
 fi
 
+ENGINE_PORT=4100
+CONFIG_FILE="$HOME/.config/beerengineer-nodejs/config.json"
+if [ -f "$CONFIG_FILE" ] && [ -r "$CONFIG_FILE" ]; then
+  PORT_FROM_CONFIG=$(node -e "try{const c=require('$CONFIG_FILE');process.stdout.write(String(c.enginePort||4100))}catch(e){process.stdout.write('4100')}" 2>/dev/null)
+  if [ -n "$PORT_FROM_CONFIG" ]; then
+    ENGINE_PORT="$PORT_FROM_CONFIG"
+  fi
+fi
+
+if ss -tlnp 2>/dev/null | grep -q ":$ENGINE_PORT "; then
+  echo "[start-engine-isolated] FATAL: port $ENGINE_PORT is already in use." >&2
+  echo "[start-engine-isolated] The engine is likely already running. Check:" >&2
+  echo "[start-engine-isolated]   ss -tlnp | grep :$ENGINE_PORT" >&2
+  echo "[start-engine-isolated] To kill the existing process:" >&2
+  echo "[start-engine-isolated]   lsof -ti :$ENGINE_PORT | xargs kill" >&2
+  exit 1
+fi
+
 UNIT_NAME="beerengineer-engine"
 MEM_HIGH="${BEERENGINEER_MEM_HIGH:-8G}"
 MEM_MAX="${BEERENGINEER_MEM_MAX:-10G}"

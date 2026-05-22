@@ -22,6 +22,35 @@ for dir in "$HOME/.npm-global/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
   fi
 done
 
+ENGINE_PORT=4100
+CONFIG_FILE="$HOME/.config/beerengineer-nodejs/config.json"
+if [ -f "$CONFIG_FILE" ] && [ -r "$CONFIG_FILE" ]; then
+  PORT_FROM_CONFIG=$(node -e "try{const c=require('$CONFIG_FILE');process.stdout.write(String(c.enginePort||4100))}catch(e){process.stdout.write('4100')}" 2>/dev/null)
+  if [ -n "$PORT_FROM_CONFIG" ]; then
+    ENGINE_PORT="$PORT_FROM_CONFIG"
+  fi
+fi
+
+if ss -tlnp 2>/dev/null | grep -q ":$ENGINE_PORT "; then
+  echo "[engine-supervisor] FATAL: port $ENGINE_PORT is already in use." >&2
+  echo "[engine-supervisor] The engine is likely already running. Check:" >&2
+  echo "[engine-supervisor]   ss -tlnp | grep :$ENGINE_PORT" >&2
+  echo "[engine-supervisor] To kill the existing process:" >&2
+  echo "[engine-supervisor]   lsof -ti :$ENGINE_PORT | xargs kill" >&2
+  exit 1
+fi
+
+PID_FILE="/tmp/beerengineer-engine.pid"
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "[engine-supervisor] FATAL: PID file $PID_FILE exists and process $OLD_PID is alive." >&2
+    exit 1
+  fi
+fi
+echo "$$" > "$PID_FILE"
+trap 'rm -f "$PID_FILE"' EXIT
+
 echo "[engine-supervisor] starting (log: $LOG_FILE)" >&2
 
 while true; do

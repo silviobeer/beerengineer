@@ -1,4 +1,5 @@
 import { URL } from "node:url"
+import { createServer as createNetServer } from "node:net"
 
 import { createApiHttpShell } from "./httpShell.js"
 import { createApiLifecycleCoordinator } from "./lifecycleCoordinator.js"
@@ -41,6 +42,25 @@ const lifecycle = createApiLifecycleCoordinator({
 })
 
 registerApiRoutes(shell, dependencies.routeDependencies, lifecycle)
+
+try {
+  await new Promise<void>((resolve, reject) => {
+    const probe = createNetServer()
+    probe.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`[engine] FATAL: port ${PORT} is already in use by another process.`)
+        console.error(`[engine] Run: lsof -ti :${PORT} | xargs kill`)
+        process.exit(1)
+      }
+      reject(err)
+    })
+    probe.once("listening", () => probe.close(() => resolve()))
+    probe.listen(PORT, HOST)
+  })
+} catch (err) {
+  console.error("[engine] port probe failed:", err)
+  process.exit(1)
+}
 
 await lifecycle.start(() => {
   console.log(`beerengineer_ engine listening on http://${HOST}:${PORT}`)

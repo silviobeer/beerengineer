@@ -60,6 +60,11 @@ export function createApiHttpShell(options: CreateApiHttpShellOptions): ApiHttpS
       return new Promise((resolve, reject) => {
         const onError = (err: Error) => {
           server.off("listening", onListeningEvent)
+          if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+            console.error(`[engine] FATAL: port ${options.port} is already in use by another process.`)
+            console.error(`[engine] Run: lsof -ti :${options.port} | xargs kill`)
+            process.exit(1)
+          }
           reject(err)
         }
         const onListeningEvent = () => {
