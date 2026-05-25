@@ -71,4 +71,17 @@ await lifecycle.start(() => {
     startedAt: new Date().toISOString(),
   })
   console.error(`[engine] wrote pid file to ${pidPath}`)
+  // Gap 5: signal systemd that the engine is fully ready (port bound, startup
+  // recovery complete) so the watchdog poll-loop stops waiting and Type=notify
+  // units don't time out. Non-fatal if systemd-notify is absent.
+  if (process.env.NOTIFY_SOCKET) {
+    import("node:child_process").then(({ execFileSync }) => {
+      try {
+        execFileSync("systemd-notify", ["READY=1"], { timeout: 2000 })
+        console.error("[engine] sent READY=1 to systemd")
+      } catch {
+        // non-fatal — service may not be Type=notify
+      }
+    }).catch(() => {/* ignore */})
+  }
 })

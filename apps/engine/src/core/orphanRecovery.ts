@@ -252,6 +252,11 @@ function openPromptThresholdDeferredOutcome(runId: string): StartupRecoveryOutco
   return skippedStartupRecoveryOutcome(runId, "open_prompt")
 }
 
+// Gap 2: stagger auto-resume dispatches so each run's worker can claim its DB
+// lease before the next one is evaluated, preventing simultaneous event-loop
+// saturation when N orphaned runs are recovered on startup.
+const STARTUP_RESUME_STAGGER_MS = Number(process.env.BEERENGINEER_STARTUP_RESUME_STAGGER_MS ?? 1500)
+
 async function resolveCandidateOutcomes(
   repos: Repos,
   candidates: StartupRecoveryCandidate[],
@@ -259,7 +264,11 @@ async function resolveCandidateOutcomes(
   autoResume: StartupAutoResumeOptions,
 ): Promise<StartupRecoveryOutcome[]> {
   const outcomes: StartupRecoveryOutcome[] = []
-  for (const candidate of candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    if (i > 0 && STARTUP_RESUME_STAGGER_MS > 0) {
+      await new Promise<void>(r => setTimeout(r, STARTUP_RESUME_STAGGER_MS))
+    }
+    const candidate = candidates[i]!
     const { outcome, error } = await resolveStartupRecoveryOutcome(
       repos,
       repos.getRun(candidate.run.id) ?? candidate.run,

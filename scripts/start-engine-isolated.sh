@@ -8,15 +8,27 @@
 # supervisor, and all 9 in-flight runs together. This wrapper detaches the
 # engine into its own --user --scope and sets MemoryHigh/MemoryMax so oomd
 # reaps individual worker descendants instead of the engine root.
+#
+# Gap 4: if called from an interactive terminal, detach via setsid so that
+# SIGHUP on session/terminal close does not propagate to the scope.
+# Stdio is redirected to the engine log file in detached mode.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_ENGINE="$SCRIPT_DIR/run-engine.sh"
+ENGINE_LOG="${ENGINE_LOG:-/tmp/beerengineer-engine.log}"
 
 if [[ ! -x "$RUN_ENGINE" ]]; then
   echo "[start-engine-isolated] $RUN_ENGINE not executable" >&2
   exit 1
+fi
+
+# Gap 4: if stdin or stdout is a terminal, re-exec via setsid to detach from
+# the controlling terminal. The scope will survive session close / SIGHUP.
+if [ -t 0 ] || [ -t 1 ]; then
+  echo "[start-engine-isolated] interactive terminal detected — detaching with setsid (log: $ENGINE_LOG)" >&2
+  exec setsid "$0" "$@" </dev/null >>"$ENGINE_LOG" 2>&1
 fi
 
 ENGINE_PORT=4100
@@ -28,13 +40,22 @@ if [ -f "$CONFIG_FILE" ] && [ -r "$CONFIG_FILE" ]; then
   fi
 fi
 
-if ss -tlnp 2>/dev/null | grep -q ":$ENGINE_PORT "; then
-  echo "[start-engine-isolated] FATAL: port $ENGINE_PORT is already in use." >&2
-  echo "[start-engine-isolated] The engine is likely already running. Check:" >&2
-  echo "[start-engine-isolated]   ss -tlnp | grep :$ENGINE_PORT" >&2
-  echo "[start-engine-isolated] To kill the existing process:" >&2
-  echo "[start-engine-isolated]   lsof -ti :$ENGINE_PORT | xargs kill" >&2
-  exit 1
+# Gap 1: distinguish a live/responsive engine from a zombie/frozen process.
+port_is_responsive() {
+  curl -sf --max-time 3 "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1
+}
+
+if ss -tlnp 2>/dev/null | grep -q ":${ENGINE_PORT} "; then
+  if port_is_responsive; then
+    echo "[start-engine-isolated] FATAL: a live engine is already responding on port $ENGINE_PORT." >&2
+    echo "[start-engine-isolated]   ss -tlnp | grep :$ENGINE_PORT" >&2
+    echo "[start-engine-isolated]   lsof -ti :$ENGINE_PORT | xargs kill  # to stop it" >&2
+    exit 1
+  else
+    echo "[start-engine-isolated] WARNING: port $ENGINE_PORT is bound but not responding — killing stale holder." >&2
+    lsof -ti :"$ENGINE_PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+    sleep 1
+  fi
 fi
 
 UNIT_NAME="beerengineer-engine"
@@ -56,6 +77,9 @@ exec systemd-run --user \
   --unit="${UNIT_NAME}" \
   --scope \
   --collect \
+  --property="KillMode=control-group" \
+  --property="StandardOutput=append:${ENGINE_LOG}" \
+  --property="StandardError=append:${ENGINE_LOG}" \
   --property="MemoryHigh=${MEM_HIGH}" \
   --property="MemoryMax=${MEM_MAX}" \
   --property="ManagedOOMSwap=auto" \

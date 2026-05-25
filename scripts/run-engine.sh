@@ -7,9 +7,9 @@
 # (plain tsx, no watcher) and only restarts on process exit.
 #
 # systemd Watchdog integration: when WATCHDOG_USEC is set (i.e. the service
-# unit has WatchdogSec=), a background loop pings GET /health every
-# WATCHDOG_USEC/2 microseconds and sends sd_notify WATCHDOG=1 via
-# systemd-notify. If the engine stops responding, systemd kills+restarts it.
+# unit has WatchdogSec=), a background loop polls GET /health until the engine
+# is up, then pings every WATCHDOG_USEC/2 and forwards sd_notify WATCHDOG=1.
+# If the engine stops responding, systemd kills+restarts the service.
 
 set -euo pipefail
 
@@ -36,54 +36,88 @@ if [ -f "$CONFIG_FILE" ] && [ -r "$CONFIG_FILE" ]; then
   fi
 fi
 
-if ss -tlnp 2>/dev/null | grep -q ":$ENGINE_PORT "; then
-  echo "[engine-supervisor] FATAL: port $ENGINE_PORT is already in use." >&2
-  echo "[engine-supervisor] The engine is likely already running. Check:" >&2
-  echo "[engine-supervisor]   ss -tlnp | grep :$ENGINE_PORT" >&2
-  echo "[engine-supervisor] To kill the existing process:" >&2
-  echo "[engine-supervisor]   lsof -ti :$ENGINE_PORT | xargs kill" >&2
-  exit 1
-fi
+# Gap 1: distinguish a live/responsive engine from a zombie/frozen process
+# holding the port. Kill the stale holder instead of refusing to start.
+port_is_responsive() {
+  curl -sf --max-time 3 "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1
+}
 
-PID_FILE="/tmp/beerengineer-engine.pid"
-if [ -f "$PID_FILE" ]; then
-  OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
-  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "[engine-supervisor] FATAL: PID file $PID_FILE exists and process $OLD_PID is alive." >&2
+if ss -tlnp 2>/dev/null | grep -q ":${ENGINE_PORT} "; then
+  if port_is_responsive; then
+    echo "[engine-supervisor] FATAL: a live engine is already responding on port $ENGINE_PORT." >&2
+    echo "[engine-supervisor]   ss -tlnp | grep :$ENGINE_PORT" >&2
+    echo "[engine-supervisor]   lsof -ti :$ENGINE_PORT | xargs kill  # to stop it" >&2
     exit 1
+  else
+    echo "[engine-supervisor] WARNING: port $ENGINE_PORT is bound but not responding — killing stale holder." >&2
+    lsof -ti :"$ENGINE_PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+    sleep 1
   fi
 fi
-echo "$$" > "$PID_FILE"
-trap 'rm -f "$PID_FILE"; kill -- -$$ 2>/dev/null || true' EXIT
+
+# Gap 3: PID file — cross-check port ownership to detect recycled PIDs;
+# use atomic write (write+rename) to avoid concurrent-startup race.
+PID_FILE="/tmp/beerengineer-engine.pid"
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    # Cross-check: does this PID actually own the engine port?
+    if ss -tlnp 2>/dev/null | grep -q "pid=${OLD_PID},"; then
+      echo "[engine-supervisor] FATAL: PID $OLD_PID is alive and owns port $ENGINE_PORT." >&2
+      exit 1
+    else
+      echo "[engine-supervisor] WARNING: PID $OLD_PID is alive but does not own port $ENGINE_PORT — stale PID file, continuing." >&2
+    fi
+  else
+    echo "[engine-supervisor] removing stale PID file (old pid: ${OLD_PID:-unknown})." >&2
+  fi
+fi
+# Atomic write via temp file + rename to avoid concurrent-startup race
+echo "$$" > "${PID_FILE}.tmp"
+mv -f "${PID_FILE}.tmp" "$PID_FILE"
 
 echo "[engine-supervisor] starting (log: $LOG_FILE)" >&2
 
-# systemd watchdog: ping /health and forward WATCHDOG=1 to systemd-notify.
-# Only active when WatchdogSec is set in the unit (WATCHDOG_USEC exported by systemd).
+# Gap 5 + Gap 6: systemd watchdog loop.
+# - Polls /health until the engine is ready (replaces fixed sleep 10).
+# - Sends sd_notify WATCHDOG=1 every interval_s when healthy.
+# - Logs a warning (not a fatal error) on each failed check.
+# Gap 6: WATCHDOG_PID is captured and explicitly included in the EXIT trap.
 watchdog_loop() {
-  local interval_s=15  # default: ping every 15s
+  local interval_s=15
   if [ -n "${WATCHDOG_USEC:-}" ] && [ "$WATCHDOG_USEC" -gt 0 ] 2>/dev/null; then
-    # Use half the watchdog period as the ping interval (systemd recommendation)
     interval_s=$(( WATCHDOG_USEC / 2 / 1000000 ))
     [ "$interval_s" -lt 5 ] && interval_s=5
   fi
-  # Wait for engine to come up before first ping
-  sleep 10
+
+  # Poll until the engine is ready — don't ping systemd watchdog during startup
+  local deadline=$(( $(date +%s) + 120 ))
+  until curl -sf --max-time 4 "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "[engine-watchdog] engine did not become ready within 120s" | tee -a "$LOG_FILE" >&2
+      return 0  # supervisor will handle it via restart
+    fi
+    sleep 3
+  done
+  echo "[engine-watchdog] engine is ready, entering watchdog cadence (interval=${interval_s}s)" | tee -a "$LOG_FILE" >&2
+
   while true; do
+    sleep "$interval_s"
     if curl -sf --max-time 4 "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1; then
-      # Notify systemd watchdog if available
       if command -v systemd-notify > /dev/null 2>&1 && [ -n "${WATCHDOG_USEC:-}" ]; then
         systemd-notify WATCHDOG=1 2>/dev/null || true
       fi
     else
       echo "[engine-watchdog] /health check failed at $(date -Is) — engine may be frozen" | tee -a "$LOG_FILE" >&2
     fi
-    sleep "$interval_s"
   done
 }
 
 watchdog_loop &
 WATCHDOG_PID=$!
+
+# Gap 6: update trap now that WATCHDOG_PID is known; kill it explicitly first.
+trap 'kill "$WATCHDOG_PID" 2>/dev/null || true; rm -f "$PID_FILE"; kill -- -$$ 2>/dev/null || true' EXIT
 
 while true; do
   npm run start:api --workspace=@beerengineer/engine >> "$LOG_FILE" 2>&1
