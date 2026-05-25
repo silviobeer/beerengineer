@@ -13,7 +13,7 @@ function engineBaseUrl(): string {
 async function fetchReadiness(key: string, runId?: string): Promise<SupabaseReadinessSnapshot> {
   try {
     const query = runId ? `?runId=${encodeURIComponent(runId)}` : "";
-    const res = await fetch(`${engineBaseUrl()}/workspaces/${encodeURIComponent(key)}/supabase/readiness${query}`, { cache: "no-store" });
+    const res = await fetch(`${engineBaseUrl()}/workspaces/${encodeURIComponent(key)}/supabase/readiness${query}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
     const body = await res.json() as { readiness?: SupabaseReadinessSnapshot };
     if (res.ok && body.readiness) return body.readiness;
   } catch {

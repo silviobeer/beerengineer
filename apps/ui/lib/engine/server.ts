@@ -10,7 +10,7 @@ import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visible
 
 export async function fetchItem(itemId: string): Promise<ItemDetailDTO> {
   const url = `${engineBaseUrl()}/items/${encodeURIComponent(itemId)}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`engine_get_item_failed_${res.status}`);
   const raw = (await res.json()) as Record<string, unknown>;
   return normalizeItem(itemId, raw);
@@ -93,6 +93,7 @@ export async function postItemAction(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
+    signal: AbortSignal.timeout(10000),
   });
   if (res.ok) return { ok: true, status: res.status };
   let error = `engine_${res.status}`;

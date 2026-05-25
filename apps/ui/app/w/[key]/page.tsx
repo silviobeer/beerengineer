@@ -90,7 +90,7 @@ async function fetchBoard(
   try {
     const res = await fetch(
       `${engineBaseUrl()}/board?workspace=${encodeURIComponent(workspaceKey)}`,
-      { cache: "no-store" }
+      { cache: "no-store", signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) {
       return { items: null, error: `engine responded ${res.status}` };

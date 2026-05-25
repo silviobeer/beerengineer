@@ -5,6 +5,11 @@
 # tsx watch restarts the engine whenever source files change on disk (including
 # after git merges), which kills in-flight workers. This script uses start:api
 # (plain tsx, no watcher) and only restarts on process exit.
+#
+# systemd Watchdog integration: when WATCHDOG_USEC is set (i.e. the service
+# unit has WatchdogSec=), a background loop pings GET /health every
+# WATCHDOG_USEC/2 microseconds and sends sd_notify WATCHDOG=1 via
+# systemd-notify. If the engine stops responding, systemd kills+restarts it.
 
 set -euo pipefail
 
@@ -49,9 +54,36 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 echo "$$" > "$PID_FILE"
-trap 'rm -f "$PID_FILE"' EXIT
+trap 'rm -f "$PID_FILE"; kill -- -$$ 2>/dev/null || true' EXIT
 
 echo "[engine-supervisor] starting (log: $LOG_FILE)" >&2
+
+# systemd watchdog: ping /health and forward WATCHDOG=1 to systemd-notify.
+# Only active when WatchdogSec is set in the unit (WATCHDOG_USEC exported by systemd).
+watchdog_loop() {
+  local interval_s=15  # default: ping every 15s
+  if [ -n "${WATCHDOG_USEC:-}" ] && [ "$WATCHDOG_USEC" -gt 0 ] 2>/dev/null; then
+    # Use half the watchdog period as the ping interval (systemd recommendation)
+    interval_s=$(( WATCHDOG_USEC / 2 / 1000000 ))
+    [ "$interval_s" -lt 5 ] && interval_s=5
+  fi
+  # Wait for engine to come up before first ping
+  sleep 10
+  while true; do
+    if curl -sf --max-time 4 "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1; then
+      # Notify systemd watchdog if available
+      if command -v systemd-notify > /dev/null 2>&1 && [ -n "${WATCHDOG_USEC:-}" ]; then
+        systemd-notify WATCHDOG=1 2>/dev/null || true
+      fi
+    else
+      echo "[engine-watchdog] /health check failed at $(date -Is) — engine may be frozen" | tee -a "$LOG_FILE" >&2
+    fi
+    sleep "$interval_s"
+  done
+}
+
+watchdog_loop &
+WATCHDOG_PID=$!
 
 while true; do
   npm run start:api --workspace=@beerengineer/engine >> "$LOG_FILE" 2>&1

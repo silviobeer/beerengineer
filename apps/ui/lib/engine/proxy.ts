@@ -98,6 +98,7 @@ async function proxyEngineJson(
     method,
     headers,
     body: JSON.stringify(payload.body ?? {}),
+    signal: AbortSignal.timeout(10000),
   });
   const text = await upstream.text();
   return new Response(text, {
@@ -113,6 +114,7 @@ export async function proxyEngineGet(path: string): Promise<Response> {
     method: "GET",
     headers: authHeaders(),
     cache: "no-store",
+    signal: AbortSignal.timeout(5000),
   });
   const text = await upstream.text();
   return new Response(text, {

@@ -71,7 +71,7 @@ interface RawBoardCard {
 export async function fetchBoard(workspaceKey: string): Promise<Item[]> {
   const url = `${engineBaseUrl()}/board?workspace=${encodeURIComponent(workspaceKey)}`;
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const payload = (await res.json()) as { cards?: RawBoardCard[] } | RawBoardCard[];
     const cards = Array.isArray(payload) ? payload : payload.cards ?? [];
@@ -173,7 +173,7 @@ export interface FetchWorkspacesResult {
 export async function fetchWorkspacesResult(): Promise<FetchWorkspacesResult> {
   const url = `${engineBaseUrl()}/workspaces`;
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (!res.ok) return { workspaces: [], error: true };
     const payload = (await res.json()) as
       | { workspaces?: RawWorkspace[] }
