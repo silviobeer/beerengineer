@@ -16,7 +16,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_FILE="${ENGINE_LOG:-/tmp/beerengineer-engine.log}"
-RESTART_DELAY=3
+# Gap 7: Restart backoff — 3s was too short; Codex workers from the previous
+# engine instance can take 60-90s to become stale. Restarting faster than that
+# causes multiple orphanRecovery cycles to fire concurrently, saturating the
+# event loop and triggering cascading Supabase timeouts.
+# Use exponential backoff: first restart waits BASE_RESTART_DELAY, each
+# subsequent crash within RESTART_RESET_WINDOW doubles the delay up to MAX.
+BASE_RESTART_DELAY="${BEERENGINEER_RESTART_DELAY:-30}"
+MAX_RESTART_DELAY="${BEERENGINEER_MAX_RESTART_DELAY:-120}"
+RESTART_RESET_WINDOW=300   # seconds — reset backoff after a stable run this long
+_restart_delay=$BASE_RESTART_DELAY
+_last_start_ts=$(date +%s)
 
 cd "$REPO_ROOT"
 
@@ -120,8 +130,26 @@ WATCHDOG_PID=$!
 trap 'kill "$WATCHDOG_PID" 2>/dev/null || true; rm -f "$PID_FILE"; kill -- -$$ 2>/dev/null || true' EXIT
 
 while true; do
+  _last_start_ts=$(date +%s)
   npm run start:api --workspace=@beerengineer/engine >> "$LOG_FILE" 2>&1
   EXIT_CODE=$?
-  echo "[engine-supervisor] engine exited (code $EXIT_CODE) at $(date -Is), restarting in ${RESTART_DELAY}s..." | tee -a "$LOG_FILE" >&2
-  sleep "$RESTART_DELAY"
+  _now=$(date +%s)
+  _uptime=$(( _now - _last_start_ts ))
+
+  # Reset backoff if the engine ran stably for at least RESTART_RESET_WINDOW seconds
+  if [ "$_uptime" -ge "$RESTART_RESET_WINDOW" ]; then
+    _restart_delay=$BASE_RESTART_DELAY
+    echo "[engine-supervisor] engine ran for ${_uptime}s — resetting restart backoff to ${_restart_delay}s" | tee -a "$LOG_FILE" >&2
+  else
+    echo "[engine-supervisor] engine ran for only ${_uptime}s (< ${RESTART_RESET_WINDOW}s) — increasing backoff" | tee -a "$LOG_FILE" >&2
+  fi
+
+  echo "[engine-supervisor] engine exited (code $EXIT_CODE) at $(date -Is), restarting in ${_restart_delay}s..." | tee -a "$LOG_FILE" >&2
+  sleep "$_restart_delay"
+
+  # Exponential backoff for rapid crash loops (double, cap at MAX)
+  if [ "$_uptime" -lt "$RESTART_RESET_WINDOW" ]; then
+    _restart_delay=$(( _restart_delay * 2 ))
+    [ "$_restart_delay" -gt "$MAX_RESTART_DELAY" ] && _restart_delay=$MAX_RESTART_DELAY
+  fi
 done

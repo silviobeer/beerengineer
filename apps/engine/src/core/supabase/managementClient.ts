@@ -52,7 +52,11 @@ export class SupabaseManagementClient {
   constructor(private readonly options: SupabaseManagementClientOptions) {
     this.fetchImpl = options.fetch ?? fetch
     this.baseUrl = (options.baseUrl ?? SUPABASE_MANAGEMENT_API_BASE_URL).replace(/\/$/, "")
-    this.timeoutMs = options.timeoutMs ?? 8_000
+    // Gap B hardening: 8s was too short under engine load (concurrent orphan
+    // recoveries can saturate the event loop and delay outbound requests).
+    // Raised to 20s so a brief engine overload does not cause a false-positive
+    // Supabase readiness block. createBranch already overrides to 30s separately.
+    this.timeoutMs = options.timeoutMs ?? 20_000
   }
 
   async listProjects(): Promise<SupabaseProject[]> {
